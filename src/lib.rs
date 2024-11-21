@@ -25,6 +25,11 @@ impl Bsread {
         Ok(Self { context, interrupted })
     }
 
+    pub fn newForked(interrupted: Arc<AtomicBool>) -> io::Result<Self>{
+        let context = zmq::Context::new();
+        Ok(Self { context, interrupted })
+    }
+
     fn receiver(&self, endpoint: Option<Vec<&str>>,  socket_type: SocketType) -> Result<Receiver, Box<dyn std::error::Error>> {
         Receiver::new(&self, endpoint, socket_type)
     }
@@ -35,7 +40,6 @@ impl Bsread {
 
     fn is_interrupted(&self) ->bool {
         let ret = self.interrupted.load(Ordering::Relaxed);
-        println!("{ret}");
         ret
     }
 }

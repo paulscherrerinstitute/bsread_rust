@@ -1,5 +1,7 @@
 use super::message::{BsMessage, parse_message};
 use std::{io, thread};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use crate::Bsread;
@@ -82,7 +84,6 @@ impl
         let mut count = 0;
         let mut last = None;
         loop {
-            println!("{count}");
             let message = self.receive(last);
             match (&message){
                 Ok(msg) => {
@@ -104,17 +105,18 @@ impl
 
 
     pub fn fork(& self, callback: fn(msg : &BsMessage) ->(), num_messages: Option<u32>) -> JoinHandle<()>{
-        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg : &BsMessage) ->(), num_messages: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
-            let bsread = crate::Bsread::new().unwrap();
+        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg : &BsMessage) ->(), num_messages: Option<u32>, interrupted: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+            let bsread = crate::Bsread::newForked(interrupted).unwrap();
             let mut receiver =  bsread.receiver(endpoint,socket_type)?;
             receiver.listen(callback, num_messages);
             Result::Ok(())
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
+        let interrupted  = Arc::clone(&self.bsread.interrupted);
         let handle = thread::spawn( move|| {
             let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-            listen_process(endpoints_as_str, socket_type, callback, num_messages);
+            listen_process(endpoints_as_str, socket_type, callback, num_messages, interrupted);
             //self.listen(callback, num_messages);
         });
         handle

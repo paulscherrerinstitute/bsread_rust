@@ -245,7 +245,6 @@ pub fn parse_message(message_parts : Vec<Vec<u8>> , last: Option<BsMessage>,) ->
     let (data_header, channels) = if let Some(last_msg) = last {
         if last_msg.hash == hash {
             // Reuse the previous data header and channels
-            println!(" -- REUSE DATA HEADER --");
             (last_msg.data_header, last_msg.channels)
         } else {
             // Parse new data header and channels

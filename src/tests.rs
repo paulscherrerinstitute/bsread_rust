@@ -3,6 +3,8 @@ use core::result::Result;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io;
+use std::thread;
+use std::time::Duration;
 
 
 fn print_res_map<T: std::fmt::Debug,U: std::fmt::Debug> (res: & io::Result<HashMap<T,U>>){
@@ -38,7 +40,7 @@ fn on_message(message : &BsMessage)->(){
     //println!("{:?}", message.get_timestamp());
 
     //println!("Main Header");
-    println!("{:?}", message.get_main_header());
+    //println!("{:?}", message.get_main_header());
     //println!("Data Header");
     //println!("{:?}", message.get_data_header());
     //println!("{:?}", message.get_data_header().keys());
@@ -62,30 +64,6 @@ fn on_message(message : &BsMessage)->(){
 
 
 
-#[test]
-fn test1() -> Result<(), Box<dyn std::error::Error>> {
-    //listen(on_message, Some(2));
-
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://localhost:5554", "tcp://127.0.0.1:9999"]), zmq::SUB)?;
-
-    /*
-    let mut rec = bsread.receiver(None, zmq::SUB)?;
-    rec.connect("tcp://127.0.0.1:9999");
-    //rec.connect("tcp://127.0.0.1:8888");
-    rec.connect("tcp://localhost:5554");
-    */
-
-    //rec.listen(on_message, Some(20));
-    //let msg = rec.receive(None);
-
-    let handle = rec.fork(on_message, Some(1));
-    //thread::sleep(Duration::from_millis(20));
-    //bsread.interrupt();
-    rec.join(handle);
-
-    Result::Ok(())
-}
 
 const MESSAGES: u32 = 4;
 
@@ -135,3 +113,15 @@ fn threaded() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+
+#[test]
+fn interrupting() -> Result<(), Box<dyn std::error::Error>> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:9999"]), zmq::SUB)?;
+    let handle = rec.fork(on_message, Some(MESSAGES));
+    thread::sleep(Duration::from_millis(10));
+    bsread.interrupt();
+    println! ("{}", bsread.is_interrupted());
+    rec.join(handle);
+    Ok(())
+}
