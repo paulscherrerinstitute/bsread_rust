@@ -1,0 +1,12 @@
+[package]
+name = "bsread"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zmq = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+byteorder = "1.4"
+indexmap = "1.9"
+log = "0.4.22"
