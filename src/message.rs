@@ -1,5 +1,6 @@
 use super::channel::*;
 use super::reader::*;
+use super::compression::*;
 use std::collections::HashMap;
 use std::io;
 use std::io::{Cursor, Read};
@@ -134,12 +135,23 @@ impl crate::message::ChannelData {
     }
 }
 
+
 fn parse_channel(channel: &Box<dyn ChannelTrait>, v:&Vec<u8>, t:&Vec<u8>) -> io::Result<ChannelData> {
     if t.len() != 16 {
         return Err(io::Error::new(io::ErrorKind::Other, "Invalid channel timestamp"));
     }
+
+    let data = match channel.getConfig().get_compression() {
+        "bitshuffle_lz4" => {
+            &decompress_bitshuffle_lz4(v,4, v.len())?
+        }
+        "lz4" => {
+            &decompress_lz4(v)?
+        }
+        &_ => {v}
+    };
     // Create a Cursor to read from the vector
-    let mut cursor = Cursor::new(v);
+    let mut cursor = Cursor::new(data);
     let value =  channel.read(&mut cursor);
     let mut cursor = Cursor::new(t);
     let timestamp_secs =  READER_I64(&mut cursor)?;

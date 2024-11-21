@@ -51,4 +51,5 @@ mod channel;
 mod message;
 mod reader;
 mod receiver;
+mod compression;
 

@@ -42,7 +42,7 @@ fn on_message(message : &BsMessage)->(){
     //println!("Main Header");
     //println!("{:?}", message.get_main_header());
     //println!("Data Header");
-    //println!("{:?}", message.get_data_header());
+    println!("{:?}", message.get_data_header());
     //println!("{:?}", message.get_data_header().keys());
     let mut channel_names = Vec::new();
     for channel in message.get_channels(){
@@ -66,11 +66,14 @@ fn on_message(message : &BsMessage)->(){
 
 
 const MESSAGES: u32 = 4;
+const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
+const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:9999";
+const PIPELINE: &str = "tcp://localhost:5554";
 
 #[test]
 fn single() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:9999"]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), zmq::SUB)?;
     let handle = rec.listen(on_message, Some(MESSAGES));
     Ok(())
 }
@@ -78,7 +81,7 @@ fn single() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn multi() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://localhost:5554", "tcp://127.0.0.1:9999"]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![PIPELINE, BSREADSENDER]), zmq::SUB)?;
     let handle = rec.listen(on_message, Some(MESSAGES));
     Ok(())
 }
@@ -88,8 +91,8 @@ fn multi() -> Result<(), Box<dyn std::error::Error>> {
 fn dynamic() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, zmq::SUB)?;
-    rec.connect("tcp://127.0.0.1:9999");
-    rec.connect("tcp://localhost:5554");
+    rec.connect(BSREADSENDER);
+    rec.connect(PIPELINE);
     rec.listen(on_message, Some(MESSAGES));
     Ok(())
 }
@@ -98,7 +101,7 @@ fn dynamic() -> Result<(), Box<dyn std::error::Error>> {
 fn manual() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, zmq::SUB)?;
-    rec.connect("tcp://127.0.0.1:9999");
+    rec.connect(BSREADSENDER);
     let message = rec.receive(None).unwrap();
     on_message(&message);
     Ok(())
@@ -108,7 +111,7 @@ fn manual() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn threaded() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:9999"]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), zmq::SUB)?;
     let handle = rec.fork(on_message, Some(MESSAGES));
     Ok(())
 }
@@ -117,11 +120,18 @@ fn threaded() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn interrupting() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:9999"]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), zmq::SUB)?;
     let handle = rec.fork(on_message, Some(MESSAGES));
     thread::sleep(Duration::from_millis(10));
     bsread.interrupt();
     println! ("{}", bsread.is_interrupted());
     rec.join(handle);
+    Ok(())
+}
+#[test]
+fn compression() -> Result<(), Box<dyn std::error::Error>> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), zmq::SUB)?;
+    rec.listen(on_message, Some(MESSAGES));
     Ok(())
 }
