@@ -1,6 +1,5 @@
 use std::string::String;
-use std::convert::TryFrom;
-use byteorder::{LittleEndian, BigEndian, ReadBytesExt, ByteOrder};
+use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
 use std::io::{Cursor, Read};
 use std::io;
 

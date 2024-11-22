@@ -3,15 +3,10 @@ use crate::message::{ChannelData, BsMessage};
 use crate::receiver::Receiver;
 
 use core::result::Result;
-use std::collections::HashMap;
-use zmq::{Context, Message, SocketType};
-use std::convert::TryFrom;
-use byteorder::{LittleEndian, BigEndian, ReadBytesExt, ByteOrder};
-use std::io::{Cursor, Read};
+use zmq::{Context, SocketType};
 use std::io;
-use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 
 struct Bsread {
     context: Context,
@@ -25,7 +20,7 @@ impl Bsread {
         Ok(Self { context, interrupted })
     }
 
-    pub fn newForked(interrupted: Arc<AtomicBool>) -> io::Result<Self>{
+    pub fn new_forked(interrupted: Arc<AtomicBool>) -> io::Result<Self>{
         let context = zmq::Context::new();
         Ok(Self { context, interrupted })
     }

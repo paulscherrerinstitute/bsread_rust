@@ -7,25 +7,29 @@ pub struct ChannelConfig {
     typ: String,
     shape:  Option<Vec<i32>>,
     elements: usize,
+    element_size: usize,
     le: bool,
     compression: String
 }
 
 impl ChannelConfig  {
-    pub fn get_name(&self) -> &str{
-        &self.name
+    pub fn get_name(&self) -> String{
+        self.name.clone()
     }
-    pub fn get_type(&self) -> &str{
-        &self.typ
+    pub fn get_type(&self) -> String{
+        self.typ.clone()
     }
-    pub fn get_shape(&self) -> &Option<Vec<i32>>{
-        &self.shape
+    pub fn get_shape(&self) -> Option<Vec<i32>>{
+        self.shape.clone()
     }
-    pub fn get_elements(&self) -> &usize {
-        &self.elements
+    pub fn get_elements(&self) -> usize {
+        self.elements.clone()
     }
-    pub fn get_compression(&self) -> &str{
-        &self.compression
+    pub fn get_compression(&self) -> String{
+        self.compression.clone()
+    }
+    pub fn get_element_size(&self) -> usize{
+        self.element_size.clone()
     }
 }
 
@@ -49,10 +53,28 @@ pub fn get_elements(shape: &Option<Vec<i32>>) -> usize{
     elements
 }
 
+fn  get_element_size(typ: &str) -> usize{
+    match typ {
+        "bool" => 4,
+        "string" => 1,
+        "int8" => 1,
+        "uint8" => 1,
+        "int16" => 2,
+        "uint16" => 2,
+        "int32" => 4,
+        "uint32" => 4,
+        "int64" => 8,
+        "uint64" => 8,
+        "float32" => 4,
+        "float64" => 8,
+        _ => 4,
+    }
+}
 impl<T: Default + Clone> ChannelScalar<T>  {
     pub fn new (name: String,typ: String,shape: Option<Vec<i32>>,le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> io::Result<T>) -> Self{
         let elements = get_elements(&shape);
-        let config = ChannelConfig{name, typ, shape, elements, le, compression};
+        let element_size = get_element_size(&typ);
+        let config = ChannelConfig{name, typ, shape, elements, element_size, le, compression};
         Self{ config, reader}
     }
 }
@@ -61,7 +83,8 @@ impl<T: Default + Clone> ChannelScalar<T>  {
 impl<T: Default + Clone> ChannelArray<T>  {
     pub fn new (name: String,typ: String,shape: Option<Vec<i32>>,le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> io::Result<()>) -> Self{
         let elements = get_elements(&shape);
-        let config = ChannelConfig{name, typ, shape, elements, le, compression};
+        let element_size = get_element_size(&typ);
+        let config = ChannelConfig{name, typ, shape, elements,  element_size, le, compression};
         let buffer = vec![T::default(); elements];
         Self{ config, reader, buffer}
     }
@@ -101,9 +124,9 @@ pub  enum ChannelValue  {
     AF64(Vec<f64>),
 }
 
-static EMPTY_CONFIG: ChannelConfig = ChannelConfig{ name: String::new(), typ: String::new(), shape: None, elements: 0, le: false, compression: String::new() };
+static EMPTY_CONFIG: ChannelConfig = ChannelConfig{ name: String::new(), typ: String::new(), shape: None, elements: 0,element_size:0, le: false, compression: String::new() };
 pub trait ChannelTrait : Send {
-    fn getConfig(&self) -> &ChannelConfig {
+    fn get_config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }
     fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> io::Result<ChannelValue> {
@@ -127,7 +150,7 @@ macro_rules! impl_channel_scalar_trait {
                     let result = (self.reader)(cursor)?;
                     Ok(ChannelValue::$variant(result))
             }
-            fn getConfig(&self) -> &ChannelConfig{
+            fn get_config(&self) -> &ChannelConfig{
                 return &self.config
             }
         }
@@ -148,7 +171,7 @@ macro_rules! impl_channel_array_trait {
                     (self.reader)(cursor, & mut buffer)?;
                     Ok(ChannelValue::$variant(buffer))
             }
-            fn getConfig(&self) -> &ChannelConfig{
+            fn get_config(&self) -> &ChannelConfig{
                 return &self.config
             }
          }

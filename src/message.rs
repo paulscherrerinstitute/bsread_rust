@@ -3,7 +3,7 @@ use super::reader::*;
 use super::compression::*;
 use std::collections::HashMap;
 use std::io;
-use std::io::{Cursor, Read};
+use std::io::{Cursor};
 use indexmap::IndexMap;
 use serde_json::{Error, Map, Value};
 
@@ -45,7 +45,6 @@ fn get_channel(channel_data:&Map<String, Value>) -> Result<Box<dyn ChannelTrait>
     //    .unwrap_or("")
     //    .to_string();
     let shape = convert_shape_val_to_vec( channel_data.get("shape"));
-    let elements = get_elements(&shape);
     let encoding = channel_data.get("encoding")
         .and_then(|v| v.as_str())
         .unwrap_or("")
@@ -59,7 +58,7 @@ fn get_channel(channel_data:&Map<String, Value>) -> Result<Box<dyn ChannelTrait>
         .to_string();
 
 
-    if (shape.clone().unwrap_or(vec![]).len()>0){
+    if shape.clone().unwrap_or(vec![]).len()>0{
         match typ.as_str() {
             "bool" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_ABOOL))),
             //"string" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_ASTRING))),
@@ -127,10 +126,10 @@ pub struct ChannelData{
 }
 
 impl crate::message::ChannelData {
-    pub fn getValue(&self) -> &ChannelValue{
+    pub fn get_value(&self) -> &ChannelValue{
         &self.value
     }
-    pub fn getTimestamp(&self) -> &(i64, i64){
+    pub fn get_timestamp(&self) -> &(i64, i64){
         &self.timestamp
     }
 }
@@ -141,9 +140,9 @@ fn parse_channel(channel: &Box<dyn ChannelTrait>, v:&Vec<u8>, t:&Vec<u8>) -> io:
         return Err(io::Error::new(io::ErrorKind::Other, "Invalid channel timestamp"));
     }
 
-    let data = match channel.getConfig().get_compression() {
+    let data = match channel.get_config().get_compression().as_str() {
         "bitshuffle_lz4" => {
-            &decompress_bitshuffle_lz4(v,4, v.len())?
+            &decompress_bitshuffle_lz4(v,channel.get_config().get_element_size(), channel.get_config().get_elements())?
         }
         "lz4" => {
             &decompress_lz4(v)?
@@ -217,23 +216,22 @@ impl BsMessage {
         &self.data
     }
 
-    pub fn get_id(&self) -> &u64 {
-        &self.id
+    pub fn get_hash(&self) -> String {
+        self.hash.clone()
+    }
+    pub fn get_id(&self) -> u64 {
+        self.id.clone()
     }
 
-    pub fn get_hash(&self) -> &String {
-        &self.hash
+    pub fn get_timestamp(&self) -> (u64, u64) {
+        self.timestamp.clone()
+    }
+    pub fn get_htype(&self) -> String {
+        self.htype.clone()
     }
 
-    pub fn get_timestamp(&self) -> &(u64, u64) {
-        &self.timestamp
-    }
-    pub fn get_htype(&self) -> &String {
-        &self.htype
-    }
-
-    pub fn get_dh_compression(&self) -> &String {
-        &self.dh_compression
+    pub fn get_dh_compression(&self) -> String {
+        self.dh_compression.clone()
     }
 }
 
@@ -266,17 +264,16 @@ pub fn parse_message(message_parts : Vec<Vec<u8>> , last: Option<BsMessage>,) ->
         // No previous message, parse everything
         parse_new_data_header(&message_parts)?
     };
-
     if message_parts.len()-2 != channels.len()*2 {
         return Err(io::Error::new(io::ErrorKind::Other, "Invalid number of messages"));
     }
-    for i in (0..channels.len()){
+    for i in 0..channels.len(){
         let channel = &channels[i];
         let v = &message_parts[2*i+2];
         let t = &message_parts[2*i+3];
 
         let message = parse_channel(channel, v, t);
-        data.insert(channel.getConfig().get_name().to_string(), message);
+        data.insert(channel.get_config().get_name(), message);
     }
     BsMessage::new(main_header, data_header, channels, data)
 }
