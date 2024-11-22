@@ -10,30 +10,30 @@ use std::sync::{Arc};
 
 struct Bsread {
     context: Context,
-    interrupted: Arc<AtomicBool>
+    interrupted: Arc<AtomicBool>,
 }
 
 impl Bsread {
-    pub fn new() -> io::Result<Self>{
+    pub fn new() -> io::Result<Self> {
         let context = zmq::Context::new();
         let interrupted = Arc::new(AtomicBool::new(false));
         Ok(Self { context, interrupted })
     }
 
-    pub fn new_forked(interrupted: Arc<AtomicBool>) -> io::Result<Self>{
+    pub fn new_forked(interrupted: Arc<AtomicBool>) -> io::Result<Self> {
         let context = zmq::Context::new();
         Ok(Self { context, interrupted })
     }
 
-    fn receiver(&self, endpoint: Option<Vec<&str>>,  socket_type: SocketType) -> Result<Receiver, Box<dyn std::error::Error>> {
+    fn receiver(&self, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> Result<Receiver, Box<dyn std::error::Error>> {
         Receiver::new(&self, endpoint, socket_type)
     }
 
-    fn interrupt(&self){
+    fn interrupt(&self) {
         self.interrupted.store(true, Ordering::Relaxed);
     }
 
-    fn is_interrupted(&self) ->bool {
+    fn is_interrupted(&self) -> bool {
         let ret = self.interrupted.load(Ordering::Relaxed);
         ret
     }
@@ -47,4 +47,5 @@ mod message;
 mod reader;
 mod receiver;
 mod compression;
+mod utils;
 

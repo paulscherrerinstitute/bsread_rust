@@ -5,30 +5,30 @@ use std::io::Cursor;
 pub struct ChannelConfig {
     name: String,
     typ: String,
-    shape:  Option<Vec<i32>>,
+    shape: Option<Vec<i32>>,
     elements: usize,
     element_size: usize,
     le: bool,
-    compression: String
+    compression: String,
 }
 
-impl ChannelConfig  {
-    pub fn get_name(&self) -> String{
+impl ChannelConfig {
+    pub fn get_name(&self) -> String {
         self.name.clone()
     }
-    pub fn get_type(&self) -> String{
+    pub fn get_type(&self) -> String {
         self.typ.clone()
     }
-    pub fn get_shape(&self) -> Option<Vec<i32>>{
+    pub fn get_shape(&self) -> Option<Vec<i32>> {
         self.shape.clone()
     }
     pub fn get_elements(&self) -> usize {
         self.elements.clone()
     }
-    pub fn get_compression(&self) -> String{
+    pub fn get_compression(&self) -> String {
         self.compression.clone()
     }
-    pub fn get_element_size(&self) -> usize{
+    pub fn get_element_size(&self) -> usize {
         self.element_size.clone()
     }
 }
@@ -41,10 +41,10 @@ pub struct ChannelScalar<T> {
 pub struct ChannelArray<T> {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> io::Result<()>,
-    buffer: Vec<T>
+    buffer: Vec<T>,
 }
 
-pub fn get_elements(shape: &Option<Vec<i32>>) -> usize{
+pub fn get_elements(shape: &Option<Vec<i32>>) -> usize {
     let nelm = shape.clone()
         .filter(|v| !v.is_empty()) // Ensure it's not empty
         .map(|v| v.into_iter().product()) // Compute product of elements
@@ -53,7 +53,7 @@ pub fn get_elements(shape: &Option<Vec<i32>>) -> usize{
     elements
 }
 
-fn  get_element_size(typ: &str) -> usize{
+fn get_element_size(typ: &str) -> usize {
     match typ {
         "bool" => 4,
         "string" => 1,
@@ -70,23 +70,23 @@ fn  get_element_size(typ: &str) -> usize{
         _ => 4,
     }
 }
-impl<T: Default + Clone> ChannelScalar<T>  {
-    pub fn new (name: String,typ: String,shape: Option<Vec<i32>>,le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> io::Result<T>) -> Self{
+impl<T: Default + Clone> ChannelScalar<T> {
+    pub fn new(name: String, typ: String, shape: Option<Vec<i32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> io::Result<T>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
-        let config = ChannelConfig{name, typ, shape, elements, element_size, le, compression};
-        Self{ config, reader}
+        let config = ChannelConfig { name, typ, shape, elements, element_size, le, compression };
+        Self { config, reader }
     }
 }
 
 
-impl<T: Default + Clone> ChannelArray<T>  {
-    pub fn new (name: String,typ: String,shape: Option<Vec<i32>>,le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> io::Result<()>) -> Self{
+impl<T: Default + Clone> ChannelArray<T> {
+    pub fn new(name: String, typ: String, shape: Option<Vec<i32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> io::Result<()>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
-        let config = ChannelConfig{name, typ, shape, elements,  element_size, le, compression};
+        let config = ChannelConfig { name, typ, shape, elements, element_size, le, compression };
         let buffer = vec![T::default(); elements];
-        Self{ config, reader, buffer}
+        Self { config, reader, buffer }
     }
 
     fn update_cache(&mut self, index: usize, value: T) {
@@ -97,7 +97,7 @@ impl<T: Default + Clone> ChannelArray<T>  {
 }
 
 #[derive(Debug)]
-pub  enum ChannelValue  {
+pub enum ChannelValue {
     STR(String),
     BOOL(bool),
     I8(i8),
@@ -124,8 +124,8 @@ pub  enum ChannelValue  {
     AF64(Vec<f64>),
 }
 
-static EMPTY_CONFIG: ChannelConfig = ChannelConfig{ name: String::new(), typ: String::new(), shape: None, elements: 0,element_size:0, le: false, compression: String::new() };
-pub trait ChannelTrait : Send {
+static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), typ: String::new(), shape: None, elements: 0, element_size: 0, le: false, compression: String::new() };
+pub trait ChannelTrait: Send {
     fn get_config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }

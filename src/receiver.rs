@@ -44,7 +44,7 @@ pub struct Receiver<'a> {
     endpoints: Option<Vec<String>>,
     socket_type: SocketType,
     last: Option<BsMessage>,
-    bsread: & 'a Bsread
+    bsread: &'a Bsread,
 }
 
 impl
