@@ -11,7 +11,6 @@ fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, Value>, Error> {
     serde_json::from_slice(&bytes)
 }
 
-
 fn convert_shape_val_to_vec(opt_val: Option<&Value>) -> Option<Vec<i32>> {
     opt_val.and_then(|val| {
         if let Value::Array(arr) = val {
@@ -141,7 +140,7 @@ fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> i
 
     let data = match channel.get_config().get_compression().as_str() {
         "bitshuffle_lz4" => {
-            &decompress_bitshuffle_lz4(v, channel.get_config().get_element_size(), channel.get_config().get_elements())?
+            &decompress_bitshuffle_lz4(v, channel.get_config().get_element_size())?
         }
         "lz4" => {
             &decompress_lz4(v)?
@@ -174,18 +173,22 @@ fn get_hash(main_header: &HashMap<String, Value>) -> String {
     main_header.get("hash").unwrap().as_str().unwrap().to_string()
 }
 
+fn get_dh_compression(main_header: &HashMap<String, Value>) -> String {
+    match main_header.get("dh_compression") {
+        None => { "none" }
+        Some(v) => { v.as_str().unwrap() }
+    }.to_string()
+}
+
 impl BsMessage {
     fn new(main_header: HashMap<String, Value>,
            data_header: HashMap<String, Value>,
            channels: Vec<Box<dyn ChannelTrait>>,
            data: IndexMap<String, io::Result<ChannelData>>) -> io::Result<Self> {
         let hash = get_hash(&main_header);
+        let dh_compression = get_dh_compression(&main_header);
         let id = main_header.get("pulse_id").unwrap().as_u64().unwrap();
         let htype = main_header.get("htype").unwrap().as_str().unwrap().to_string();
-        let dh_compression = match main_header.get("dh_compression") {
-            None => { "none" }
-            Some(v) => { v.as_str().unwrap() }
-        }.to_string();
         let timestamp = match main_header.get("global_timestamp") {
             None => { (0, 0) }
             Some(v) => {
@@ -242,9 +245,19 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> io
     let main_header = decode_json(&message_parts[0])?;
     let hash = get_hash(&main_header);
 
-    // Helper function to parse the data header and channels
-    fn parse_new_data_header(message_parts: &[Vec<u8>]) -> io::Result<(HashMap<String, Value>, Vec<Box<dyn ChannelTrait>>)> {
-        let data_header = decode_json(&message_parts[1])?;
+
+    fn parse_new_data_header(blob: &Vec<u8>, compresion : String) -> io::Result<(HashMap<String, Value>, Vec<Box<dyn ChannelTrait>>)> {
+        let json = match  compresion.as_str() {
+            "bitshuffle_lz4" => {
+                &decompress_bitshuffle_lz4(blob, 1)?
+            }
+            "lz4" => {
+                &decompress_lz4(blob)?
+            }
+            &_ => {&blob}
+        };
+
+        let data_header = decode_json(json)?;
         let channels = get_channels(&data_header).unwrap();
         Ok((data_header, channels))
     }
@@ -256,11 +269,11 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> io
             (last_msg.data_header, last_msg.channels)
         } else {
             // Parse new data header and channels
-            parse_new_data_header(&message_parts)?
+            parse_new_data_header(&message_parts[1], get_dh_compression(&main_header))?
         }
     } else {
         // No previous message, parse everything
-        parse_new_data_header(&message_parts)?
+        parse_new_data_header(&message_parts[1], get_dh_compression(&main_header))?
     };
     if message_parts.len() - 2 != channels.len() * 2 {
         return Err(io::Error::new(io::ErrorKind::Other, "Invalid number of messages"));

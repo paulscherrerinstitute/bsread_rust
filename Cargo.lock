@@ -19,6 +19,7 @@ name = "bsread"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "cc",
  "indexmap 1.9.3",
  "log",
  "lz4",

@@ -2,6 +2,11 @@
 name = "bsread"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+links = "libbitshuffle"
+
+[build-dependencies]
+cc = "1.2.1"
 
 [dependencies]
 zmq = "0.10"
@@ -11,3 +16,5 @@ byteorder = "1.4"
 indexmap = "1.9"
 log = "0.4.22"
 lz4 = "1.24"
+cc = "1.2.1"
+
