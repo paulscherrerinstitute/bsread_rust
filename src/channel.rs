@@ -2,8 +2,7 @@ use std::io;
 use std::io::Cursor;
 use serde_json::Value;
 use std::any::TypeId;
-use num_traits::NumCast;
-use num_traits::cast::ToPrimitive;
+use super::convert::*;
 
 #[derive(Debug)]
 pub struct ChannelConfig {
@@ -216,7 +215,7 @@ impl ChannelValue {
 
     {
         match self {
-            //ChannelValue::ABOOL(data) =>  try_convert_num::<_, U>(&data),
+            ChannelValue::ABOOL(data) =>  try_convert_bool::<U>(&data),
             ChannelValue::AI8(data) => try_convert_num::<_, U>(&data),
             ChannelValue::AU8(data) => try_convert_num::<_, U>(&data),
             ChannelValue::AI16(data) => try_convert_num::<_, U>(&data),
@@ -251,22 +250,6 @@ impl ChannelValue {
 
 }
 
-pub fn try_convert_num<T, U>(input: &Vec<T>) -> Option<Vec<U>>
-where
-    T: ToPrimitive + Clone,  // T must implement ToPrimitive
-    U: NumCast,       // U must implement NumCast
-{
-    //TODO: if U==T can I return just a reference to the input?
-    // if TypeId::of::<T>() == TypeId::of::<U>() {
-    //    return Some(input);
-    //}
-    input.iter().map(|item| U::from(item.clone())).collect()
-}
-
-fn try_convert_str<T: ToString>(input: &Vec<T>) -> Option<Vec<String>> {
-    // Map each item to its string representation and collect the results into a Vec<String>
-    Some(input.iter().map(|item| item.to_string()).collect())
-}
 
 static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), typ: String::new(), shape: None, elements: 0, element_size: 0, le: false, compression: String::new() };
 pub trait ChannelTrait: Send {

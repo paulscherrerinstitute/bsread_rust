@@ -48,4 +48,5 @@ mod reader;
 mod receiver;
 mod compression;
 mod utils;
+mod convert;
 
