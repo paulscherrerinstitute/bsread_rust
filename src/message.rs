@@ -234,6 +234,12 @@ impl BsMessage {
     pub fn get_dh_compression(&self) -> String {
         self.dh_compression.clone()
     }
+
+    pub fn get_value(&self, channel_name: &str) -> Option<&ChannelValue> {
+        self.get_data().get(channel_name)
+            .and_then(|result| result.as_ref().ok())
+            .map(|channel_data| channel_data.get_value())
+    }
 }
 
 //hash: Option<&String>, data_header: Option<&HashMap<String, Value>>

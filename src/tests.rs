@@ -1,5 +1,6 @@
 use super::*;
 use super::compression::decompress_bitshuffle_lz4;
+use super::utils::LimitedDebugVec;
 use core::result::Result;
 use std::collections::HashMap;
 use std::io;
@@ -18,16 +19,25 @@ fn print_res_map<T: std::fmt::Debug, U: std::fmt::Debug>(res: &io::Result<HashMa
     }
 }
 
-fn print_channel_data(channel_data: &io::Result<ChannelData>, prefix:&str) {
+fn print_channel_data(channel_data: &io::Result<ChannelData>, prefix:&str, max_elements: usize) {
     match &channel_data {
         Ok(channel_data) => {
-            println!("{}{:?}", prefix, channel_data.get_value());
+            //println!("{}{:?}", prefix, channel_data.get_value());
+            //println!("{}{:?}", prefix, LimitedDebug { data: channel_data.get_value().as_slice(), limit: 5});
+            let value = channel_data.get_value();
+            if value.is_array() {
+                println!("{}{:?}", prefix, LimitedDebugVec { data: value.as_str_array().unwrap(), limit: max_elements });
+            } else {
+                println!("{}{:?}", prefix, channel_data.get_value());
+            }
         }
         Err(e) => {
             println!("{}{:?}", prefix, e);
         }
     }
 }
+
+
 
 const PRINT_HEADER: bool = true;
 const PRINT_ID: bool = true;
@@ -36,6 +46,8 @@ const PRINT_MAIN_HEADER: bool = true;
 const PRINT_DATA_HEADER: bool = true;
 const PRINT_META_DATA: bool = true;
 const PRINT_DATA: bool = true;
+
+const PRINT_ARRAY_MAX_SIZE: usize = 10;
 
 
 fn on_message(message: &BsMessage) -> () {
@@ -75,13 +87,13 @@ fn on_message(message: &BsMessage) -> () {
         let data = message.get_data();
         for (key, value) in data {
             //println!("{}", key);
-            print_channel_data(value, format!("\t{}: ", key).as_str());
+            print_channel_data(value, format!("\t{}: ", key).as_str(), PRINT_ARRAY_MAX_SIZE);
         }
     }
 }
 
 
-const MESSAGES: u32 = 2;
+const MESSAGES: u32 = 1;
 const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
 const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:9999";
 const PIPELINE: &str = "tcp://localhost:5554";
@@ -177,3 +189,40 @@ fn bitshuffle() -> io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn conversion() -> Result<(), Box<dyn std::error::Error>> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(None, zmq::SUB)?;
+    match rec.connect(PIPELINE) {
+        Ok(_) => {}
+        Err(err) => { println!("Connection error: {}", err) }
+    }
+    let message = rec.receive(None)?;
+    on_message(&message);
+    let v = message.get_value("y_fit_gauss_function").unwrap();
+    println!("{:?}", v.as_str_array());
+    println!("{:?}", v.as_array::<i32>());
+    println!("{:?}", v.as_array::<f32>());
+    println!("{:?}", v.as_array::<f64>());
+    //.unwrap().get_value();
+
+    Ok(())
+}
+
+
+#[test]
+fn booleans() -> Result<(), Box<dyn std::error::Error>> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(None, zmq::SUB)?;
+    match rec.connect(BSREADSENDER) {
+        Ok(_) => {}
+        Err(err) => { println!("Connection error: {}", err) }
+    }
+    let message = rec.receive(None)?;
+    on_message(&message);
+    let v = message.get_value("BoolWaveform").unwrap();
+    println!("{:?}", v.as_str_array());
+    println!("{:?}", v.as_array::<i32>());
+
+    Ok(())
+}
