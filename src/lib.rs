@@ -1,4 +1,5 @@
-use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelValue, ChannelTrait};
+use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
+use crate::channel_value::{ChannelValue};
 use crate::message::{ChannelData, BsMessage};
 use crate::receiver::Receiver;
 
@@ -49,4 +50,5 @@ mod receiver;
 mod compression;
 mod utils;
 mod convert;
+mod channel_value;
 

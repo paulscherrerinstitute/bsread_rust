@@ -1,4 +1,5 @@
 use super::channel::*;
+use crate::channel_value::*;
 use super::reader::*;
 use super::compression::*;
 use std::collections::HashMap;

@@ -28,7 +28,7 @@ fn print_channel_data(channel_data: &io::Result<ChannelData>, prefix:&str, max_e
             if value.is_array() {
                 println!("{}{:?}", prefix, LimitedDebugVec { data: value.as_str_array().unwrap(), limit: max_elements });
             } else {
-                println!("{}{:?}", prefix, channel_data.get_value());
+                println!("{}{}", prefix, channel_data.get_value().as_str());
             }
         }
         Err(e) => {
@@ -201,9 +201,9 @@ fn conversion() -> Result<(), Box<dyn std::error::Error>> {
     on_message(&message);
     let v = message.get_value("y_fit_gauss_function").unwrap();
     println!("{:?}", v.as_str_array());
-    println!("{:?}", v.as_array::<i32>());
-    println!("{:?}", v.as_array::<f32>());
-    println!("{:?}", v.as_array::<f64>());
+    println!("{:?}", v.as_num_array::<i32>());
+    println!("{:?}", v.as_num_array::<f32>());
+    println!("{:?}", v.as_num_array::<f64>());
     //.unwrap().get_value();
 
     Ok(())
@@ -222,7 +222,11 @@ fn booleans() -> Result<(), Box<dyn std::error::Error>> {
     on_message(&message);
     let v = message.get_value("BoolWaveform").unwrap();
     println!("{:?}", v.as_str_array());
-    println!("{:?}", v.as_array::<i32>());
+    println!("{:?}", v.as_num_array::<i32>());
+
+    let v = message.get_value("BoolScalar").unwrap();
+    println!("{:?}", v.as_str());
+    println!("{:?}", v.as_num::<i32>());
 
     Ok(())
 }
