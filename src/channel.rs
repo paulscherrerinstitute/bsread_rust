@@ -1,4 +1,4 @@
-use crate::IOResult;
+use crate::*;
 use crate::channel_value::ChannelValue;
 use std::io;
 use std::io::Cursor;
@@ -105,7 +105,7 @@ pub trait ChannelTrait: Send {
         &EMPTY_CONFIG
     }
     fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
-        Err(io::Error::new(io::ErrorKind::Other, "Unsupported channel type"))
+        Err(new_error(ErrorKind::Unsupported, "Unsupported channel type"))
     }
 }
 
@@ -180,6 +180,6 @@ impl_channel_array_trait!(f64, AF64);
 
 impl ChannelTrait for ChannelArray<String> {
     fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
-        Err(io::Error::new(io::ErrorKind::Other, "String array not supported"))
+        Err(new_error(ErrorKind::Unsupported, "String array not supported"))
     }
 }

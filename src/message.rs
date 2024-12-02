@@ -1,4 +1,4 @@
-use crate::IOResult;
+use crate::*;
 use crate::channel_value::*;
 use crate::channel::*;
 use crate::reader::*;
@@ -137,7 +137,7 @@ impl crate::message::ChannelData {
 
 fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> IOResult<ChannelData> {
     if t.len() != 16 {
-        return Err(io::Error::new(io::ErrorKind::Other, "Invalid channel timestamp"));
+        return Err(new_error(ErrorKind::InvalidData, "Invalid channel timestamp"));
     }
 
     let data = match channel.get_config().get_compression().as_str() {
@@ -264,7 +264,7 @@ impl BsMessage {
 pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> IOResult<BsMessage> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
-        return Err(io::Error::new(io::ErrorKind::Other, "Invalid message format"));
+        return Err(new_error(ErrorKind::InvalidData, "Invalid message format"));
     }
     let main_header = decode_json(&message_parts[0])?;
     let hash = get_hash(&main_header);
@@ -300,7 +300,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> IO
         parse_new_data_header(&message_parts[1], get_dh_compression(&main_header))?
     };
     if message_parts.len() - 2 != channels.len() * 2 {
-        return Err(io::Error::new(io::ErrorKind::Other, "Invalid number of messages"));
+        return Err(new_error(ErrorKind::InvalidData, "Invalid number of messages"));
     }
     for i in 0..channels.len() {
         let channel = &channels[i];

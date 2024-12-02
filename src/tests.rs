@@ -105,7 +105,7 @@ const PIPELINES: [&str;2] = ["tcp://localhost:5554", "tcp://localhost:5555"];
 const MODE:SocketType=  zmq::PULL;
 
 #[test]
-fn single() -> Result<(), Box<dyn std::error::Error>> {
+fn single() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
@@ -113,7 +113,7 @@ fn single() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn pipeline() -> Result<(), Box<dyn std::error::Error>> {
+fn pipeline() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(PIPELINES.to_vec()), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
@@ -121,7 +121,7 @@ fn pipeline() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn multi() -> Result<(), Box<dyn std::error::Error>> {
+fn multi() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![PIPELINES[1], BSREADSENDER]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
@@ -130,7 +130,7 @@ fn multi() -> Result<(), Box<dyn std::error::Error>> {
 
 
 #[test]
-fn dynamic() -> Result<(), Box<dyn std::error::Error>> {
+fn dynamic() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, MODE)?;
     rec.connect(BSREADSENDER);
@@ -141,7 +141,7 @@ fn dynamic() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn manual() -> Result<(), Box<dyn std::error::Error>> {
+fn manual() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, MODE)?;
     match rec.connect(BSREADSENDER) {
@@ -155,7 +155,7 @@ fn manual() -> Result<(), Box<dyn std::error::Error>> {
 
 
 #[test]
-fn threaded() -> Result<(), Box<dyn std::error::Error>> {
+fn threaded() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     let handle = rec.fork(on_message, Some(MESSAGES));
@@ -166,18 +166,19 @@ fn threaded() -> Result<(), Box<dyn std::error::Error>> {
 
 
 #[test]
-fn interrupting() -> Result<(), Box<dyn std::error::Error>> {
+fn interrupting() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     let handle = rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
     bsread.interrupt();
     println!("{}", bsread.is_interrupted());
-    rec.join(handle);
+    let ret = rec.join(handle);
+    println!("{:?}", ret);
     Ok(())
 }
 #[test]
-fn compression() -> Result<(), Box<dyn std::error::Error>> {
+fn compression() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
@@ -197,7 +198,7 @@ fn bitshuffle() -> IOResult<()> {
 }
 
 #[test]
-fn conversion() -> Result<(), Box<dyn std::error::Error>> {
+fn conversion() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, MODE)?;
     match rec.connect(PIPELINES[0]) {
@@ -218,7 +219,7 @@ fn conversion() -> Result<(), Box<dyn std::error::Error>> {
 
 
 #[test]
-fn booleans() -> Result<(), Box<dyn std::error::Error>> {
+fn booleans() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, MODE)?;
     match rec.connect(BSREADSENDER) {
@@ -239,7 +240,7 @@ fn booleans() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn synchronous() -> Result<(), Box<dyn std::error::Error>> {
+fn synchronous() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     rec.start(100);

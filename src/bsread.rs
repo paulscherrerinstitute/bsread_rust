@@ -21,7 +21,7 @@ impl Bsread {
         Ok(Self { context, interrupted })
     }
 
-    pub fn receiver(&self, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> Result<Receiver, Box<dyn std::error::Error>> {
+    pub fn receiver(&self, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
         Receiver::new(&self, endpoint, socket_type)
     }
 

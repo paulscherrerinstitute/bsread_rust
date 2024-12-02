@@ -1,4 +1,4 @@
-use crate::{Bsread,IOResult};
+use crate::*;
 use crate::message::{BsMessage, parse_message};
 use std::{io, thread};
 use std::error::Error;
@@ -15,7 +15,7 @@ struct TrackedSocket {
 }
 
 impl TrackedSocket {
-    fn new(context: &Context, socket_type: zmq::SocketType) -> Result<TrackedSocket, Box<dyn std::error::Error>> {
+    fn new(context: &Context, socket_type: zmq::SocketType) -> IOResult<TrackedSocket> {
         let socket = context.socket(socket_type)?;
         Ok(Self {
             socket,
@@ -23,7 +23,7 @@ impl TrackedSocket {
         })
     }
 
-    fn connect(&mut self, endpoint: &str) -> zmq::Result<()> {
+    fn connect(&mut self, endpoint: &str) -> IOResult<()> {
         if !self.has_connected_to(endpoint) {
             self.socket.connect(endpoint)?;
             if self.socket.get_socket_type().unwrap() == SocketType::SUB {
@@ -58,7 +58,7 @@ pub struct Receiver<'a> {
 
 impl
 <'a> Receiver<'a> {
-    pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         Ok(Self { socket, endpoints, socket_type, last: None, bsread, fifo:None, handle:None, count_ok:0, count_err:0 })
@@ -87,7 +87,7 @@ impl
         message
     }
 
-    pub fn listen(&mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn listen(&mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> IOResult<()> {
         self.connect_all()?;
         let mut last: Option<BsMessage> = None;
         loop {
@@ -120,7 +120,7 @@ impl
 
 
     pub fn fork(&self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> {
-        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>,  producer_fifo: Option<Arc<FifoQueue>> , interrupted: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>,  producer_fifo: Option<Arc<FifoQueue>> , interrupted: Arc<AtomicBool>) -> IOResult<()> {
             let bsread = crate::Bsread::new_forked(interrupted).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
@@ -137,31 +137,37 @@ impl
             let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
             listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, interrupted).map_err(|e| {
                 // Handle thread panic and convert to an error
-                let panic_error: Box<dyn Error + Send + Sync> = format!("Thread panicked: {:?}", e).into();
-                panic_error
+                let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
+                error
             })
             //self.listen(callback, num_messages);
         });
         handle
     }
 
-    pub fn join(&self, handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn join(&self, handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>) -> io::Result<()> {
         handle
             .join()
             .map_err(|e| {
-                // Handle thread panic and convert to an error
-                let panic_error: Box<dyn Error> = format!("Thread error: {:?}", e).into();
-                panic_error
+                // Handle thread panic and convert to a std::io::Error
+                let error_message = format!("Thread error: {:?}", e);
+                new_error(ErrorKind::Other, error_message.as_str())
             })?
-            .map_err(|e| e as Box<dyn Error>) // Convert Box<dyn Error + Send + 'static> to Box<dyn Error>
+            .map_err(|e| {
+                let desc = e.to_string();
+                let parts:Vec<&str>  = desc.split('|').collect();
+                println!("{:?}", parts);
+                new_error(error_kind_from_str(parts[0]), parts[1])
+            })?;
+
+        Ok(())
     }
 
+
     //Synchronous API
-
-
     pub fn start(&mut self, buffer_size:usize) -> IOResult<()> {
         if self.fifo.is_some(){
-            return Err(io::Error::new(io::ErrorKind::Other, "Receiver listener already started"));
+            return Err(new_error(ErrorKind::AlreadyExists, "Receiver listener already started"));
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
 
@@ -188,7 +194,7 @@ impl
             thread::sleep(Duration::from_millis(10));
         }
 
-        Err(io::Error::new(io::ErrorKind::Other, "Timout waiting for message"))
+        Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
     pub fn count(&self) -> usize {

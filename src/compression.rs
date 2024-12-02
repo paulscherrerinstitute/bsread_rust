@@ -1,4 +1,4 @@
-use crate::IOResult;
+use crate::*;
 use std::io;
 use lz4::block::decompress as lz4_decompress;
 use std::io::{Cursor, Write};
@@ -51,7 +51,7 @@ fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, 
 pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_untrans_bit_elem(&compressed_data, element_size) {
         Ok(out) => {Ok(out)}
-        Err(e) => { return Err(io::Error::new(io::ErrorKind::Other, e)); }
+        Err(e) => {Err(new_error(ErrorKind::InvalidInput, e.as_str()))}
     }
     //let output = lz4_decompress(&buffer, None)?;
     //Ok(output)

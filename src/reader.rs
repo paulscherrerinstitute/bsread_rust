@@ -1,4 +1,4 @@
-use crate::IOResult;
+use crate::*;
 use std::string::String;
 use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
 use std::io::{Cursor, Read};
@@ -36,7 +36,7 @@ pub const READER_BOOL: fn(&mut Cursor<&Vec<u8>>) -> IOResult<bool> = |cursor: &m
 pub const READER_STRING: fn(&mut Cursor<&Vec<u8>>) -> IOResult<String> = |cursor: &mut Cursor<&Vec<u8>>| {
     let mut buffer = Vec::new();
     cursor.read_to_end(&mut buffer)?; // Read the remaining bytes into the buffer
-    String::from_utf8(buffer).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    String::from_utf8(buffer).map_err(|e| new_error(ErrorKind::InvalidData, e.to_string().as_str()))
 };
 
 pub const READER_AI8: fn(&mut Cursor<&Vec<u8>>, &mut [i8]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [i8]| { cursor.read_i8_into(arr) };
