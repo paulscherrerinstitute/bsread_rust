@@ -1,4 +1,5 @@
-use super::message::{BsMessage, parse_message};
+use crate::{Bsread,IOResult};
+use crate::message::{BsMessage, parse_message};
 use std::{io, thread};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -7,8 +8,6 @@ use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use serde_json::Value;
-use crate::Bsread;
 
 struct TrackedSocket {
     socket: zmq::Socket,
@@ -51,24 +50,26 @@ pub struct Receiver<'a> {
     last: Option<BsMessage>,
     bsread: &'a Bsread,
     fifo: Option<Arc<FifoQueue>>,
-    handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>
+    handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
+    count_ok: u32,
+    count_err: u32
 }
 
 
 impl
 <'a> Receiver<'a> {
     pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> Result<Self, Box<dyn std::error::Error>> {
-        let socket = TrackedSocket::new(&bsread.context, socket_type)?;
+        let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
-        Ok(Self { socket, endpoints, socket_type, last: None, bsread, fifo:None, handle:None })
+        Ok(Self { socket, endpoints, socket_type, last: None, bsread, fifo:None, handle:None, count_ok:0, count_err:0 })
     }
 
-    pub fn connect(&mut self, endpoint: &str) -> io::Result<()> {
+    pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
         self.socket.connect(endpoint)?;
         Ok(())
     }
 
-    fn connect_all(&mut self) -> io::Result<()> {
+    fn connect_all(&mut self) -> IOResult<()> {
         if let Some(endpoints) = self.endpoints.clone() { // Clone to avoid immutable borrow
             for endpoint in endpoints {
                 //TODO: Should break if one of the endpoints fail?
@@ -79,7 +80,7 @@ impl
     }
 
     //Asynchronous API
-    pub fn receive(&self, last: Option<BsMessage>) -> io::Result<BsMessage> {
+    pub fn receive(&self, last: Option<BsMessage>) -> IOResult<BsMessage> {
         //let x: Option<BsMessage> = *self.last;
         let message_parts = self.socket.socket.recv_multipart(0)?;
         let message = parse_message(message_parts, last);
@@ -88,7 +89,6 @@ impl
 
     pub fn listen(&mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
         self.connect_all()?;
-        let mut count = 0;
         let mut last: Option<BsMessage> = None;
         loop {
             let message = self.receive(last);
@@ -99,15 +99,16 @@ impl
                         None => {callback(msg)}
                         Some(fifo) => {fifo.add(msg)}
                     };
-                    count = count + 1;
+                    self.count_ok = self.count_ok + 1;
                 }
                 Err(e) => {
                     //TODO: error callback?
                     println!("Socket Listen Error: {}", e);
-                    last = None
+                    last = None;
+                    self.count_err = self.count_err + 1;
                 }
             }
-            if num_messages.map_or(false, |m| count >= m) {
+            if num_messages.map_or(false, |m| self.count_ok >= m) {
                 break;
             }
             if self.bsread.is_interrupted() {
@@ -127,7 +128,7 @@ impl
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
-        let interrupted = Arc::clone(&self.bsread.interrupted);
+        let interrupted = Arc::clone(self.bsread.get_interrupted());
         let producer_fifo = match &self.fifo {
             None => { None }
             Some(f) => { Some(f.clone()) }
@@ -158,7 +159,7 @@ impl
     //Synchronous API
 
 
-    pub fn start(&mut self, buffer_size:usize) -> io::Result<()> {
+    pub fn start(&mut self, buffer_size:usize) -> IOResult<()> {
         if self.fifo.is_some(){
             return Err(io::Error::new(io::ErrorKind::Other, "Receiver listener already started"));
         }
@@ -177,7 +178,7 @@ impl
         }
     }
 
-    pub fn wait(&self, timeout_ms: u64) -> io::Result<BsMessage> {
+    pub fn wait(&self, timeout_ms: u64) -> IOResult<BsMessage> {
         let timeout_duration = Duration::from_millis(timeout_ms);
         let start_time = Instant::now();
         while start_time.elapsed() < timeout_duration {
@@ -195,6 +196,19 @@ impl
             None => {0}
             Some(fifo) => {fifo.get_available_count()}
         }
+    }
+
+    pub fn get_count_ok(&self) -> u32 {
+        self.count_ok
+    }
+
+    pub fn get_count_err(&self) -> u32 {
+        self.count_err
+    }
+
+    pub fn reset_counters(& mut self) {
+        self.count_ok = 0;
+        self.count_err = 0;
     }
 }
 

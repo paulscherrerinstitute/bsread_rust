@@ -1,7 +1,8 @@
-use super::channel::*;
+use crate::IOResult;
 use crate::channel_value::*;
-use super::reader::*;
-use super::compression::*;
+use crate::channel::*;
+use crate::reader::*;
+use crate::compression::*;
 use std::collections::HashMap;
 use std::io;
 use std::io::{Cursor};
@@ -134,7 +135,7 @@ impl crate::message::ChannelData {
     }
 }
 
-fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> io::Result<ChannelData> {
+fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> IOResult<ChannelData> {
     if t.len() != 16 {
         return Err(io::Error::new(io::ErrorKind::Other, "Invalid channel timestamp"));
     }
@@ -162,7 +163,7 @@ pub struct BsMessage {
     main_header: HashMap<String, Value>,
     data_header: HashMap<String, Value>,
     channels: Vec<Box<dyn ChannelTrait>>,
-    data: IndexMap<String, io::Result<ChannelData>>,
+    data: IndexMap<String, IOResult<ChannelData>>,
     id: u64,
     hash: String,
     htype: String,
@@ -185,7 +186,7 @@ impl BsMessage {
     fn new(main_header: HashMap<String, Value>,
            data_header: HashMap<String, Value>,
            channels: Vec<Box<dyn ChannelTrait>>,
-           data: IndexMap<String, io::Result<ChannelData>>) -> io::Result<Self> {
+           data: IndexMap<String, IOResult<ChannelData>>) -> IOResult<Self> {
         let hash = get_hash(&main_header);
         let dh_compression = get_dh_compression(&main_header);
         let id = main_header.get("pulse_id").unwrap().as_u64().unwrap();
@@ -199,7 +200,7 @@ impl BsMessage {
                 (sec, ns)
             }
         };
-        io::Result::Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
+        Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
     }
 
     pub fn get_main_header(&self) -> &HashMap<String, Value> {
@@ -214,7 +215,7 @@ impl BsMessage {
         &self.channels
     }
 
-    pub fn get_data(&self) -> &IndexMap<String, io::Result<ChannelData>> {
+    pub fn get_data(&self) -> &IndexMap<String, IOResult<ChannelData>> {
         &self.data
     }
 
@@ -260,7 +261,7 @@ impl BsMessage {
     }
 }
 //hash: Option<&String>, data_header: Option<&HashMap<String, Value>>
-pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> io::Result<BsMessage> {
+pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> IOResult<BsMessage> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
         return Err(io::Error::new(io::ErrorKind::Other, "Invalid message format"));
@@ -269,7 +270,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> io
     let hash = get_hash(&main_header);
 
 
-    fn parse_new_data_header(blob: &Vec<u8>, compresion : String) -> io::Result<(HashMap<String, Value>, Vec<Box<dyn ChannelTrait>>)> {
+    fn parse_new_data_header(blob: &Vec<u8>, compresion : String) -> IOResult<(HashMap<String, Value>, Vec<Box<dyn ChannelTrait>>)> {
         let json = match  compresion.as_str() {
             "bitshuffle_lz4" => {
                 &decompress_bitshuffle_lz4(blob, 1)?

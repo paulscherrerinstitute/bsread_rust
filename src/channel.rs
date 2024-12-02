@@ -1,4 +1,5 @@
-use crate::channel_value::{ChannelValue};
+use crate::IOResult;
+use crate::channel_value::ChannelValue;
 use std::io;
 use std::io::Cursor;
 
@@ -37,12 +38,12 @@ impl ChannelConfig {
 
 pub struct ChannelScalar<T> {
     config: ChannelConfig,
-    reader: fn(&mut Cursor<&Vec<u8>>) -> io::Result<T>,
+    reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>,
 }
 
 pub struct ChannelArray<T> {
     config: ChannelConfig,
-    reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> io::Result<()>,
+    reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,
     buffer: Vec<T>,
 }
 
@@ -73,7 +74,7 @@ fn get_element_size(typ: &str) -> usize {
     }
 }
 impl<T: Default + Clone> ChannelScalar<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<i32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> io::Result<T>) -> Self {
+    pub fn new(name: String, typ: String, shape: Option<Vec<i32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, le, compression };
@@ -83,7 +84,7 @@ impl<T: Default + Clone> ChannelScalar<T> {
 
 
 impl<T: Default + Clone> ChannelArray<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<i32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> io::Result<()>) -> Self {
+    pub fn new(name: String, typ: String, shape: Option<Vec<i32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, le, compression };
@@ -103,14 +104,14 @@ pub trait ChannelTrait: Send {
     fn get_config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> io::Result<ChannelValue> {
+    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
         Err(io::Error::new(io::ErrorKind::Other, "Unsupported channel type"))
     }
 }
 
 /*
 impl ChannelTrait for Channel<i32> {
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> io::Result<ChannelValue> {
+    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
         let result = (self.reader)(cursor)?;
         Ok(ChannelValue::I32(result))
     }
@@ -120,7 +121,7 @@ impl ChannelTrait for Channel<i32> {
 macro_rules! impl_channel_scalar_trait {
     ($t:ty, $variant:ident) => {
         impl ChannelTrait for ChannelScalar<$t> {
-            fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> io::Result<ChannelValue> {
+            fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
                     let result = (self.reader)(cursor)?;
                     Ok(ChannelValue::$variant(result))
             }
@@ -135,7 +136,7 @@ macro_rules! impl_channel_scalar_trait {
 macro_rules! impl_channel_array_trait {
     ($t:ty, $variant:ident) => {
         impl ChannelTrait for ChannelArray<$t> {
-           fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> io::Result<ChannelValue> {
+           fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
                     //let mut buffer: Vec<$t>  = Vec::new();
                     //buffer.resize(self.config.elements, <$t>::default());
                     let mut buffer: Vec<$t> = Vec::with_capacity(self.config.elements);
@@ -178,7 +179,7 @@ impl_channel_array_trait!(f32, AF32);
 impl_channel_array_trait!(f64, AF64);
 
 impl ChannelTrait for ChannelArray<String> {
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> io::Result<ChannelValue> {
+    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
         Err(io::Error::new(io::ErrorKind::Other, "String array not supported"))
     }
 }
