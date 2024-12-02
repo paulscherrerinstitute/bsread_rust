@@ -42,15 +42,15 @@ fn print_channel_data(channel_data: &io::Result<ChannelData>, prefix:&str, max_e
 const PRINT_HEADER: bool = true;
 const PRINT_ID: bool = true;
 const PRINT_ATTRS: bool = true;
-const PRINT_MAIN_HEADER: bool = true;
-const PRINT_DATA_HEADER: bool = true;
-const PRINT_META_DATA: bool = true;
-const PRINT_DATA: bool = true;
+const PRINT_MAIN_HEADER: bool = false;
+const PRINT_DATA_HEADER: bool = false;
+const PRINT_META_DATA: bool = false;
+const PRINT_DATA: bool = false;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 
 
-fn on_message(message: &BsMessage) -> () {
+fn print_message(message: &BsMessage) -> () {
     if PRINT_ID {
         println!("{}", "-".repeat(80));
     }
@@ -93,15 +93,21 @@ fn on_message(message: &BsMessage) -> () {
 }
 
 
-const MESSAGES: u32 = 1;
+fn on_message(message: BsMessage) -> () {
+    print_message(&message);
+}
+
+
+const MESSAGES: u32 = 3;
 const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
 const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:9999";
 const PIPELINE: &str = "tcp://localhost:5554";
+const MODE:SocketType=  zmq::SUB;
 
 #[test]
 fn single() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     Ok(())
 }
@@ -109,7 +115,7 @@ fn single() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn pipeline() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![PIPELINE]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![PIPELINE]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     Ok(())
 }
@@ -117,7 +123,7 @@ fn pipeline() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn multi() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![PIPELINE, BSREADSENDER]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![PIPELINE, BSREADSENDER]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     Ok(())
 }
@@ -126,7 +132,7 @@ fn multi() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn dynamic() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, zmq::SUB)?;
+    let mut rec = bsread.receiver(None, MODE)?;
     rec.connect(BSREADSENDER);
     rec.connect(PIPELINE);
     rec.listen(on_message, Some(MESSAGES))?;
@@ -136,13 +142,13 @@ fn dynamic() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn manual() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, zmq::SUB)?;
+    let mut rec = bsread.receiver(None, MODE)?;
     match rec.connect(BSREADSENDER) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
     let message = rec.receive(None)?;
-    on_message(&message);
+    print_message(&message);
     Ok(())
 }
 
@@ -150,7 +156,7 @@ fn manual() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn threaded() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let rec = bsread.receiver(Some(vec![BSREADSENDER]), zmq::SUB)?;
+    let rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     let handle = rec.fork(on_message, Some(MESSAGES));
     let r = rec.join(handle);
     println!("{:?}", r);
@@ -161,7 +167,7 @@ fn threaded() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn interrupting() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let rec = bsread.receiver(Some(vec![BSREADSENDER]), zmq::SUB)?;
+    let rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     let handle = rec.fork(on_message, Some(MESSAGES));
     thread::sleep(Duration::from_millis(10));
     bsread.interrupt();
@@ -172,7 +178,7 @@ fn interrupting() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn compression() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     Ok(())
 }
@@ -192,13 +198,13 @@ fn bitshuffle() -> io::Result<()> {
 #[test]
 fn conversion() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, zmq::SUB)?;
+    let mut rec = bsread.receiver(None, MODE)?;
     match rec.connect(PIPELINE) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
     let message = rec.receive(None)?;
-    on_message(&message);
+    print_message(&message);
     let v = message.get_value("y_fit_gauss_function").unwrap();
     println!("{:?}", v.as_str_array());
     println!("{:?}", v.as_num_array::<i32>());
@@ -213,13 +219,13 @@ fn conversion() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn booleans() -> Result<(), Box<dyn std::error::Error>> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, zmq::SUB)?;
+    let mut rec = bsread.receiver(None, MODE)?;
     match rec.connect(BSREADSENDER) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
     let message = rec.receive(None)?;
-    on_message(&message);
+    print_message(&message);
     let v = message.get_value("BoolWaveform").unwrap();
     println!("{:?}", v.as_str_array());
     println!("{:?}", v.as_num_array::<i32>());
@@ -230,3 +236,19 @@ fn booleans() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn synchronous() -> Result<(), Box<dyn std::error::Error>> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    rec.start(100);
+    for i in 0..MESSAGES {
+        match rec.wait(100) {
+            Ok(msg) => {print_message(&msg)}
+            Err(e) => {println!("{}",e)}
+        }
+    }
+    Ok(())
+}
+
+

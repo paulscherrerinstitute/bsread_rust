@@ -1,3 +1,5 @@
+extern crate core;
+
 use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
 use crate::channel_value::{ChannelValue};
 use crate::message::{ChannelData, BsMessage};

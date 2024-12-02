@@ -241,8 +241,24 @@ impl BsMessage {
             .and_then(|result| result.as_ref().ok())
             .map(|channel_data| channel_data.get_value())
     }
+    pub fn clone_data_header_info(&self) -> Option<Self> {
+        let main_header = HashMap::new();
+        let data_header = self.data_header.clone();
+        //TODO: is there a better way to clone channels?
+        let channels;
+        match (get_channels(&data_header)){
+            Ok(ch) => {channels = ch;}
+            Err(_) => {return None}
+        }
+        let id = self.get_id();
+        let hash = self.get_hash();
+        let data = IndexMap::new();
+        let htype = self.get_htype();
+        let dh_compression = self.get_dh_compression();
+        let timestamp = self.get_timestamp();
+        Some(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
+    }
 }
-
 //hash: Option<&String>, data_header: Option<&HashMap<String, Value>>
 pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> io::Result<BsMessage> {
     let mut data = IndexMap::new();
