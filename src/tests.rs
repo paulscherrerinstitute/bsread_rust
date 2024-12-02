@@ -98,11 +98,11 @@ fn on_message(message: BsMessage) -> () {
 }
 
 
-const MESSAGES: u32 = 3;
+const MESSAGES: u32 = 12;
 const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
 const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:9999";
 const PIPELINE: &str = "tcp://localhost:5554";
-const MODE:SocketType=  zmq::SUB;
+const MODE:SocketType=  zmq::PULL;
 
 #[test]
 fn single() -> Result<(), Box<dyn std::error::Error>> {

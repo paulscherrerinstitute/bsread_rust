@@ -27,7 +27,9 @@ impl TrackedSocket {
     fn connect(&mut self, endpoint: &str) -> zmq::Result<()> {
         if !self.has_connected_to(endpoint) {
             self.socket.connect(endpoint)?;
-            self.socket.set_subscribe(b"")?;
+            if self.socket.get_socket_type().unwrap() == SocketType::SUB {
+                self.socket.set_subscribe(b"")?;
+            }
             self.connections.push(endpoint.to_string());
         }
         Ok(())
@@ -63,8 +65,6 @@ impl
 
     pub fn connect(&mut self, endpoint: &str) -> io::Result<()> {
         self.socket.connect(endpoint)?;
-        //self.socket.connect(&self.address)?;
-        //self.socket.set_subscribe(b"")?;
         Ok(())
     }
 
