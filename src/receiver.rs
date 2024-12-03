@@ -44,7 +44,14 @@ impl TrackedSocket {
     }
 }
 
-
+static mut receiver_index: Mutex<u32> = Mutex::new(0);
+fn get_index() -> u32{
+    unsafe {
+        let mut counter = receiver_index.lock().unwrap();
+        *counter += 1;
+        *counter
+    }
+}
 
 pub struct Receiver<'a> {
     socket: TrackedSocket,
@@ -56,7 +63,8 @@ pub struct Receiver<'a> {
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     counter_messages: u32,
     counter_error: u32,
-    counter_header_changes: u32
+    counter_header_changes: u32,
+    index: u32
 }
 
 impl
@@ -64,8 +72,13 @@ impl
     pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
+        let index =  get_index();
         Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None,
-            counter_messages:0, counter_error:0, counter_header_changes:0 })
+            counter_messages:0, counter_error:0, counter_header_changes:0, index })
+    }
+
+    pub fn to_string(& self,) -> String {
+        format!("Receiver {}" , self.index)
     }
 
     pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
@@ -73,7 +86,7 @@ impl
         Ok(())
     }
 
-    fn connect_all(&mut self) -> IOResult<()> {
+    pub fn connect_all(&mut self) -> IOResult<()> {
         if let Some(endpoints) = self.endpoints.clone() { // Clone to avoid immutable borrow
             for endpoint in endpoints {
                 //TODO: Should break if one of the endpoints fail?
@@ -81,6 +94,17 @@ impl
             }
         }
         Ok(())
+    }
+
+    pub fn add_endpoint(&mut self, endpoint: String) {
+        match &mut self.endpoints {
+            Some(vec) => {
+                vec.push(endpoint);
+            }
+            None => {
+                self.endpoints = Some(vec![endpoint]);
+            }
+        }
     }
 
     //Asynchronous API
@@ -123,7 +147,7 @@ impl
     }
 
 
-    pub fn fork(&self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> {
+    pub fn fork(& mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) {
         fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>,  producer_fifo: Option<Arc<FifoQueue>> , interrupted: Arc<AtomicBool>) -> IOResult<()> {
             let bsread = crate::Bsread::new_forked(interrupted).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
@@ -137,35 +161,44 @@ impl
             None => { None }
             Some(f) => { Some(f.clone()) }
         };
-        let handle = thread::spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
-            let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-            listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, interrupted).map_err(|e| {
-                // Handle thread panic and convert to an error
-                let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
-                error
-            })
-            //self.listen(callback, num_messages);
-        });
-        handle
+        let thread_name = self.to_string();
+        let handle = thread::Builder::new()
+            .name(thread_name.to_string())
+            .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
+                let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
+                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, interrupted).map_err(|e| {
+                    // Handle thread panic and convert to an error
+                    let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
+                    error
+                })
+                //self.listen(callback, num_messages);
+             })
+            .expect("Failed to spawn thread");
+        self.handle = Some(handle);
     }
 
-    pub fn join(&self, handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>) -> io::Result<()> {
-        handle
-            .join()
-            .map_err(|e| {
-                // Handle thread panic and convert to a std::io::Error
-                let error_message = format!("Thread error: {:?}", e);
-                new_error(ErrorKind::Other, error_message.as_str())
-            })?
-            .map_err(|e| {
-                let desc = e.to_string();
-                let parts:Vec<&str>  = desc.split('|').collect();
-                println!("{:?}", parts);
-                new_error(error_kind_from_str(parts[0]), parts[1])
-            })?;
-
+    pub fn join(& mut self) -> io::Result<()> {
+        if let Some(handle) = self.handle.take() { // Take ownership of the handle
+            self.handle = None;
+            handle
+                .join()
+                .map_err(|e| {
+                    // Handle thread panic and convert to a std::io::Error
+                    let error_message = format!("Thread error: {:?}", e);
+                    new_error(ErrorKind::Other, error_message.as_str())
+                })?
+                .map_err(|e| {
+                    let desc = e.to_string();
+                    let parts: Vec<&str> = desc.split('|').collect();
+                    println!("{:?}", parts);
+                    new_error(error_kind_from_str(parts[0]), parts[1])
+                })?;
+        }
         Ok(())
     }
+
+
+
 
 
     //Synchronous API
@@ -176,7 +209,7 @@ impl
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
 
         fn callback(_: BsMessage) -> () {}
-        self.handle = Some(self.fork(callback, None));
+        self.fork(callback, None);
         Ok(())
     }
 

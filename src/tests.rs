@@ -84,9 +84,9 @@ fn manual() -> IOResult<()> {
 #[test]
 fn threaded() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
-    let handle = rec.fork(on_message, Some(MESSAGES));
-    let r = rec.join(handle);
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    rec.fork(on_message, Some(MESSAGES));
+    let r = rec.join();
     println!("{:?}", r);
     Ok(())
 }
@@ -95,12 +95,12 @@ fn threaded() -> IOResult<()> {
 #[test]
 fn interrupting() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
-    let handle = rec.fork(on_message, None);
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
     bsread.interrupt();
     println!("{}", bsread.is_interrupted());
-    let ret = rec.join(handle);
+    let ret = rec.join();
     println!("{:?}", ret);
     Ok(())
 }
@@ -211,6 +211,14 @@ fn limited_hashmap() {
     println!("{:?}", limited_map.is_void()); // Some(4)
     limited_map = crate::utils::LimitedHashMap::void();
     println!("{:?}", limited_map.is_void()); // Some(4)
+}
 
-
+#[test]
+fn pool() -> IOResult<()> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut pool = bsread.pool(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], MODE, 2)?;
+    pool.start(on_message);
+    thread::sleep(Duration::from_millis(100));
+    pool.stop();
+    Ok(())
 }

@@ -1,5 +1,6 @@
 use crate::IOResult;
 use crate::receiver::Receiver;
+use crate::pool::Pool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zmq::{Context, SocketType};
@@ -23,6 +24,10 @@ impl Bsread {
 
     pub fn receiver(&self, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
         Receiver::new(&self, endpoint, socket_type)
+    }
+
+    pub fn pool(&self, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
+        Pool::new(&self, endpoints, socket_type, threads)
     }
 
     pub fn interrupt(&self) {

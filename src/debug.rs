@@ -1,5 +1,7 @@
 use crate::IOResult;
 use crate::message::{BsMessage, ChannelData};
+use std::sync::Mutex;
+use std::thread;
 
 pub fn vec_to_hex_string(vec: &[u8]) -> String {
     vec.iter()
@@ -45,10 +47,28 @@ pub fn print_channel_data(channel_data: &IOResult<ChannelData>, prefix:&str, max
     }
 }
 
+static mut message_counter: Mutex<i32> = Mutex::new(0);
+
+
+fn increment_counter() {
+    unsafe {
+        let mut counter = message_counter.lock().unwrap();
+        *counter += 1;
+    }
+}
+
 pub fn print_message(message: &BsMessage, max_size:usize, header:bool, id:bool, attrs:bool, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
     if header {
         println!("{}", "-".repeat(80));
+        let current_thread = thread::current(); // Keep the thread alive
+        let thread_name = current_thread.name().unwrap_or("Unnamed Thread");
+        unsafe {
+            println!("Message: {} \t Thread: {}", *message_counter.lock().unwrap(), thread_name);
+        }
+
+        println!("{}", "-".repeat(80));
     }
+    increment_counter();
     if id {
         println!("ID = {:?}", message.get_id());
     }
