@@ -2,7 +2,6 @@ use crate::*;
 use std::string::String;
 use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
 use std::io::{Cursor, Read};
-use std::io;
 
 trait ReadU8Into {
     fn read_u8_into(&mut self, buf: &mut [u8]) -> IOResult<()>;

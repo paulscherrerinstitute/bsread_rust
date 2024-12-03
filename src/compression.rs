@@ -1,5 +1,4 @@
 use crate::*;
-use std::io;
 use lz4::block::decompress as lz4_decompress;
 use std::io::{Cursor, Write};
 use byteorder::{LittleEndian, BigEndian, ReadBytesExt};

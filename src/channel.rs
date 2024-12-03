@@ -1,6 +1,5 @@
 use crate::*;
-use crate::channel_value::ChannelValue;
-use std::io;
+use crate::value::Value;
 use std::io::Cursor;
 
 
@@ -104,7 +103,7 @@ pub trait ChannelTrait: Send {
     fn get_config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
+    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(new_error(ErrorKind::Unsupported, "Unsupported channel type"))
     }
 }
@@ -113,7 +112,7 @@ pub trait ChannelTrait: Send {
 impl ChannelTrait for Channel<i32> {
     fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
         let result = (self.reader)(cursor)?;
-        Ok(ChannelValue::I32(result))
+        Ok(Value::I32(result))
     }
 }
  */
@@ -121,9 +120,9 @@ impl ChannelTrait for Channel<i32> {
 macro_rules! impl_channel_scalar_trait {
     ($t:ty, $variant:ident) => {
         impl ChannelTrait for ChannelScalar<$t> {
-            fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
+            fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
                     let result = (self.reader)(cursor)?;
-                    Ok(ChannelValue::$variant(result))
+                    Ok(Value::$variant(result))
             }
             fn get_config(&self) -> &ChannelConfig{
                 return &self.config
@@ -136,7 +135,7 @@ macro_rules! impl_channel_scalar_trait {
 macro_rules! impl_channel_array_trait {
     ($t:ty, $variant:ident) => {
         impl ChannelTrait for ChannelArray<$t> {
-           fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
+           fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
                     //let mut buffer: Vec<$t>  = Vec::new();
                     //buffer.resize(self.config.elements, <$t>::default());
                     let mut buffer: Vec<$t> = Vec::with_capacity(self.config.elements);
@@ -144,7 +143,7 @@ macro_rules! impl_channel_array_trait {
                         buffer.set_len(self.config.elements); // Initialize the buffer without default values
                     }
                     (self.reader)(cursor, & mut buffer)?;
-                    Ok(ChannelValue::$variant(buffer))
+                    Ok(Value::$variant(buffer))
             }
             fn get_config(&self) -> &ChannelConfig{
                 return &self.config
@@ -179,7 +178,7 @@ impl_channel_array_trait!(f32, AF32);
 impl_channel_array_trait!(f64, AF64);
 
 impl ChannelTrait for ChannelArray<String> {
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
+    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(new_error(ErrorKind::Unsupported, "String array not supported"))
     }
 }

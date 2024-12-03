@@ -2,7 +2,7 @@ extern crate core;
 
 use crate::bsread::{Bsread};
 use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
-use crate::channel_value::{ChannelValue};
+use crate::value::{Value};
 use crate::message::{ChannelData, BsMessage};
 use crate::receiver::Receiver;
 use core::result::Result;
@@ -37,7 +37,6 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
     }
 }
 
-
 fn new_error(kind: ErrorKind, desc: &str) -> IOError {
     IOError::new(kind, desc)
 }
@@ -53,5 +52,6 @@ mod receiver;
 mod compression;
 mod utils;
 mod convert;
-mod channel_value;
+mod value;
+mod debug;
 

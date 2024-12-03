@@ -9,6 +9,7 @@ use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::collections::{VecDeque};
 use std::time::{Duration, Instant};
+
 struct TrackedSocket {
     socket: zmq::Socket,
     connections: Vec<String>,

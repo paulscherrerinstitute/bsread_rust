@@ -1,97 +1,22 @@
 use crate::*;
 use crate::compression::decompress_bitshuffle_lz4;
-use crate::utils::LimitedDebugVec;
-use core::result::Result;
-use std::collections::HashMap;
-use std::io;
 use std::thread;
 use std::time::Duration;
 
 
-fn print_res_map<T: std::fmt::Debug, U: std::fmt::Debug>(res: &IOResult<HashMap<T, U>>) {
-    match &res {
-        Ok(ok) => {
-            println!("{:?}", ok);
-        }
-        Err(e) => {
-            println!("{:?}", e);
-        }
-    }
-}
-
-fn print_channel_data(channel_data: &IOResult<ChannelData>, prefix:&str, max_elements: usize) {
-    match &channel_data {
-        Ok(channel_data) => {
-            //println!("{}{:?}", prefix, channel_data.get_value());
-            //println!("{}{:?}", prefix, LimitedDebug { data: channel_data.get_value().as_slice(), limit: 5});
-            let value = channel_data.get_value();
-            if value.is_array() {
-                println!("{}{:?}", prefix, LimitedDebugVec { data: value.as_str_array().unwrap(), limit: max_elements });
-            } else {
-                println!("{}{}", prefix, channel_data.get_value().as_str());
-            }
-        }
-        Err(e) => {
-            println!("{}{:?}", prefix, e);
-        }
-    }
-}
-
-
-
+const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
 const PRINT_ID: bool = true;
 const PRINT_ATTRS: bool = false;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = false;
+const PRINT_DATA: bool = true;
 
-const PRINT_ARRAY_MAX_SIZE: usize = 10;
-
-
-fn print_message(message: &BsMessage) -> () {
-    if PRINT_ID {
-        println!("{}", "-".repeat(80));
-    }
-    if PRINT_ID {
-        println!("ID = {:?}", message.get_id());
-    }
-    if (PRINT_ATTRS) {
-        println!("Attrs:");
-        println!("\thtype: {:?}", message.get_htype());
-        println!("\tdh_compression: {:?}", message.get_dh_compression());
-        println!("\thash: {:?}", message.get_hash());
-        println!("\ttimestamp: {:?}", message.get_timestamp());
-    }
-    if (PRINT_MAIN_HEADER) {
-        println!("Main Header:");
-        println!("\t {:?}", message.get_main_header());
-    }
-    if (PRINT_DATA_HEADER) {
-        println!("Data Header:");
-        println!("\t {:?}", message.get_data_header());
-    }
-    if (PRINT_META_DATA) {
-        let mut channel_names = Vec::new();
-        println!("Channel Metadata:");
-        for channel in message.get_channels() {
-            let config = channel.get_config();
-            let shape : Vec<u32> = config.get_shape().unwrap_or(Vec::new());
-            println!("\t{} {} {:?} {} {}", config.get_name(), config.get_type(), shape, config.get_elements(), config.get_compression());
-            channel_names.push(config.get_name());
-        }
-    }
-    if (PRINT_DATA) {
-        println!("Channel Data:");
-        let data = message.get_data();
-        for (key, value) in data {
-            //println!("{}", key);
-            print_channel_data(value, format!("\t{}: ", key).as_str(), PRINT_ARRAY_MAX_SIZE);
-        }
-    }
+pub fn print_message(message: &BsMessage){
+    debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
+                         PRINT_MAIN_HEADER, PRINT_DATA_HEADER, PRINT_META_DATA, PRINT_DATA);
 }
-
 
 fn on_message(message: BsMessage) -> () {
     print_message(&message);

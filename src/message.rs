@@ -1,21 +1,23 @@
 use crate::*;
-use crate::channel_value::*;
+use crate::value::*;
 use crate::channel::*;
 use crate::reader::*;
 use crate::compression::*;
+use crate::utils::LimitedHashMap;
 use std::collections::HashMap;
 use std::io::{Cursor};
 use indexmap::IndexMap;
-use serde_json::{Error, Map, Value};
-use crate::utils::LimitedHashMap;
+use serde_json::Error as JSonError;
+use serde_json::Value as JsonValue;
+use serde_json::Map as JsonMap;
 
-fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, Value>, Error> {
+fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, JsonValue>, JSonError> {
     serde_json::from_slice(&bytes)
 }
 
-fn convert_shape_val_to_vec(opt_val: Option<&Value>) -> Option<Vec<u32>> {
+fn convert_shape_val_to_vec(opt_val: Option<&JsonValue>) -> Option<Vec<u32>> {
     opt_val.and_then(|val| {
-        if let Value::Array(arr) = val {
+        if let JsonValue::Array(arr) = val {
             // Try converting all elements to integers
             let vec: Option<Vec<u32>> = arr
                 .into_iter()
@@ -30,7 +32,7 @@ fn convert_shape_val_to_vec(opt_val: Option<&Value>) -> Option<Vec<u32>> {
     })
 }
 
-fn get_channel(channel_data: &Map<String, Value>) -> Result<Box<dyn ChannelTrait>, &'static str> {
+fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> Result<Box<dyn ChannelTrait>, &'static str> {
     let name = channel_data.get("name")
         .and_then(|v| v.as_str())
         .ok_or("Invalid format: 'name' missing or not a string")?
@@ -97,7 +99,7 @@ fn get_channel(channel_data: &Map<String, Value>) -> Result<Box<dyn ChannelTrait
 
 //fn get_channels(data_header: &HashMap<String, Value>) -> Result<HashMap<String, Channel>, &'static str> {
 //fn get_channels(data_header: &HashMap<String, Value>) -> Result<Vec<Channel>, &'static str> {
-fn get_channels(data_header: &HashMap<String, Value>) -> Result<Vec<Box<dyn ChannelTrait>>, &'static str> {
+fn get_channels(data_header: &HashMap<String, JsonValue>) -> Result<Vec<Box<dyn ChannelTrait>>, &'static str> {
     // Attempt to get the "channels" key and ensure it is an array
     let items = data_header
         .get("channels")
@@ -122,12 +124,12 @@ fn get_channels(data_header: &HashMap<String, Value>) -> Result<Vec<Box<dyn Chan
 
 #[derive(Debug)]
 pub struct ChannelData {
-    value: ChannelValue,
+    value: Value,
     timestamp: (i64, i64),
 }
 
 impl crate::message::ChannelData {
-    pub fn get_value(&self) -> &ChannelValue {
+    pub fn get_value(&self) -> &Value {
         &self.value
     }
     pub fn get_timestamp(&self) -> &(i64, i64) {
@@ -160,8 +162,8 @@ fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> I
 }
 
 pub struct BsMessage {
-    main_header: HashMap<String, Value>,
-    data_header: HashMap<String, Value>,
+    main_header: HashMap<String, JsonValue>,
+    data_header: HashMap<String, JsonValue>,
     channels: Vec<Box<dyn ChannelTrait>>,
     data: IndexMap<String, IOResult<ChannelData>>,
     id: u64,
@@ -172,15 +174,15 @@ pub struct BsMessage {
 }
 
 pub struct DataHeaderInfo {
-    pub data_header: HashMap<String, Value>,
+    pub data_header: HashMap<String, JsonValue>,
     pub channels: Vec<Box<dyn ChannelTrait>>,
 }
 
-fn get_hash(main_header: &HashMap<String, Value>) -> String {
+fn get_hash(main_header: &HashMap<String, JsonValue>) -> String {
     main_header.get("hash").unwrap().as_str().unwrap().to_string()
 }
 
-fn get_dh_compression(main_header: &HashMap<String, Value>) -> String {
+fn get_dh_compression(main_header: &HashMap<String, JsonValue>) -> String {
     match main_header.get("dh_compression") {
         None => { "none" }
         Some(v) => { v.as_str().unwrap() }
@@ -188,8 +190,8 @@ fn get_dh_compression(main_header: &HashMap<String, Value>) -> String {
 }
 
 impl BsMessage {
-    fn new(main_header: HashMap<String, Value>,
-           data_header: HashMap<String, Value>,
+    fn new(main_header: HashMap<String, JsonValue>,
+           data_header: HashMap<String, JsonValue>,
            channels: Vec<Box<dyn ChannelTrait>>,
            data: IndexMap<String, IOResult<ChannelData>>) -> IOResult<Self> {
         let hash = get_hash(&main_header);
@@ -208,11 +210,11 @@ impl BsMessage {
         Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
     }
 
-    pub fn get_main_header(&self) -> &HashMap<String, Value> {
+    pub fn get_main_header(&self) -> &HashMap<String, JsonValue> {
         &self.main_header
     }
 
-    pub fn get_data_header(&self) -> &HashMap<String, Value> {
+    pub fn get_data_header(&self) -> &HashMap<String, JsonValue> {
         &self.data_header
     }
 
@@ -242,7 +244,7 @@ impl BsMessage {
         self.dh_compression.clone()
     }
 
-    pub fn get_value(&self, channel_name: &str) -> Option<&ChannelValue> {
+    pub fn get_value(&self, channel_name: &str) -> Option<&Value> {
         self.get_data().get(channel_name)
             .and_then(|result| result.as_ref().ok())
             .map(|channel_data| channel_data.get_value())
