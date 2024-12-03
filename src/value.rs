@@ -33,18 +33,18 @@ pub enum Value {
 impl Value {
     pub fn is_array(&self) -> bool {
         match self {
-            Value::ASTR(data) => true,
-            Value::ABOOL(data) => true,
-            Value::AI8(data) => true,
-            Value::AU8(data) => true,
-            Value::AI16(data) => true,
-            Value::AU16(data) => true,
-            Value::AI32(data) => true,
-            Value::AU32(data) => true,
-            Value::AI64(data) => true,
-            Value::AU64(data) => true,
-            Value::AF32(data) => true,
-            Value::AF64(data) => true,
+            Value::ASTR(_) => true,
+            Value::ABOOL(_) => true,
+            Value::AI8(_) => true,
+            Value::AU8(_) => true,
+            Value::AI16(_) => true,
+            Value::AU16(_) => true,
+            Value::AI32(_) => true,
+            Value::AU32(_) => true,
+            Value::AI64(_) => true,
+            Value::AU64(_) => true,
+            Value::AF32(_) => true,
+            Value::AF64(_) => true,
             _ => false, // Non-array types return None
         }
     }

@@ -100,7 +100,7 @@ impl
             let message = self.receive();
             match message {
                 Ok(msg) => {
-                    match (&self.fifo) {
+                    match &self.fifo {
                         None => {callback(msg)}
                         Some(fifo) => {fifo.add(msg)}
                     };
@@ -175,14 +175,13 @@ impl
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
 
-        fn callback(message: BsMessage) -> () {
-        }
+        fn callback(_: BsMessage) -> () {}
         self.handle = Some(self.fork(callback, None));
         Ok(())
     }
 
     pub fn get(&self) -> Option<BsMessage> {
-        match (&self.fifo){
+        match &self.fifo{
             None => {None}
             Some(fifo) => {fifo.get()}
         }
@@ -282,7 +281,6 @@ impl FifoQueue {
 
     /// Retrieves the count of available messages.
     fn get_available_count(&self) -> usize {
-        let mut queue = self.queue.lock().unwrap();
-        queue.len()
+        self.queue.lock().unwrap().len()
     }
 }

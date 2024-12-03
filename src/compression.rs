@@ -1,7 +1,7 @@
 use crate::*;
 use lz4::block::decompress as lz4_decompress;
-use std::io::{Cursor, Write};
-use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
+use std::io::{Cursor};
+use byteorder::{BigEndian, ReadBytesExt};
 
 
 extern "C" {

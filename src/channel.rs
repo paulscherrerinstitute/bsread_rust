@@ -10,7 +10,7 @@ pub struct ChannelConfig {
     shape: Option<Vec<u32>>,
     elements: usize,
     element_size: u32,
-    le: bool,
+    little_endian: bool,
     compression: String,
 }
 
@@ -73,20 +73,20 @@ fn get_element_size(typ: &str) -> u32 {
     }
 }
 impl<T: Default + Clone> ChannelScalar<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>) -> Self {
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
-        let config = ChannelConfig { name, typ, shape, elements, element_size, le, compression };
+        let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression };
         Self { config, reader }
     }
 }
 
 
 impl<T: Default + Clone> ChannelArray<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, le: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>) -> Self {
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
-        let config = ChannelConfig { name, typ, shape, elements, element_size, le, compression };
+        let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression };
         let buffer = vec![T::default(); elements];
         Self { config, reader, buffer }
     }
@@ -98,12 +98,12 @@ impl<T: Default + Clone> ChannelArray<T> {
     }
 }
 
-static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), typ: String::new(), shape: None, elements: 0, element_size: 0, le: false, compression: String::new() };
+static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), typ: String::new(), shape: None, elements: 0, element_size: 0, little_endian: false, compression: String::new() };
 pub trait ChannelTrait: Send {
     fn get_config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
+    fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(new_error(ErrorKind::Unsupported, "Unsupported channel type"))
     }
 }
@@ -178,7 +178,7 @@ impl_channel_array_trait!(f32, AF32);
 impl_channel_array_trait!(f64, AF64);
 
 impl ChannelTrait for ChannelArray<String> {
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
+    fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(new_error(ErrorKind::Unsupported, "String array not supported"))
     }
 }

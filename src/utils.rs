@@ -67,8 +67,5 @@ where
     pub fn keys(&self) -> Vec<K>{
         Vec::from(self.order.clone())
     }
-    pub fn keys2(&self) -> Vec<K>{
-        self.map.keys().cloned().collect()
-    }
 }
 

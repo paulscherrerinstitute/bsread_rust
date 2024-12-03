@@ -1,6 +1,5 @@
 use crate::*;
 use crate::value::*;
-use crate::channel::*;
 use crate::reader::*;
 use crate::compression::*;
 use crate::utils::LimitedHashMap;
@@ -128,7 +127,7 @@ pub struct ChannelData {
     timestamp: (i64, i64),
 }
 
-impl crate::message::ChannelData {
+impl ChannelData {
     pub fn get_value(&self) -> &Value {
         &self.value
     }
@@ -253,7 +252,7 @@ impl BsMessage {
         let data_header = self.data_header.clone();
         //TODO: is there a better way to clone channels?
         let channels;
-        match (get_channels(&data_header)){
+        match get_channels(&data_header){
             Ok(ch) => {channels = ch;}
             Err(_) => {return None}
         }
