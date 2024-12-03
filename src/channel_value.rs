@@ -51,7 +51,7 @@ impl ChannelValue {
     pub fn is_scalar(&self) -> bool {
         !self.is_array()
     }
-    pub fn get_element_size(&self) -> usize {
+    pub fn get_element_size(&self) -> u32 {
         match self {
             ChannelValue::STR(_)|ChannelValue::ASTR(_)  => {1}
             ChannelValue::BOOL(_)|ChannelValue::ABOOL(_) => {4}

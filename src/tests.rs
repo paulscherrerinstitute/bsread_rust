@@ -77,7 +77,7 @@ fn print_message(message: &BsMessage) -> () {
         println!("Channel Metadata:");
         for channel in message.get_channels() {
             let config = channel.get_config();
-            let shape : Vec<i32> = config.get_shape().unwrap_or(Vec::new());
+            let shape : Vec<u32> = config.get_shape().unwrap_or(Vec::new());
             println!("\t{} {} {:?} {} {}", config.get_name(), config.get_type(), shape, config.get_elements(), config.get_compression());
             channel_names.push(config.get_name());
         }

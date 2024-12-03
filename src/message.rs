@@ -13,13 +13,13 @@ fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, Value>, Error> {
     serde_json::from_slice(&bytes)
 }
 
-fn convert_shape_val_to_vec(opt_val: Option<&Value>) -> Option<Vec<i32>> {
+fn convert_shape_val_to_vec(opt_val: Option<&Value>) -> Option<Vec<u32>> {
     opt_val.and_then(|val| {
         if let Value::Array(arr) = val {
             // Try converting all elements to integers
-            let vec: Option<Vec<i32>> = arr
+            let vec: Option<Vec<u32>> = arr
                 .into_iter()
-                .map(|item| item.as_i64().and_then(|n| Some(n as i32)))
+                .map(|item| item.as_i64().and_then(|n| Some(n as u32)))
                 .collect();
 
             // Return None if vec is empty, otherwise Some(vec)

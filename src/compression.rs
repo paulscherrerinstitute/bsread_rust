@@ -15,8 +15,8 @@ extern "C" {
     ) -> i64; // Corresponds to `int64_t` in C
 }
 
-fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, String> {
-
+fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, String> {
+    let elem_size = elem_size as usize;
     let mut c =  Cursor::new(input);
     let elements =   c.read_u64::<BigEndian>().unwrap() as usize;
     let block_size =c.read_u32::<BigEndian>().unwrap();
@@ -48,7 +48,7 @@ fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, 
     }
 }
 
-pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
+pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: u32) -> IOResult<Vec<u8>> {
     match bshuf_untrans_bit_elem(&compressed_data, element_size) {
         Ok(out) => {Ok(out)}
         Err(e) => {Err(new_error(ErrorKind::InvalidInput, e.as_str()))}

@@ -8,6 +8,7 @@ use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+use num_traits::AsPrimitive;
 
 struct TrackedSocket {
     socket: zmq::Socket,
@@ -51,8 +52,8 @@ pub struct Receiver<'a> {
     bsread: &'a Bsread,
     fifo: Option<Arc<FifoQueue>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
-    count_ok: u32,
-    count_err: u32
+    counter_messages: u32,
+    counter_error: u32
 }
 
 
@@ -61,7 +62,7 @@ impl
     pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
-        Ok(Self { socket, endpoints, socket_type, last: None, bsread, fifo:None, handle:None, count_ok:0, count_err:0 })
+        Ok(Self { socket, endpoints, socket_type, last: None, bsread, fifo:None, handle:None, counter_messages:0, counter_error:0 })
     }
 
     pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
@@ -99,16 +100,16 @@ impl
                         None => {callback(msg)}
                         Some(fifo) => {fifo.add(msg)}
                     };
-                    self.count_ok = self.count_ok + 1;
+                    self.counter_messages = self.counter_messages + 1;
                 }
                 Err(e) => {
                     //TODO: error callback?
                     println!("Socket Listen Error: {}", e);
                     last = None;
-                    self.count_err = self.count_err + 1;
+                    self.counter_error = self.counter_error + 1;
                 }
             }
-            if num_messages.map_or(false, |m| self.count_ok >= m) {
+            if num_messages.map_or(false, |m| self.counter_messages >= m) {
                 break;
             }
             if self.bsread.is_interrupted() {
@@ -197,30 +198,39 @@ impl
         Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
-    pub fn count(&self) -> usize {
-        match (&self.fifo){
-            None => {0}
-            Some(fifo) => {fifo.get_available_count()}
+    pub fn available(&self) -> u32 {
+        if let Some(fifo) = &self.fifo {
+            fifo.get_available_count() as u32
+        } else {
+            0
         }
     }
 
-    pub fn get_count_ok(&self) -> u32 {
-        self.count_ok
+    pub fn dropped(&self) -> u32 {
+        if let Some(fifo) = &self.fifo {
+            fifo.get_dropped_count()
+        } else {
+            0
+        }
     }
 
-    pub fn get_count_err(&self) -> u32 {
-        self.count_err
+    pub fn get_counter_messages(&self) -> u32 {
+        self.counter_messages
+    }
+
+    pub fn get_counter_error(&self) -> u32 {
+        self.counter_error
     }
 
     pub fn reset_counters(& mut self) {
-        self.count_ok = 0;
-        self.count_err = 0;
+        self.counter_messages = 0;
+        self.counter_error = 0;
     }
 }
 
 struct FifoQueue {
     queue: Mutex<VecDeque<BsMessage>>, // Thread-safe FIFO
-    dropped_count: Mutex<u64>,        // Counter for dropped items
+    dropped_count: Mutex<u32>,        // Counter for dropped items
     max_size: usize,                  // Maximum size of the FIFO
 }
 
@@ -252,7 +262,7 @@ impl FifoQueue {
     }
 
     /// Retrieves the total count of dropped messages.
-    fn get_dropped_count(&self) -> u64 {
+    fn get_dropped_count(&self) -> u32 {
         *self.dropped_count.lock().unwrap()
     }
 
