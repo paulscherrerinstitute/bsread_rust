@@ -1,15 +1,14 @@
 use crate::*;
-use crate::message::{BsMessage, parse_message};
+use crate::message::*;
+use crate::utils::LimitedHashMap;
 use std::{io, thread};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{VecDeque};
 use std::time::{Duration, Instant};
-use num_traits::AsPrimitive;
-
 struct TrackedSocket {
     socket: zmq::Socket,
     connections: Vec<String>,
@@ -44,25 +43,28 @@ impl TrackedSocket {
     }
 }
 
+
+
 pub struct Receiver<'a> {
     socket: TrackedSocket,
     endpoints: Option<Vec<String>>,
     socket_type: SocketType,
-    last: Option<BsMessage>,
+    header_buffer: LimitedHashMap<String, DataHeaderInfo>,
     bsread: &'a Bsread,
     fifo: Option<Arc<FifoQueue>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     counter_messages: u32,
-    counter_error: u32
+    counter_error: u32,
+    counter_header_changes: u32
 }
-
 
 impl
 <'a> Receiver<'a> {
     pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
-        Ok(Self { socket, endpoints, socket_type, last: None, bsread, fifo:None, handle:None, counter_messages:0, counter_error:0 })
+        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None,
+            counter_messages:0, counter_error:0, counter_header_changes:0 })
     }
 
     pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
@@ -81,21 +83,22 @@ impl
     }
 
     //Asynchronous API
-    pub fn receive(&self, last: Option<BsMessage>) -> IOResult<BsMessage> {
-        //let x: Option<BsMessage> = *self.last;
+    pub fn receive(& mut self) -> IOResult<BsMessage> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
-        let message = parse_message(message_parts, last);
+        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.counter_header_changes);
         message
     }
 
     pub fn listen(&mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> IOResult<()> {
         self.connect_all()?;
-        let mut last: Option<BsMessage> = None;
+        if self.header_buffer.is_void(){
+            self.set_header_buffer_size(self.connections());
+        }
+
         loop {
-            let message = self.receive(last);
+            let message = self.receive();
             match message {
                 Ok(msg) => {
-                    last = msg.clone_data_header_info();
                     match (&self.fifo) {
                         None => {callback(msg)}
                         Some(fifo) => {fifo.add(msg)}
@@ -105,7 +108,6 @@ impl
                 Err(e) => {
                     //TODO: error callback?
                     println!("Socket Listen Error: {}", e);
-                    last = None;
                     self.counter_error = self.counter_error + 1;
                 }
             }
@@ -198,6 +200,9 @@ impl
         Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
+    pub fn connections(&self) -> usize {
+        self.socket.connections.len()
+    }
     pub fn available(&self) -> u32 {
         if let Some(fifo) = &self.fifo {
             fifo.get_available_count() as u32
@@ -214,17 +219,25 @@ impl
         }
     }
 
-    pub fn get_counter_messages(&self) -> u32 {
+    pub fn message_count(&self) -> u32 {
         self.counter_messages
     }
 
-    pub fn get_counter_error(&self) -> u32 {
+    pub fn error_count(&self) -> u32 {
         self.counter_error
     }
 
+    pub fn change_count(&self) -> u32 {
+        self.counter_header_changes
+    }
     pub fn reset_counters(& mut self) {
         self.counter_messages = 0;
         self.counter_error = 0;
+        self.counter_header_changes = 0;
+    }
+
+    pub fn set_header_buffer_size(&mut self, size:usize) {
+        self.header_buffer = LimitedHashMap::new(size);
     }
 }
 

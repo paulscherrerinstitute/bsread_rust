@@ -41,7 +41,7 @@ fn print_channel_data(channel_data: &IOResult<ChannelData>, prefix:&str, max_ele
 
 const PRINT_HEADER: bool = true;
 const PRINT_ID: bool = true;
-const PRINT_ATTRS: bool = true;
+const PRINT_ATTRS: bool = false;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
@@ -98,9 +98,9 @@ fn on_message(message: BsMessage) -> () {
 }
 
 
-const MESSAGES: u32 = 3;
+const MESSAGES: u32 = 10;
 const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
-const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:9999";
+const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:8888";
 const PIPELINES: [&str;2] = ["tcp://localhost:5554", "tcp://localhost:5555"];
 const MODE:SocketType=  zmq::PULL;
 
@@ -123,8 +123,10 @@ fn pipeline() ->  IOResult<()> {
 #[test]
 fn multi() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![PIPELINES[1], BSREADSENDER]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER, BSREADSENDER_COMPRESSED]), MODE)?;
+    rec.set_header_buffer_size(0);
     rec.listen(on_message, Some(MESSAGES))?;
+    println!("Header Changes: {}", rec.change_count());
     Ok(())
 }
 
@@ -148,7 +150,7 @@ fn manual() -> IOResult<()> {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
-    let message = rec.receive(None)?;
+    let message = rec.receive()?;
     print_message(&message);
     Ok(())
 }
@@ -205,7 +207,7 @@ fn conversion() -> IOResult<()> {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
-    let message = rec.receive(None)?;
+    let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("y_fit_gauss_function").unwrap();
     println!("{:?}", v.as_str_array());
@@ -226,7 +228,7 @@ fn booleans() -> IOResult<()> {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
-    let message = rec.receive(None)?;
+    let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("BoolWaveform").unwrap();
     println!("{:?}", v.as_str_array());
@@ -253,4 +255,38 @@ fn synchronous() -> IOResult<()> {
     Ok(())
 }
 
+#[test]
+fn limited_hashmap() {
+    let mut limited_map = crate::utils::LimitedHashMap::new(3);
 
+    limited_map.insert("a", 1);
+    limited_map.insert("b", 2);
+    limited_map.insert("c", 3);
+    limited_map.insert("d", 1);
+    limited_map.insert("e", 2);
+    limited_map.insert("f", 3);
+    limited_map.insert("a", 5);
+    limited_map.insert("d", 4); // "a" will be dropped
+
+    println!("{:?}", limited_map.get(&"a")); // None
+    println!("{:?}", limited_map.get(&"b")); // Some(2)
+    println!("{:?}", limited_map.get(&"c")); // Some(3)
+    println!("{:?}", limited_map.get(&"d")); // Some(4)
+
+    println!("{:?}", limited_map.remove(&"a")); // Some(4)
+    println!("---"); // Some(4)
+    limited_map.insert("a", 6);
+    println!("---"); // Some(4)
+    println!("{:?}", limited_map.remove(&"a")); // Some(4)
+
+    println!("{:?}", limited_map.is_void()); // Some(4)
+
+    limited_map = crate::utils::LimitedHashMap::new(1);
+    println!("{:?}", limited_map.is_void()); // Some(4)
+    limited_map = crate::utils::LimitedHashMap::new(0);
+    println!("{:?}", limited_map.is_void()); // Some(4)
+    limited_map = crate::utils::LimitedHashMap::void();
+    println!("{:?}", limited_map.is_void()); // Some(4)
+
+
+}

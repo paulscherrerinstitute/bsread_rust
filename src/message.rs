@@ -4,10 +4,10 @@ use crate::channel::*;
 use crate::reader::*;
 use crate::compression::*;
 use std::collections::HashMap;
-use std::io;
 use std::io::{Cursor};
 use indexmap::IndexMap;
 use serde_json::{Error, Map, Value};
+use crate::utils::LimitedHashMap;
 
 fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, Value>, Error> {
     serde_json::from_slice(&bytes)
@@ -171,6 +171,11 @@ pub struct BsMessage {
     timestamp: (u64, u64),
 }
 
+pub struct DataHeaderInfo {
+    pub data_header: HashMap<String, Value>,
+    pub channels: Vec<Box<dyn ChannelTrait>>,
+}
+
 fn get_hash(main_header: &HashMap<String, Value>) -> String {
     main_header.get("hash").unwrap().as_str().unwrap().to_string()
 }
@@ -242,8 +247,7 @@ impl BsMessage {
             .and_then(|result| result.as_ref().ok())
             .map(|channel_data| channel_data.get_value())
     }
-    pub fn clone_data_header_info(&self) -> Option<Self> {
-        let main_header = HashMap::new();
+    fn clone_data_header_info(&self) -> Option<DataHeaderInfo> {
         let data_header = self.data_header.clone();
         //TODO: is there a better way to clone channels?
         let channels;
@@ -251,17 +255,11 @@ impl BsMessage {
             Ok(ch) => {channels = ch;}
             Err(_) => {return None}
         }
-        let id = self.get_id();
-        let hash = self.get_hash();
-        let data = IndexMap::new();
-        let htype = self.get_htype();
-        let dh_compression = self.get_dh_compression();
-        let timestamp = self.get_timestamp();
-        Some(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
+        Some(DataHeaderInfo {data_header, channels})
     }
 }
-//hash: Option<&String>, data_header: Option<&HashMap<String, Value>>
-pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> IOResult<BsMessage> {
+
+pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32) -> IOResult<BsMessage> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
         return Err(new_error(ErrorKind::InvalidData, "Invalid message format"));
@@ -270,35 +268,29 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> IO
     let hash = get_hash(&main_header);
 
 
-    fn parse_new_data_header(blob: &Vec<u8>, compresion : String) -> IOResult<(HashMap<String, Value>, Vec<Box<dyn ChannelTrait>>)> {
-        let json = match  compresion.as_str() {
+    // Determine whether to reuse or reparse data
+    let (data_header, channels) = if let Some(last_msg) = last_headers.remove(&hash) {
+        // Reuse the previous data header and channels
+        (last_msg.data_header, last_msg.channels)
+    } else {
+        *counter_header_changes = *counter_header_changes +1;
+        let blob = &message_parts[1];
+        let compression = get_dh_compression(&main_header);
+
+        let json = match compression.as_str() {
             "bitshuffle_lz4" => {
                 &decompress_bitshuffle_lz4(blob, 1)?
             }
             "lz4" => {
                 &decompress_lz4(blob)?
             }
-            &_ => {&blob}
+            &_ => { &blob }
         };
-
         let data_header = decode_json(json)?;
         let channels = get_channels(&data_header).unwrap();
-        Ok((data_header, channels))
-    }
-
-    // Determine whether to reuse or reparse data
-    let (data_header, channels) = if let Some(last_msg) = last {
-        if last_msg.hash == hash {
-            // Reuse the previous data header and channels
-            (last_msg.data_header, last_msg.channels)
-        } else {
-            // Parse new data header and channels
-            parse_new_data_header(&message_parts[1], get_dh_compression(&main_header))?
-        }
-    } else {
-        // No previous message, parse everything
-        parse_new_data_header(&message_parts[1], get_dh_compression(&main_header))?
+        (data_header, channels)
     };
+
     if message_parts.len() - 2 != channels.len() * 2 {
         return Err(new_error(ErrorKind::InvalidData, "Invalid number of messages"));
     }
@@ -310,5 +302,12 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last: Option<BsMessage>) -> IO
         let channel_data = parse_channel(channel, v, t);
         data.insert(channel.get_config().get_name(), channel_data);
     }
-    BsMessage::new(main_header, data_header, channels, data)
+    let msg = BsMessage::new(main_header, data_header, channels, data);
+
+    if let Ok(m) = &msg {
+        if let Some(l) = m.clone_data_header_info() {
+            last_headers.insert(hash, l);
+        }
+    }
+    msg
 }
