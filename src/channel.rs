@@ -42,8 +42,7 @@ pub struct ChannelScalar<T> {
 
 pub struct ChannelArray<T> {
     config: ChannelConfig,
-    reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,
-    buffer: Vec<T>,
+    reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>
 }
 
 pub fn get_elements(shape: &Option<Vec<u32>>) -> usize {
@@ -87,14 +86,7 @@ impl<T: Default + Clone> ChannelArray<T> {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression };
-        let buffer = vec![T::default(); elements];
-        Self { config, reader, buffer }
-    }
-
-    fn update_cache(&mut self, index: usize, value: T) {
-        if let Some(elem) = self.buffer.get_mut(index) {
-            *elem = value; // Update the value at the specified index
-        }
+        Self { config, reader }
     }
 }
 
@@ -136,8 +128,6 @@ macro_rules! impl_channel_array_trait {
     ($t:ty, $variant:ident) => {
         impl ChannelTrait for ChannelArray<$t> {
            fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
-                    //let mut buffer: Vec<$t>  = Vec::new();
-                    //buffer.resize(self.config.elements, <$t>::default());
                     let mut buffer: Vec<$t> = Vec::with_capacity(self.config.elements);
                     unsafe {
                         buffer.set_len(self.config.elements); // Initialize the buffer without default values
