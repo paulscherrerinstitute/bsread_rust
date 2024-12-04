@@ -2,6 +2,12 @@
 name = "bsread"
 version = "0.1.0"
 edition = "2021"
+authors = ["Alexandre Gobbo <alexandre.gobbo@psi.ch>"]
+description = "Rust implementation of BSREAD streaming protocol"
+license = "GPL"
+repository = "https://github.com/paulscherrerinstitute/bsread_rust"
+homepage = "https://www.psi.ch" #
+categories = ["network-programming"]
 build = "build.rs"
 links = "libbitshuffle"
 
