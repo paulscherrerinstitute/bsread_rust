@@ -160,7 +160,7 @@ fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> I
     Ok(ChannelData { value: value.unwrap(), timestamp: timestamp })
 }
 
-pub struct BsMessage {
+pub struct Message {
     main_header: HashMap<String, JsonValue>,
     data_header: HashMap<String, JsonValue>,
     channels: Vec<Box<dyn ChannelTrait>>,
@@ -188,7 +188,7 @@ fn get_dh_compression(main_header: &HashMap<String, JsonValue>) -> String {
     }.to_string()
 }
 
-impl BsMessage {
+impl Message {
     fn new(main_header: HashMap<String, JsonValue>,
            data_header: HashMap<String, JsonValue>,
            channels: Vec<Box<dyn ChannelTrait>>,
@@ -260,7 +260,7 @@ impl BsMessage {
     }
 }
 
-pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32) -> IOResult<BsMessage> {
+pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32) -> IOResult<Message> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
         return Err(new_error(ErrorKind::InvalidData, "Invalid message format"));
@@ -303,7 +303,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         let channel_data = parse_channel(channel, v, t);
         data.insert(channel.get_config().get_name(), channel_data);
     }
-    let msg = BsMessage::new(main_header, data_header, channels, data);
+    let msg = Message::new(main_header, data_header, channels, data);
 
     if let Ok(m) = &msg {
         if let Some(l) = m.clone_data_header_info() {

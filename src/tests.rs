@@ -13,12 +13,12 @@ const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
 const PRINT_DATA: bool = false;
 
-pub fn print_message(message: &BsMessage){
+pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
                          PRINT_MAIN_HEADER, PRINT_DATA_HEADER, PRINT_META_DATA, PRINT_DATA);
 }
 
-fn on_message(message: BsMessage) -> () {
+fn on_message(message: Message) -> () {
     print_message(&message);
 }
 

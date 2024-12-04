@@ -3,7 +3,7 @@ extern crate core;
 use crate::bsread::{Bsread};
 use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
 use crate::value::{Value};
-use crate::message::{ChannelData, BsMessage};
+use crate::message::{ChannelData, Message};
 use crate::receiver::Receiver;
 use core::result::Result;
 use std::io;

@@ -52,14 +52,14 @@ impl
 
 
 
-    pub fn start(&mut self, callback: fn(msg: BsMessage) -> ()) -> IOResult<()> {
+    pub fn start(&mut self, callback: fn(msg: Message) -> ()) -> IOResult<()> {
         for receiver in &mut self.receivers{
             receiver.fork(callback, None);
         }
         Ok(())
     }
 
-    pub fn start_buffered(&mut self, callback: fn(msg: BsMessage) -> (), buffer_size:usize) -> IOResult<()> {
+    pub fn start_buffered(&mut self, callback: fn(msg: Message) -> (), buffer_size:usize) -> IOResult<()> {
         for mut receiver in & mut self.receivers {
             let thread_name = format!("Pool {}", receiver.to_string());
             let interrupted = Arc::clone(self.bsread.get_interrupted());

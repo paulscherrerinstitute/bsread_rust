@@ -58,7 +58,7 @@ pub struct Receiver<'a> {
     socket_type: SocketType,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
     bsread: &'a Bsread,
-    fifo: Option<Arc<FifoQueue<BsMessage>>>,
+    fifo: Option<Arc<FifoQueue<Message>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     counter_messages: u32,
     counter_error: u32,
@@ -107,13 +107,13 @@ impl
     }
 
     //Asynchronous API
-    pub fn receive(& mut self) -> IOResult<BsMessage> {
+    pub fn receive(& mut self) -> IOResult<Message> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
         let message = parse_message(message_parts, &mut self.header_buffer, &mut self.counter_header_changes);
         message
     }
 
-    pub fn listen(&mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) -> IOResult<()> {
+    pub fn listen(&mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) -> IOResult<()> {
         self.connect_all()?;
         if self.header_buffer.is_void(){
             self.set_header_buffer_size(self.connections());
@@ -146,8 +146,8 @@ impl
     }
 
 
-    pub fn fork(& mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) {
-        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>,  producer_fifo: Option<Arc<FifoQueue<BsMessage>>> , interrupted: Arc<AtomicBool>) -> IOResult<()> {
+    pub fn fork(& mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) {
+        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: Message) -> (), num_messages: Option<u32>, producer_fifo: Option<Arc<FifoQueue<Message>>>, interrupted: Arc<AtomicBool>) -> IOResult<()> {
             let bsread = crate::Bsread::new_forked(interrupted).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
@@ -207,19 +207,19 @@ impl
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
 
-        fn callback(_: BsMessage) -> () {}
+        fn callback(_: Message) -> () {}
         self.fork(callback, None);
         Ok(())
     }
 
-    pub fn get(&self) -> Option<BsMessage> {
+    pub fn get(&self) -> Option<Message> {
         match &self.fifo{
             None => {None}
             Some(fifo) => {fifo.get()}
         }
     }
 
-    pub fn wait(&self, timeout_ms: u64) -> IOResult<BsMessage> {
+    pub fn wait(&self, timeout_ms: u64) -> IOResult<Message> {
         let timeout_duration = Duration::from_millis(timeout_ms);
         let start_time = Instant::now();
         while start_time.elapsed() < timeout_duration {
@@ -232,7 +232,7 @@ impl
         Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
-    pub fn get_fifo(&self) -> Option<Arc<FifoQueue<BsMessage>>> {
+    pub fn get_fifo(&self) -> Option<Arc<FifoQueue<Message>>> {
         match &self.fifo{
             None => {None}
             Some(fifo) => {Some(fifo.clone())}

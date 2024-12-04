@@ -1,5 +1,5 @@
 use crate::IOResult;
-use crate::message::{BsMessage, ChannelData};
+use crate::message::{Message, ChannelData};
 use std::sync::Mutex;
 use std::thread;
 
@@ -57,7 +57,7 @@ fn increment_counter() {
     }
 }
 
-pub fn print_message(message: &BsMessage, max_size:usize, header:bool, id:bool, attrs:bool, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
+pub fn print_message(message: &Message, max_size:usize, header:bool, id:bool, attrs:bool, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
     if header {
         println!("{}", "-".repeat(80));
         let current_thread = thread::current(); // Keep the thread alive
