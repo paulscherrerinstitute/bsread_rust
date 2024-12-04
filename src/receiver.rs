@@ -1,13 +1,12 @@
 use crate::*;
 use crate::message::*;
-use crate::utils::LimitedHashMap;
+use crate::utils::*;
 use std::{io, thread};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
-use std::collections::{VecDeque};
 use std::time::{Duration, Instant};
 
 struct TrackedSocket {
@@ -59,7 +58,7 @@ pub struct Receiver<'a> {
     socket_type: SocketType,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
     bsread: &'a Bsread,
-    fifo: Option<Arc<FifoQueue>>,
+    fifo: Option<Arc<FifoQueue<BsMessage>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     counter_messages: u32,
     counter_error: u32,
@@ -148,7 +147,7 @@ impl
 
 
     pub fn fork(& mut self, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>) {
-        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>,  producer_fifo: Option<Arc<FifoQueue>> , interrupted: Arc<AtomicBool>) -> IOResult<()> {
+        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: BsMessage) -> (), num_messages: Option<u32>,  producer_fifo: Option<Arc<FifoQueue<BsMessage>>> , interrupted: Arc<AtomicBool>) -> IOResult<()> {
             let bsread = crate::Bsread::new_forked(interrupted).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
@@ -233,6 +232,13 @@ impl
         Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
+    pub fn get_fifo(&self) -> Option<Arc<FifoQueue<BsMessage>>> {
+        match &self.fifo{
+            None => {None}
+            Some(fifo) => {Some(fifo.clone())}
+        }
+    }
+
     pub fn connections(&self) -> usize {
         self.socket.connections.len()
     }
@@ -271,49 +277,5 @@ impl
 
     pub fn set_header_buffer_size(&mut self, size:usize) {
         self.header_buffer = LimitedHashMap::new(size);
-    }
-}
-
-struct FifoQueue {
-    queue: Mutex<VecDeque<BsMessage>>, // Thread-safe FIFO
-    dropped_count: Mutex<u32>,        // Counter for dropped items
-    max_size: usize,                  // Maximum size of the FIFO
-}
-
-impl FifoQueue {
-    fn new(max_size: usize) -> Self {
-        Self {
-            queue: Mutex::new(VecDeque::new()),
-            dropped_count: Mutex::new(0),
-            max_size,
-        }
-    }
-
-    /// Adds a message to the FIFO. Drops the oldest if the FIFO is full.
-    fn add(&self, message: BsMessage) {
-        let mut queue = self.queue.lock().unwrap();
-        let mut dropped_count = self.dropped_count.lock().unwrap();
-
-        if queue.len() >= self.max_size {
-            queue.pop_front(); // Drop the oldest element
-            *dropped_count += 1; // Increment the dropped counter
-        }
-        queue.push_back(message);
-    }
-
-    /// Retrieves the next message from the FIFO, or `None` if empty.
-    fn get(&self) -> Option<BsMessage> {
-        let mut queue = self.queue.lock().unwrap();
-        queue.pop_front()
-    }
-
-    /// Retrieves the total count of dropped messages.
-    fn get_dropped_count(&self) -> u32 {
-        *self.dropped_count.lock().unwrap()
-    }
-
-    /// Retrieves the count of available messages.
-    fn get_available_count(&self) -> usize {
-        self.queue.lock().unwrap().len()
     }
 }

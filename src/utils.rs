@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Mutex};
 
 pub struct LimitedHashMap<K, V> {
     map: HashMap<K, V>,
@@ -69,3 +70,47 @@ where
     }
 }
 
+
+pub struct FifoQueue<K> {
+    queue: Mutex<VecDeque<K>>,          // Thread-safe FIFO
+    dropped_count: Mutex<u32>,        // Counter for dropped items
+    max_size: usize,                  // Maximum size of the FIFO
+}
+
+impl<K> FifoQueue<K> {
+    pub  fn new(max_size: usize) -> Self {
+        Self {
+            queue: Mutex::new(VecDeque::new()),
+            dropped_count: Mutex::new(0),
+            max_size,
+        }
+    }
+
+    /// Adds a message to the FIFO. Drops the oldest if the FIFO is full.
+    pub  fn add(&self, message: K) {
+        let mut queue = self.queue.lock().unwrap();
+        let mut dropped_count = self.dropped_count.lock().unwrap();
+
+        if queue.len() >= self.max_size {
+            queue.pop_front(); // Drop the oldest element
+            *dropped_count += 1; // Increment the dropped counter
+        }
+        queue.push_back(message);
+    }
+
+    /// Retrieves the next message from the FIFO, or `None` if empty.
+    pub fn get(&self) -> Option<K> {
+        let mut queue = self.queue.lock().unwrap();
+        queue.pop_front()
+    }
+
+    /// Retrieves the total count of dropped messages.
+    pub  fn get_dropped_count(&self) -> u32 {
+        *self.dropped_count.lock().unwrap()
+    }
+
+    /// Retrieves the count of available messages.
+    pub fn get_available_count(&self) -> usize {
+        self.queue.lock().unwrap().len()
+    }
+}

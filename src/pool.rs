@@ -1,7 +1,10 @@
 use crate::*;
-use zmq::SocketType;
 use crate::receiver::Receiver;
 use crate::bsread::Bsread;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::thread;
+use zmq::SocketType;
 
 pub struct Pool<'a> {
     socket_type: SocketType,
@@ -52,6 +55,28 @@ impl
     pub fn start(&mut self, callback: fn(msg: BsMessage) -> ()) -> IOResult<()> {
         for receiver in &mut self.receivers{
             receiver.fork(callback, None);
+        }
+        Ok(())
+    }
+
+    pub fn start_buffered(&mut self, callback: fn(msg: BsMessage) -> (), buffer_size:usize) -> IOResult<()> {
+        for mut receiver in & mut self.receivers {
+            let thread_name = format!("Pool {}", receiver.to_string());
+            let interrupted = Arc::clone(self.bsread.get_interrupted());
+            receiver.start(buffer_size)?;
+            let fifo = receiver.get_fifo().unwrap();
+            thread::Builder::new()
+                .name(thread_name.to_string())
+                .spawn(move || -> IOResult<()>{
+                    while !interrupted.load(Ordering::Relaxed){
+                        match fifo.get(){
+                            None => {}
+                            Some(msg) => {callback(msg)}
+                        }
+                    }
+                    Ok(())
+                })
+                .expect("Failed to spawn thread");
         }
         Ok(())
     }

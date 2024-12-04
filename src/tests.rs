@@ -11,7 +11,7 @@ const PRINT_ATTRS: bool = false;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = true;
+const PRINT_DATA: bool = false;
 
 pub fn print_message(message: &BsMessage){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
@@ -228,6 +228,16 @@ fn pool_manual() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![PIPELINES[0]]], MODE)?;
     pool.start(on_message);
+    thread::sleep(Duration::from_millis(100));
+    pool.stop();
+    Ok(())
+}
+
+#[test]
+fn pool_buffered() -> IOResult<()> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, PIPELINES[0]], MODE, 2)?;
+    pool.start_buffered(on_message,100);
     thread::sleep(Duration::from_millis(100));
     pool.stop();
     Ok(())
