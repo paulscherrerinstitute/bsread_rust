@@ -214,9 +214,19 @@ fn limited_hashmap() {
 }
 
 #[test]
-fn pool() -> IOResult<()> {
+fn pool_auto() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], MODE, 2)?;
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, PIPELINES[0]], MODE, 2)?;
+    pool.start(on_message);
+    thread::sleep(Duration::from_millis(100));
+    pool.stop();
+    Ok(())
+}
+
+#[test]
+fn pool_manual() -> IOResult<()> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![PIPELINES[0]]], MODE)?;
     pool.start(on_message);
     thread::sleep(Duration::from_millis(100));
     pool.stop();

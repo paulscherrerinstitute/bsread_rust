@@ -26,8 +26,12 @@ impl Bsread {
         Receiver::new(&self, endpoint, socket_type)
     }
 
-    pub fn pool(&self, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
-        Pool::new(&self, endpoints, socket_type, threads)
+    pub fn pool_auto(&self, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
+        Pool::new_auto(&self, endpoints, socket_type, threads)
+    }
+
+    pub fn pool_manual(&self, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
+        Pool::new_manual(&self, endpoints, socket_type)
     }
 
     pub fn interrupt(&self) {
