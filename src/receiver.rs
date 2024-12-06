@@ -52,6 +52,31 @@ fn get_index() -> u32{
     }
 }
 
+struct Stats {
+    counter_messages: u32,
+    counter_error: u32,
+    counter_header_changes: u32
+}
+
+impl Stats{
+    fn increase_messages(& mut self){
+        self.counter_messages = self.counter_messages + 1;
+    }
+    fn increase_errors(& mut self){
+        self.counter_error = self.counter_error + 1;
+    }
+    fn increase_header_changes(& mut self){
+        self.counter_header_changes = self.counter_header_changes + 1;
+    }
+
+    fn reset(& mut self){
+        self.counter_messages = 0;
+        self.counter_error = 0;
+        self.counter_header_changes = 0;
+    }
+
+}
+
 pub struct Receiver<'a> {
     socket: TrackedSocket,
     endpoints: Option<Vec<String>>,
@@ -60,9 +85,7 @@ pub struct Receiver<'a> {
     bsread: &'a Bsread,
     fifo: Option<Arc<FifoQueue<Message>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
-    counter_messages: u32,
-    counter_error: u32,
-    counter_header_changes: u32,
+    stats: Arc<Mutex<Stats>>,
     index: u32
 }
 
@@ -72,8 +95,8 @@ impl
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let index =  get_index();
-        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None,
-            counter_messages:0, counter_error:0, counter_header_changes:0, index })
+        let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
+        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index })
     }
 
     pub fn to_string(& self,) -> String {
@@ -109,7 +132,7 @@ impl
     //Asynchronous API
     pub fn receive(& mut self) -> IOResult<Message> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
-        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.counter_header_changes);
+        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes);
         message
     }
 
@@ -127,15 +150,15 @@ impl
                         None => {callback(msg)}
                         Some(fifo) => {fifo.add(msg)}
                     };
-                    self.counter_messages = self.counter_messages + 1;
+                    self.stats.lock().unwrap().increase_messages();
                 }
                 Err(e) => {
                     //TODO: error callback?
-                    println!("Socket Listen Error: {}", e);
-                    self.counter_error = self.counter_error + 1;
+                    //println!("Socket Listen Error: {}", e);
+                    self.stats.lock().unwrap().increase_errors();
                 }
             }
-            if num_messages.map_or(false, |m| self.counter_messages >= m) {
+            if num_messages.map_or(false, |m| self.stats.lock().unwrap().counter_messages >= m) {
                 break;
             }
             if self.bsread.is_interrupted() {
@@ -145,27 +168,33 @@ impl
         Result::Ok(())
     }
 
-
     pub fn fork(& mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) {
-        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: Message) -> (), num_messages: Option<u32>, producer_fifo: Option<Arc<FifoQueue<Message>>>, interrupted: Arc<AtomicBool>) -> IOResult<()> {
+        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: Message) -> (), num_messages: Option<u32>,
+                          producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,interrupted: Arc<AtomicBool>) -> IOResult<()> {
             let bsread = crate::Bsread::new_forked(interrupted).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
+            receiver.stats = producer_stats;
             receiver.listen(callback, num_messages)
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
         let interrupted = Arc::clone(self.bsread.get_interrupted());
+
         let producer_fifo = match &self.fifo {
             None => { None }
             Some(f) => { Some(f.clone()) }
         };
+        //let producer_stats = Arc::clone(&self.stats);
+        //let producer_stats = Arc::new(Mutex::new(&self.stats));
+        let producer_stats =self.stats.clone();
+
         let thread_name = self.to_string();
         let handle = thread::Builder::new()
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, interrupted).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, producer_stats, interrupted).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error
@@ -238,6 +267,24 @@ impl
             Some(fifo) => {Some(fifo.clone())}
         }
     }
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+
+    pub fn get_mode(&self) -> &str {
+        if self.fifo.is_some(){
+            return "sync"
+        }
+        "async"
+    }
+    pub fn get_socket_type(&self) -> SocketType {
+        self.socket_type
+    }
+
+    pub fn get_endpoints(&self) ->  & Option<Vec<String>> {
+        &self.endpoints
+    }
+
 
     pub fn connections(&self) -> usize {
         self.socket.connections.len()
@@ -259,20 +306,18 @@ impl
     }
 
     pub fn message_count(&self) -> u32 {
-        self.counter_messages
+        self.stats.lock().unwrap().counter_messages
     }
 
     pub fn error_count(&self) -> u32 {
-        self.counter_error
+        self.stats.lock().unwrap().counter_error
     }
 
     pub fn change_count(&self) -> u32 {
-        self.counter_header_changes
+        self.stats.lock().unwrap().counter_header_changes
     }
     pub fn reset_counters(& mut self) {
-        self.counter_messages = 0;
-        self.counter_error = 0;
-        self.counter_header_changes = 0;
+        self.stats.lock().unwrap().reset()
     }
 
     pub fn set_header_buffer_size(&mut self, size:usize) {
