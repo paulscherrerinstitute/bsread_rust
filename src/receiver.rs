@@ -337,3 +337,28 @@ impl
         self.header_buffer = LimitedHashMap::new(size);
     }
 }
+
+fn error_kind_from_str(s: &str) -> ErrorKind {
+    let str = s.replace(" ", "").to_lowercase();
+    match str.as_str() {
+        "notfound" => ErrorKind::NotFound,
+        "permissiondenied" => ErrorKind::PermissionDenied,
+        "connectionrefused" => ErrorKind::ConnectionRefused,
+        "connectionreset" => ErrorKind::ConnectionReset,
+        "connectionaborted" => ErrorKind::ConnectionAborted,
+        "notconnected" => ErrorKind::NotConnected,
+        "addrinuse" => ErrorKind::AddrInUse,
+        "addrnotavailable" => ErrorKind::AddrNotAvailable,
+        "brokenpipe" => ErrorKind::BrokenPipe,
+        "alreadyexists" => ErrorKind::AlreadyExists,
+        "wouldblock" => ErrorKind::WouldBlock,
+        "invalidinput" => ErrorKind::InvalidInput,
+        "invaliddata" => ErrorKind::InvalidData,
+        "timedout" => ErrorKind::TimedOut,
+        "interrupted" => ErrorKind::Interrupted,
+        "unsupported" => ErrorKind::Unsupported,
+        "unexpectedeof" => ErrorKind::UnexpectedEof,
+        "outofmemory" => ErrorKind::OutOfMemory,
+        _ => ErrorKind::Other,  // Return Other for unknown variants
+    }
+}

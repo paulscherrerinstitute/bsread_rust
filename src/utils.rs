@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex};
 
+/// Ordered HashMap with a maximum size
 pub struct LimitedHashMap<K, V> {
     map: HashMap<K, V>,
     order: VecDeque<K>,
@@ -11,6 +12,7 @@ impl<K, V> LimitedHashMap<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
 {
+    /// Creates a new LimitedHashMap given its maximum size
     pub fn new(max_size: usize) -> Self {
         Self {
             map: HashMap::with_capacity(max_size),
@@ -19,6 +21,7 @@ where
         }
     }
 
+    /// Creates a void instance - to signalize a member that must be initialized
     pub fn void() -> Self {
         Self {
             map: HashMap::new(),
@@ -59,18 +62,22 @@ where
         self.map.len()
     }
 
+    /// Remove one element of the map
     pub fn remove(& mut self, key: &K) -> Option<V> {
         if self.map.contains_key(&key) {
             self.order.retain(|k| k != key);
         }
         self.map.remove(key)
     }
+
+    /// Return a copy of the map keys
     pub fn keys(&self) -> Vec<K>{
         Vec::from(self.order.clone())
     }
 }
 
 
+/// Thread-safe FIFO queue with a maximum size
 pub struct FifoQueue<K> {
     queue: Mutex<VecDeque<K>>,          // Thread-safe FIFO
     dropped_count: Mutex<u32>,        // Counter for dropped items
@@ -78,6 +85,7 @@ pub struct FifoQueue<K> {
 }
 
 impl<K> FifoQueue<K> {
+    /// Creates a new FifoQueue given its maximum size
     pub  fn new(max_size: usize) -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),

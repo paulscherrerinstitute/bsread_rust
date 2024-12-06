@@ -76,7 +76,7 @@ Message callback is called synchronously in each receiving thread.
 
 
 ### Buffered
-Messages are buffered in the receiving thread and message callback is called asynchronously in another thread .
+Messages are buffered in the receiving thread and message callback is called asynchronously in another thread.
 ```rust
     fn on_message(message: Message) -> () {
         println!("Received ID = {}", message.get_id());
