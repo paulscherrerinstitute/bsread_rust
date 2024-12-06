@@ -1,5 +1,6 @@
 use crate::IOResult;
 use crate::receiver::{Receiver};
+use crate::pool::{Pool};
 use crate::message::{Message, ChannelData};
 use std::sync::Mutex;
 use std::thread;
@@ -108,7 +109,7 @@ pub fn print_message(message: &Message, max_size:usize, header:bool, id:bool, at
     }
 }
 
-pub fn print_stats(rec: &Receiver) -> () {
+pub fn print_stats_rec(rec: &Receiver) -> () {
     let mode = rec.get_mode();
     let socket_type = rec.get_socket_type();
     println!("Receiver {}  {:?} [{}]", rec.index(), socket_type, mode);
@@ -118,4 +119,12 @@ pub fn print_stats(rec: &Receiver) -> () {
     println!("\tMessage Count: {}", rec.message_count());
     println!("\tError Count: {}", rec.error_count());
     println!("\tHeader Changes: {}", rec.change_count());
+}
+
+
+pub fn print_stats_pool(pool: &Pool) -> () {
+    println!("Pool: {} threads", pool.threads());
+    for rec in pool.receivers(){
+        print_stats_rec(rec);
+    }
 }

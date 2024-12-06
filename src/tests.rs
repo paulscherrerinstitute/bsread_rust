@@ -18,9 +18,14 @@ pub fn print_message(message: &Message){
                          PRINT_MAIN_HEADER, PRINT_DATA_HEADER, PRINT_META_DATA, PRINT_DATA);
 }
 
-pub fn print_stats(receiver: &Receiver){
+pub fn print_stats_rec(receiver: &Receiver){
     println!("");
-    debug::print_stats(receiver);
+    debug::print_stats_rec(receiver);
+}
+
+pub fn print_stats_pool(pool: &Pool){
+    println!("");
+    debug::print_stats_pool(pool);
 }
 
 
@@ -41,7 +46,7 @@ fn single() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -50,7 +55,7 @@ fn pipeline() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(PIPELINES.to_vec()), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -60,7 +65,7 @@ fn multi() -> IOResult<()> {
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER, BSREADSENDER_COMPRESSED]), MODE)?;
     //rec.set_header_buffer_size(0);
     rec.listen(on_message, Some(MESSAGES))?;
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -73,7 +78,7 @@ fn dynamic() ->  IOResult<()> {
     rec.connect(PIPELINES[0])?;
     rec.connect(PIPELINES[1])?;
     rec.listen(on_message, Some(MESSAGES))?;
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -87,7 +92,7 @@ fn manual() -> IOResult<()> {
     }
     let message = rec.receive()?;
     print_message(&message);
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -99,7 +104,7 @@ fn threaded() -> IOResult<()> {
     rec.fork(on_message, Some(MESSAGES));
     let r = rec.join();
     println!("{:?}", r);
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -114,7 +119,7 @@ fn interrupting() ->  IOResult<()> {
     println!("{}", bsread.is_interrupted());
     let ret = rec.join();
     println!("{:?}", ret);
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 #[test]
@@ -122,7 +127,7 @@ fn compression() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), MODE)?;
     rec.listen(on_message, Some(MESSAGES))?;
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -188,7 +193,7 @@ fn synchronous() -> IOResult<()> {
             Err(e) => {println!("{}",e)}
         }
     }
-    print_stats(&rec);
+    print_stats_rec(&rec);
     Ok(())
 }
 
@@ -229,29 +234,32 @@ fn limited_hashmap() {
 #[test]
 fn pool_auto() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, PIPELINES[0]], MODE, 2)?;
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], MODE, 2)?;
     pool.start(on_message);
     thread::sleep(Duration::from_millis(100));
     pool.stop();
+    print_stats_pool(&pool);
     Ok(())
 }
 
 #[test]
 fn pool_manual() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![PIPELINES[0]]], MODE)?;
+    let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![BSREADSENDER_COMPRESSED]], MODE)?;
     pool.start(on_message);
     thread::sleep(Duration::from_millis(100));
     pool.stop();
+    print_stats_pool(&pool);
     Ok(())
 }
 
 #[test]
 fn pool_buffered() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, PIPELINES[0]], MODE, 2)?;
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], MODE, 2)?;
     pool.start_buffered(on_message,100);
     thread::sleep(Duration::from_millis(100));
     pool.stop();
+    print_stats_pool(&pool);
     Ok(())
 }

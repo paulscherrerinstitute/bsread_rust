@@ -88,4 +88,17 @@ impl
         }
         Ok(())
     }
+
+    pub fn get_socket_type(&self) -> SocketType {
+        self.socket_type
+    }
+
+    pub fn threads(&self) -> usize {
+        self.threads
+    }
+
+    pub fn receivers(&self) -> &Vec<Receiver> {
+        &self.receivers
+    }
+
 }

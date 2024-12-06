@@ -5,6 +5,7 @@ use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
 use crate::value::{Value};
 use crate::message::{ChannelData, Message};
 use crate::receiver::Receiver;
+use crate::pool::Pool;
 use core::result::Result;
 use std::io;
 use zmq::{Context, SocketType};

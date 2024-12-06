@@ -287,13 +287,10 @@ impl
 
 
     pub fn connections(&self) -> usize {
-        if self.fifo.is_some(){
-            return match &self.endpoints{
-                None => {0}
-                Some(e) => {e.len()}
-            }
+        match &self.endpoints{
+            None => {self.socket.connections.len()}
+            Some(e) => {e.len()}
         }
-        self.socket.connections.len()
     }
     pub fn available(&self) -> u32 {
         if let Some(fifo) = &self.fifo {
