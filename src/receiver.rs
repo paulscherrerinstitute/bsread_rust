@@ -241,6 +241,16 @@ impl
         Ok(())
     }
 
+    pub fn interrupt(&mut self)  {
+        self.bsread.interrupt();
+    }
+
+    pub fn stop(&mut self) -> IOResult<()> {
+        self.bsread.interrupt();
+        self.join();
+        Ok(())
+    }
+
     pub fn get(&self) -> Option<Message> {
         match &self.fifo{
             None => {None}

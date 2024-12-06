@@ -1,3 +1,4 @@
+use std::any::Any;
 use crate::*;
 use crate::compression::decompress_bitshuffle_lz4;
 use std::thread;
@@ -32,8 +33,6 @@ pub fn print_stats_pool(pool: &Pool){
 fn on_message(message: Message) -> () {
     print_message(&message);
 }
-
-
 
 const MESSAGES: u32 = 10;
 const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
@@ -115,7 +114,7 @@ fn interrupting() ->  IOResult<()> {
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
-    bsread.interrupt();
+    rec.interrupt();
     println!("{}", bsread.is_interrupted());
     let ret = rec.join();
     println!("{:?}", ret);
@@ -183,7 +182,7 @@ fn booleans() -> IOResult<()> {
 }
 
 #[test]
-fn synchronous() -> IOResult<()> {
+fn buffered() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
     rec.start(100)?;
@@ -193,6 +192,7 @@ fn synchronous() -> IOResult<()> {
             Err(e) => {println!("{}",e)}
         }
     }
+    rec.stop();
     print_stats_rec(&rec);
     Ok(())
 }
