@@ -53,3 +53,9 @@ impl Bsread {
     }
 }
 
+impl Drop for Bsread {
+    fn drop(&mut self) {
+    }
+}
+
+

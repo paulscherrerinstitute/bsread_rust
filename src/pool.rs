@@ -19,7 +19,7 @@ impl
         if threads<=0{
             return Err(new_error(ErrorKind::InvalidInput, "Invalid number of threads"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|id| Receiver::new(bsread, None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread, None, socket_type).unwrap()).collect();
         let mut index = 0;
         for endpoint in endpoints{
             receivers[index].add_endpoint(endpoint.to_string());
@@ -36,7 +36,7 @@ impl
         if threads==0{
             return Err(new_error(ErrorKind::InvalidInput, "Invalid configuration"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|id| Receiver::new(bsread, None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread, None, socket_type).unwrap()).collect();
         let mut index = 0;
         for group in endpoints {
             for endpoint  in group {
@@ -60,7 +60,7 @@ impl
     }
 
     pub fn start_buffered(&mut self, callback: fn(msg: Message) -> (), buffer_size:usize) -> IOResult<()> {
-        for mut receiver in & mut self.receivers {
+        for receiver in & mut self.receivers {
             let thread_name = format!("Pool {}", receiver.to_string());
             let interrupted = Arc::clone(self.bsread.get_interrupted());
             receiver.start(buffer_size)?;
@@ -84,7 +84,7 @@ impl
     pub fn stop(&mut self) -> IOResult<()> {
         self.bsread.interrupt();
         for receiver in &mut self.receivers{
-            receiver.join();
+            receiver.join()?;
         }
         Ok(())
     }

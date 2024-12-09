@@ -43,10 +43,10 @@ impl TrackedSocket {
     }
 }
 
-static mut receiver_index: Mutex<u32> = Mutex::new(0);
+static mut RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
 fn get_index() -> u32{
     unsafe {
-        let mut counter = receiver_index.lock().unwrap();
+        let mut counter = RECEIVER_INDEX.lock().unwrap();
         *counter += 1;
         *counter
     }
@@ -152,7 +152,7 @@ impl
                     };
                     self.stats.lock().unwrap().increase_messages();
                 }
-                Err(e) => {
+                Err(_) => {
                     //TODO: error callback?
                     //println!("Socket Listen Error: {}", e);
                     self.stats.lock().unwrap().increase_errors();
@@ -247,7 +247,7 @@ impl
 
     pub fn stop(&mut self) -> IOResult<()> {
         self.bsread.interrupt();
-        self.join();
+        self.join()?;
         Ok(())
     }
 

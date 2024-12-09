@@ -1,4 +1,3 @@
-use std::any::Any;
 use crate::*;
 use crate::compression::decompress_bitshuffle_lz4;
 use std::thread;
@@ -38,12 +37,13 @@ const MESSAGES: u32 = 10;
 const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
 const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:8888";
 const PIPELINES: [&str;2] = ["tcp://localhost:5554", "tcp://localhost:5555"];
-const MODE:SocketType=  zmq::PULL;
+const CHANNEL_NAMES: [&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
+const SOCKET_TYPE:SocketType=  zmq::PULL;
 
 #[test]
 fn single() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
@@ -52,7 +52,7 @@ fn single() ->  IOResult<()> {
 #[test]
 fn pipeline() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(PIPELINES.to_vec()), MODE)?;
+    let mut rec = bsread.receiver(Some(PIPELINES.to_vec()), SOCKET_TYPE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
@@ -61,7 +61,7 @@ fn pipeline() ->  IOResult<()> {
 #[test]
 fn multi() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER, BSREADSENDER_COMPRESSED]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER, BSREADSENDER_COMPRESSED]), SOCKET_TYPE)?;
     //rec.set_header_buffer_size(0);
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
@@ -72,7 +72,7 @@ fn multi() -> IOResult<()> {
 #[test]
 fn dynamic() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, MODE)?;
+    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
     rec.connect(BSREADSENDER)?;
     rec.connect(PIPELINES[0])?;
     rec.connect(PIPELINES[1])?;
@@ -84,7 +84,7 @@ fn dynamic() ->  IOResult<()> {
 #[test]
 fn manual() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, MODE)?;
+    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
     match rec.connect(BSREADSENDER) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
@@ -99,7 +99,7 @@ fn manual() -> IOResult<()> {
 #[test]
 fn threaded() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
     rec.fork(on_message, Some(MESSAGES));
     let r = rec.join();
     println!("{:?}", r);
@@ -111,7 +111,7 @@ fn threaded() -> IOResult<()> {
 #[test]
 fn interrupting() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
     rec.interrupt();
@@ -124,7 +124,7 @@ fn interrupting() ->  IOResult<()> {
 #[test]
 fn compression() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), SOCKET_TYPE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
@@ -143,7 +143,7 @@ fn bitshuffle() -> IOResult<()> {
 #[test]
 fn conversion() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, MODE)?;
+    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
     match rec.connect(PIPELINES[0]) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
@@ -163,7 +163,7 @@ fn conversion() -> IOResult<()> {
 #[test]
 fn booleans() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, MODE)?;
+    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
     match rec.connect(BSREADSENDER) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
@@ -184,7 +184,7 @@ fn booleans() -> IOResult<()> {
 #[test]
 fn buffered() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), MODE)?;
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
     rec.start(100)?;
     for _ in 0..MESSAGES {
         match rec.wait(100) {
@@ -192,7 +192,7 @@ fn buffered() -> IOResult<()> {
             Err(e) => {println!("{}",e)}
         }
     }
-    rec.stop();
+    rec.stop()?;
     print_stats_rec(&rec);
     Ok(())
 }
@@ -234,10 +234,10 @@ fn limited_hashmap() {
 #[test]
 fn pool_auto() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], MODE, 2)?;
-    pool.start(on_message);
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], SOCKET_TYPE, 2)?;
+    pool.start(on_message)?;
     thread::sleep(Duration::from_millis(100));
-    pool.stop();
+    pool.stop()?;
     print_stats_pool(&pool);
     Ok(())
 }
@@ -245,10 +245,10 @@ fn pool_auto() -> IOResult<()> {
 #[test]
 fn pool_manual() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![BSREADSENDER_COMPRESSED]], MODE)?;
-    pool.start(on_message);
+    let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![BSREADSENDER_COMPRESSED]], SOCKET_TYPE)?;
+    pool.start(on_message)?;
     thread::sleep(Duration::from_millis(100));
-    pool.stop();
+    pool.stop()?;
     print_stats_pool(&pool);
     Ok(())
 }
@@ -256,10 +256,24 @@ fn pool_manual() -> IOResult<()> {
 #[test]
 fn pool_buffered() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], MODE, 2)?;
-    pool.start_buffered(on_message,100);
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, PIPELINES[0]], SOCKET_TYPE, 2)?;
+    pool.start_buffered(on_message,100)?;
     thread::sleep(Duration::from_millis(100));
-    pool.stop();
+    pool.stop()?;
     print_stats_pool(&pool);
+    Ok(())
+}
+
+#[test]
+fn dispatcher() -> IOResult<()> {
+    let bsread = crate::Bsread::new().unwrap();
+    let channels = vec![
+        dispatcher::ChannelDescription::of(CHANNEL_NAMES[0]),
+        dispatcher::ChannelDescription::of(CHANNEL_NAMES[1]),
+    ];
+    let stream = dispatcher::request_stream(channels, None, None, true, false)?;
+    let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]),zmq::SUB)?;
+    rec.listen(on_message, Some(MESSAGES))?;
+    print_stats_rec(&rec);
     Ok(())
 }
