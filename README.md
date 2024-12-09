@@ -31,7 +31,7 @@ Data is received on a callback in a separated thread.
     }
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(1000)); //Receives for 1s
-    rec.interrupt();
+    rec.stop();
 ```
 
 
@@ -69,7 +69,7 @@ Message callback is called synchronously in each receiving thread.
     fn on_message(message: Message) -> () {
         println!("Received ID = {}", message.get_id());
     }
-    pool.start(on_message);
+    pool.start_sync(on_message);
     thread::sleep(Duration::from_millis(1000)); //Receives for 1s
     pool.stop();
 ```
