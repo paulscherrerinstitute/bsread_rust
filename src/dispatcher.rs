@@ -12,7 +12,9 @@ const BASE_URL: &str = DEFAULT_DISPATCHER_URL;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChannelDescription {
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     modulo: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     offset: Option<u32>,
 }
 
