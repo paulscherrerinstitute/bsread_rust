@@ -272,8 +272,21 @@ fn dispatcher() -> IOResult<()> {
         dispatcher::ChannelDescription::of(CHANNEL_NAMES[1]),
     ];
     let stream = dispatcher::request_stream(channels, None, None, true, false)?;
-    let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]),zmq::SUB)?;
-    rec.listen(on_message, Some(MESSAGES))?;
+    let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]), zmq::SUB)?;
+    //rec.listen(on_message, Some(MESSAGES))?;
+
+    /*
+    rec.start(100)?;
+    for _ in 0..MESSAGES {
+        match rec.wait(200) {
+            Ok(msg) => {print_message(&msg)}
+            Err(e) => {println!("{}",e)}
+        }
+    }
+    */
+
     print_stats_rec(&rec);
+
+
     Ok(())
 }

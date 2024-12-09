@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::*;
 use reqwest::Error as ReqwestError;
 use reqwest::blocking::{Client, Response};
@@ -33,6 +34,7 @@ struct Config {
     stream_type: String,
     verify: bool,
     channel_validation: ChannelValidation,
+    #[serde(skip_serializing_if = "Option::is_none")]
     compression: Option<String>,
 }
 

@@ -138,7 +138,7 @@ impl ChannelData {
 
 fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> IOResult<ChannelData> {
     if t.len() != 16 {
-        return Err(new_error(ErrorKind::InvalidData, "Invalid channel timestamp"));
+        return Err(new_error(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
     }
 
     let data = match channel.get_config().get_compression().as_str() {
