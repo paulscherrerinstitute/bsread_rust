@@ -114,13 +114,27 @@ fn interrupting() ->  IOResult<()> {
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
-    rec.interrupt();
-    println!("{}", bsread.is_interrupted());
-    let ret = rec.join();
-    println!("{:?}", ret);
+    let ret = rec.stop();
+    println!("Stop result: {:?}", ret);
+    println!("Is interrupted: {:?}", rec.is_interrupted());
     print_stats_rec(&rec);
     Ok(())
 }
+
+#[test]
+fn joining() ->  IOResult<()> {
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
+    rec.fork(on_message, None);
+    thread::sleep(Duration::from_millis(50));
+    bsread.interrupt();
+    let ret = rec.join();
+    println!("Join result: {:?}", ret);
+    println!("Is interrupted: {:?}", rec.is_interrupted());
+    print_stats_rec(&rec);
+    Ok(())
+}
+
 #[test]
 fn compression() ->  IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
@@ -235,7 +249,7 @@ fn limited_hashmap() {
 fn pool_auto() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], SOCKET_TYPE, 2)?;
-    pool.start(on_message)?;
+    pool.start_sync(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
@@ -246,7 +260,7 @@ fn pool_auto() -> IOResult<()> {
 fn pool_manual() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![BSREADSENDER_COMPRESSED]], SOCKET_TYPE)?;
-    pool.start(on_message)?;
+    pool.start_sync(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
@@ -284,9 +298,7 @@ fn dispatcher() -> IOResult<()> {
         }
     }
     */
-
     print_stats_rec(&rec);
-
 
     Ok(())
 }

@@ -39,8 +39,7 @@ impl Bsread {
     }
 
     pub fn is_interrupted(&self) -> bool {
-        let ret = self.interrupted.load(Ordering::Relaxed);
-        ret
+        self.interrupted.load(Ordering::Relaxed)
     }
 
     pub fn get_context(&self) -> &Context {

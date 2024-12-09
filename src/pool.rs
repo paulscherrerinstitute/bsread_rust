@@ -52,7 +52,7 @@ impl
 
 
 
-    pub fn start(&mut self, callback: fn(msg: Message) -> ()) -> IOResult<()> {
+    pub fn start_sync(&mut self, callback: fn(msg: Message) -> ()) -> IOResult<()> {
         for receiver in &mut self.receivers{
             receiver.fork(callback, None);
         }

@@ -161,7 +161,7 @@ impl
             if num_messages.map_or(false, |m| self.stats.lock().unwrap().counter_messages >= m) {
                 break;
             }
-            if self.bsread.is_interrupted() {
+            if self.is_interrupted() {
                 break;
             }
         }
@@ -241,9 +241,10 @@ impl
         Ok(())
     }
 
-    pub fn interrupt(&mut self)  {
-        self.bsread.interrupt();
+    pub fn is_interrupted(&self) ->bool {
+        self.bsread.is_interrupted()
     }
+
 
     pub fn stop(&mut self) -> IOResult<()> {
         self.bsread.interrupt();
