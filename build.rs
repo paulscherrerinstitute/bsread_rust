@@ -17,7 +17,7 @@ fn main() {
         .file("src/c/bitshuffle/bitshuffle.c") // Add other .c files if needed
         .file("src/c/bitshuffle/bitshuffle_core.c")
         .file("src/c/bitshuffle/iochain.c")
-        .file("src/c/lz4/lz4.c")
+        //.file("src/c/lz4/lz4.c")
         .include("src/c/bitshuffle") // Include the header files
         .include("src/c/lz4") // Include the header files
         //.flag_if_supported("-prebind")
