@@ -51,7 +51,7 @@ fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> Result<Box<dyn Chan
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let little_endian = if encoding == ">" { false } else { true };
+    let little_endian = if (encoding == ">" || encoding.to_lowercase()=="big") { false } else { true };
 
     //"none" or "bitshuffle_lz4"
     let compression = channel_data.get("compression")

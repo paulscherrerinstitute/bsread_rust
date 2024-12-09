@@ -273,7 +273,7 @@ fn dispatcher() -> IOResult<()> {
     ];
     let stream = dispatcher::request_stream(channels, None, None, true, false)?;
     let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]), zmq::SUB)?;
-    //rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGES))?;
 
     /*
     rec.start(100)?;
