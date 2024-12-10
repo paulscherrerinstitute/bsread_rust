@@ -29,8 +29,8 @@ extern "C" {
         block_size: usize) ->usize;
 }
 
-fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, String> {
-    let elem_size = elem_size as usize;
+fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, String> {
+    let elem_size = elem_size;
     let mut c =  Cursor::new(input);
     let elements =   c.read_u64::<BigEndian>().unwrap() as usize;
     let block_size =c.read_u32::<BigEndian>().unwrap();
@@ -42,7 +42,7 @@ fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, St
         bshuf_decompress_lz4(
             blob.as_ptr(),
             output.as_mut_ptr(),
-            elements as usize /elem_size,
+            elements,
             elem_size,
             block_size as usize,
         )
@@ -57,8 +57,8 @@ fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, St
 }
 
 
-fn bshuf_trans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, String> {
-    let elem_size = elem_size as usize;
+fn  bshuf_trans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, String> {
+    let elem_size = elem_size;
     let blob_in = &input[0..];
     let target_block_size = 8192;
     let minimum_block_size = 128;
@@ -71,14 +71,10 @@ fn bshuf_trans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, Stri
         bshuf_compress_lz4_bound(elements, elem_size, block_size)
     };
     let mut output = vec![0u8; output_bound+12];
-
-    //let mut c =  Cursor::new(output);
-    //c.write_u64::<BigEndian>(elements as u64).unwrap();
-    //c.write_u32::<BigEndian>(block_size as u32).unwrap();
     (&mut output[0..8]).write_u64::<BigEndian>(elements as u64).unwrap();
-    (&mut output[8..12]).write_u32::<BigEndian>(block_size as u32).unwrap();
-    let blob_out = &mut output[12..];
+    (&mut output[8..12]).write_u32::<BigEndian>((block_size*elem_size) as u32).unwrap();
 
+    let blob_out = &mut output[12..];
     let ret  = unsafe {
         bshuf_compress_lz4(
             blob_in.as_ptr(),
@@ -100,7 +96,7 @@ fn bshuf_trans_bit_elem(input: &[u8],  elem_size: u32, ) -> Result<Vec<u8>, Stri
 
 
 
-pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: u32) -> IOResult<Vec<u8>> {
+pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_untrans_bit_elem(&compressed_data, element_size) {
         Ok(out) => {Ok(out)}
         Err(e) => {Err(new_error(ErrorKind::InvalidInput, e.as_str()))}
@@ -113,7 +109,7 @@ pub fn decompress_lz4(compressed_data: &[u8]) -> IOResult<Vec<u8>> {
 }
 
 
-pub fn compress_bitshuffle_lz4(data: &[u8], element_size: u32) -> IOResult<Vec<u8>> {
+pub fn compress_bitshuffle_lz4(data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_trans_bit_elem(data, element_size){
         Ok(out) => {Ok(out)}
         Err(e) => {Err(new_error(ErrorKind::InvalidInput, e.as_str()))}

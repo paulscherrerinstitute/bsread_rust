@@ -9,7 +9,7 @@ pub struct ChannelConfig {
     typ: String,
     shape: Option<Vec<u32>>,
     elements: usize,
-    element_size: u32,
+    element_size: usize,
     little_endian: bool,
     compression: String,
 }
@@ -30,7 +30,7 @@ impl ChannelConfig {
     pub fn get_compression(&self) -> String {
         self.compression.clone()
     }
-    pub fn get_element_size(&self) -> u32 {
+    pub fn get_element_size(&self) -> usize {
         self.element_size.clone()
     }
 }
@@ -54,7 +54,7 @@ pub fn get_elements(shape: &Option<Vec<u32>>) -> usize {
     elements
 }
 
-fn get_element_size(typ: &str) -> u32 {
+fn get_element_size(typ: &str) -> usize {
     match typ {
         "bool" => 4,
         "string" => 1,

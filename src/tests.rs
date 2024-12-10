@@ -1,7 +1,9 @@
 use crate::*;
 use crate::compression::*;
 use std::{cmp, thread};
+use std::io::Cursor;
 use std::time::Duration;
+use byteorder::{BigEndian, WriteBytesExt};
 use rand::Rng;
 
 
@@ -318,14 +320,30 @@ fn lz4() ->  IOResult<()> {
     Ok(())
 }
 
+
 #[test]
 fn bitshuffle_lz4() ->  IOResult<()> {
     let elem_size = 1;
-
     let mut buffer = vec![0u8; 1024]; // Allocate 1024 bytes
     rand::thread_rng().fill(&mut buffer[..]); // Fill with random data
-    let compressed = compress_bitshuffle_lz4(&buffer, 1)?;
+    let compressed = compress_bitshuffle_lz4(&buffer, elem_size)?;
     let decompressed = decompress_bitshuffle_lz4(&compressed, elem_size)?;
     assert_eq!(&buffer, &decompressed);
+
+
+    let elem_size = 4;
+    let mut data = vec![0u32; 128];
+    rand::thread_rng().fill(&mut data[..]); // Fill with random data
+    let mut buffer = vec![0u8; elem_size*data.len()];
+    for i in 0..data.len(){
+        (&mut buffer[i*4..(i+1)*4]).write_u32::<BigEndian>(data[i]).unwrap();
+    }
+    let compressed = compress_bitshuffle_lz4(&buffer, elem_size)?;
+    let decompressed = decompress_bitshuffle_lz4(&compressed, elem_size)?;
+    assert_eq!(&buffer, &decompressed);
+    let mut out = vec![0u32; 128];
+    let mut cursor = Cursor::new(&decompressed);
+    reader::READER_ABU32(& mut cursor, out.as_mut_slice())?;
+    assert_eq!(&data, &out);
     Ok(())
 }
