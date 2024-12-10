@@ -24,6 +24,7 @@ mod bsread;
 mod channel;
 mod message;
 mod reader;
+mod writer;
 mod receiver;
 mod compression;
 mod utils;
@@ -32,5 +33,3 @@ mod value;
 mod debug;
 mod pool;
 mod dispatcher;
-mod sender;
-

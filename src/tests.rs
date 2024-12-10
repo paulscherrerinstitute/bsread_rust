@@ -335,9 +335,11 @@ fn bitshuffle_lz4() ->  IOResult<()> {
     let mut data = vec![0u32; 128];
     rand::thread_rng().fill(&mut data[..]); // Fill with random data
     let mut buffer = vec![0u8; elem_size*data.len()];
-    for i in 0..data.len(){
-        (&mut buffer[i*4..(i+1)*4]).write_u32::<BigEndian>(data[i]).unwrap();
-    }
+    let mut cursor = Cursor::new(&mut buffer);
+    writer::WRITER_ABU32(& mut cursor, data.as_slice())?;
+    //for i in 0..data.len(){
+    //    (&mut buffer[i*4..(i+1)*4]).write_u32::<BigEndian>(data[i]).unwrap();
+    //}
     let compressed = compress_bitshuffle_lz4(&buffer, elem_size)?;
     let decompressed = decompress_bitshuffle_lz4(&compressed, elem_size)?;
     assert_eq!(&buffer, &decompressed);
