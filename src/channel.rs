@@ -1,7 +1,8 @@
 use crate::*;
 use crate::value::Value;
 use std::io::Cursor;
-
+use crate::reader::{READER_ABF32, READER_ABF64, READER_ABI16, READER_ABI32, READER_ABI64, READER_ABOOL, READER_ABU16, READER_ABU32, READER_ABU64, READER_AF32, READER_AF64, READER_AI16, READER_AI32, READER_AI64, READER_AI8, READER_AU16, READER_AU32, READER_AU64, READER_AU8, READER_BF32, READER_BF64, READER_BI16, READER_BI32, READER_BI64, READER_BOOL, READER_BU16, READER_BU32, READER_BU64, READER_F32, READER_F64, READER_I16, READER_I32, READER_I64, READER_I8, READER_STRING, READER_U16, READER_U32, READER_U64, READER_U8};
+use crate::writer::{WRITER_ABF32, WRITER_ABF64, WRITER_ABI16, WRITER_ABI32, WRITER_ABI64, WRITER_ABOOL, WRITER_ABU16, WRITER_ABU32, WRITER_ABU64, WRITER_AF32, WRITER_AF64, WRITER_AI16, WRITER_AI32, WRITER_AI64, WRITER_AI8, WRITER_AU16, WRITER_AU32, WRITER_AU64, WRITER_AU8, WRITER_BF32, WRITER_BF64, WRITER_BI16, WRITER_BI32, WRITER_BI64, WRITER_BOOL, WRITER_BU16, WRITER_BU32, WRITER_BU64, WRITER_F32, WRITER_F64, WRITER_I16, WRITER_I32, WRITER_I64, WRITER_I8, WRITER_STRING, WRITER_U16, WRITER_U32, WRITER_U64, WRITER_U8};
 
 #[derive(Debug)]
 pub struct ChannelConfig {
@@ -174,5 +175,43 @@ impl_channel_array_trait!(f64, AF64);
 impl ChannelTrait for ChannelArray<String> {
     fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(new_error(ErrorKind::Unsupported, "String array not supported"))
+    }
+}
+
+pub fn new_channel(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:String) -> IOResult<Box<dyn ChannelTrait>> {
+    let array = shape.clone().unwrap_or(vec![]).len() > 0;
+    if  array {
+        match typ.as_str() {
+            "bool" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_ABOOL, WRITER_ABOOL))),
+            //"string" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_ASTRING, WRITER_ASTRING))),
+            "string" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_STRING, WRITER_STRING))),
+            "int8" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_AI8, WRITER_AI8))),
+            "uint8" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_AU8, WRITER_AU8))),
+            "int16" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AI16 } else { READER_ABI16 }, if little_endian { WRITER_AI16 } else { WRITER_ABI16 }))),
+            "uint16" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU16 } else { READER_ABU16 }, if little_endian { WRITER_AU16 } else { WRITER_ABU16 }))),
+            "int32" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AI32 } else { READER_ABI32 }, if little_endian { WRITER_AI32 } else { WRITER_ABI32 }))),
+            "uint32" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU32 } else { READER_ABU32 }, if little_endian { WRITER_AU32 } else { WRITER_ABU32 }))),
+            "int64" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AI64 } else { READER_ABI64 },if little_endian { WRITER_AI64 } else { WRITER_ABI64 }))),
+            "uint64" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU64 } else { READER_ABU64 }, if little_endian { WRITER_AU64 } else { WRITER_ABU64 }))),
+            "float32" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AF32 } else { READER_ABF32 }, if little_endian { WRITER_AF32 } else { WRITER_ABF32 }))),
+            "float64" => return Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AF64 } else { READER_ABF64 }, if little_endian { WRITER_AF64 } else { WRITER_ABF64 }))),
+            _ => return Err(new_error(ErrorKind::Unsupported,"Unsupported data type"))
+        };
+    } else {
+        match typ.as_str() {
+            "bool" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_BOOL, WRITER_BOOL))),
+            "string" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_STRING, WRITER_STRING))),
+            "int8" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_I8, WRITER_I8))),
+            "uint8" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_U8, WRITER_U8))),
+            "int16" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_I16 } else { READER_BI16 }, if little_endian { WRITER_I16 } else { WRITER_BI16 }))),
+            "uint16" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U16 } else { READER_BU16 }, if little_endian { WRITER_U16 } else { WRITER_BU16 }))),
+            "int32" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_I32 } else { READER_BI32 }, if little_endian { WRITER_I32 } else { WRITER_BI32 }))),
+            "uint32" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U32 } else { READER_BU32 }, if little_endian { WRITER_U32 } else { WRITER_BU32 }))),
+            "int64" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_I64 } else { READER_BI64 }, if little_endian { WRITER_I64 } else { WRITER_BI64 }))),
+            "uint64" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U64 } else { READER_BU64 }, if little_endian { WRITER_U64 } else { WRITER_BU64 }))),
+            "float32" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_F32 } else { READER_BF32 }, if little_endian { WRITER_F32 } else { WRITER_BF32 }))),
+            "float64" => return Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_F64 } else { READER_BF64 }, if little_endian { WRITER_F64 } else { WRITER_BF64 }))),
+            _ => return Err(new_error(ErrorKind::Unsupported,"Unsupported data type"))
+        };
     }
 }
