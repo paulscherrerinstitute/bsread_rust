@@ -38,11 +38,13 @@ impl ChannelConfig {
 pub struct ChannelScalar<T> {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>,
+    writer: fn(&mut Cursor<&mut Vec<u8>>, T) -> IOResult<()>
 }
 
 pub struct ChannelArray<T> {
     config: ChannelConfig,
-    reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>
+    reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,
+    writer: fn(&mut Cursor<&mut Vec<u8>>, &[T]) -> IOResult<()>
 }
 
 pub fn get_elements(shape: &Option<Vec<u32>>) -> usize {
@@ -72,21 +74,23 @@ fn get_element_size(typ: &str) -> usize {
     }
 }
 impl<T: Default + Clone> ChannelScalar<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>) -> Self {
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String,
+               reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>, writer: fn(&mut Cursor<&mut Vec<u8>>, T) -> IOResult<()>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression };
-        Self { config, reader }
+        Self { config, reader, writer }
     }
 }
 
 
 impl<T: Default + Clone> ChannelArray<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String, reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>) -> Self {
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String,
+               reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,  writer: fn(&mut Cursor<&mut Vec<u8>>, &[T]) -> IOResult<()>) -> Self {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression };
-        Self { config, reader }
+        Self { config, reader, writer }
     }
 }
 

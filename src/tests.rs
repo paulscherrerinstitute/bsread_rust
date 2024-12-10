@@ -141,7 +141,7 @@ fn joining() ->  IOResult<()> {
 }
 
 #[test]
-fn compression() ->  IOResult<()> {
+fn compressed() ->  IOResult<()> {
     let bsread = Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), SOCKET_TYPE)?;
     rec.listen(on_message, Some(MESSAGES))?;
@@ -348,4 +348,11 @@ fn bitshuffle_lz4() ->  IOResult<()> {
     reader::READER_ABU32(& mut cursor, out.as_mut_slice())?;
     assert_eq!(&data, &out);
     Ok(())
+}
+
+#[test]
+fn writer() ->  IOResult<()> {
+
+    Ok(())
+
 }
