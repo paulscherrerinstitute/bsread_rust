@@ -1,7 +1,8 @@
 use crate::*;
-use crate::compression::decompress_bitshuffle_lz4;
-use std::thread;
+use crate::compression::*;
+use std::{cmp, thread};
 use std::time::Duration;
+use rand::Rng;
 
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
@@ -145,6 +146,8 @@ fn compression() ->  IOResult<()> {
     print_stats_rec(&rec);
     Ok(())
 }
+
+
 
 
 #[test]
@@ -302,5 +305,27 @@ fn dispatcher() -> IOResult<()> {
     */
     print_stats_rec(&rec);
 
+    Ok(())
+}
+
+#[test]
+fn lz4() ->  IOResult<()> {
+    let mut buffer = vec![0u8; 1024]; // Allocate 1024 bytes
+    rand::thread_rng().fill(&mut buffer[..]); // Fill with random data
+    let compressed = compress_lz4(&buffer)?;
+    let decompressed = decompress_lz4(&compressed)?;
+    assert_eq!(&buffer, &decompressed);
+    Ok(())
+}
+
+#[test]
+fn bitshuffle_lz4() ->  IOResult<()> {
+    let elem_size = 1;
+
+    let mut buffer = vec![0u8; 1024]; // Allocate 1024 bytes
+    rand::thread_rng().fill(&mut buffer[..]); // Fill with random data
+    let compressed = compress_bitshuffle_lz4(&buffer, 1)?;
+    let decompressed = decompress_bitshuffle_lz4(&compressed, elem_size)?;
+    assert_eq!(&buffer, &decompressed);
     Ok(())
 }

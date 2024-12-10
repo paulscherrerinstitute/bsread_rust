@@ -26,4 +26,5 @@ cc = "1.2.1"
 num = "0.4.3"
 num-traits = "0.2.19"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+rand = "0.8"
 

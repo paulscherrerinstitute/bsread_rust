@@ -5,12 +5,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zmq::{Context, SocketType};
 
+/// Bsread context. If interrupted all linked Receiver instances will be interrupted.
 pub struct Bsread {
     context: Context,
     interrupted: Arc<AtomicBool>,
 }
 
 impl Bsread {
+    ///
     pub fn new() ->IOResult<Self> {
         let interrupted = Arc::new(AtomicBool::new(false));
         Bsread::new_with_interrupted(interrupted)
