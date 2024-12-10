@@ -4,7 +4,7 @@ use crate::utils::*;
 use std::{io, thread};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
@@ -86,17 +86,25 @@ pub struct Receiver<'a> {
     fifo: Option<Arc<FifoQueue<Message>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     stats: Arc<Mutex<Stats>>,
-    index: u32
+    index: u32,
+    interrupted: Arc<AtomicBool>,
+    mode: String
 }
 
 impl
 <'a> Receiver<'a> {
     pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        Receiver::new_with_interrupted(bsread, endpoint, socket_type, interrupted)
+    }
+
+    pub fn new_with_interrupted(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType, interrupted: Arc<AtomicBool>) -> IOResult<Self> {
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let index =  get_index();
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
-        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index })
+        let mode = "sync".to_string();
+        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index, interrupted, mode })
     }
 
     pub fn to_string(& self,) -> String {
@@ -170,16 +178,19 @@ impl
 
     pub fn fork(& mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) {
         fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: Message) -> (), num_messages: Option<u32>,
-                          producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,interrupted: Arc<AtomicBool>) -> IOResult<()> {
-            let bsread = crate::Bsread::new_forked(interrupted).unwrap();
+                          producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,
+                          interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>) -> IOResult<()> {
+            let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
             receiver.stats = producer_stats;
+            receiver.interrupted = interrupted_self;
             receiver.listen(callback, num_messages)
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
-        let interrupted = Arc::clone(self.bsread.get_interrupted());
+        let interrupted_context = Arc::clone(self.bsread.get_interrupted());
+        let interrupted_self = Arc::clone(&self.interrupted);
 
         let producer_fifo = match &self.fifo {
             None => { None }
@@ -194,7 +205,7 @@ impl
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, producer_stats, interrupted).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, producer_stats, interrupted_context, interrupted_self).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error
@@ -203,6 +214,7 @@ impl
              })
             .expect("Failed to spawn thread");
         self.handle = Some(handle);
+        self.mode = "async".to_string();
     }
 
     pub fn join(& mut self) -> io::Result<()> {
@@ -232,23 +244,29 @@ impl
     //Synchronous API
     pub fn start(&mut self, buffer_size:usize) -> IOResult<()> {
         if self.fifo.is_some(){
-            return Err(new_error(ErrorKind::AlreadyExists, "Receiver listener already started"));
+            return Err(new_error(ErrorKind::AlreadyExists, "Receiver already started"));
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
 
         fn callback(_: Message) -> () {}
         self.fork(callback, None);
+        self.mode = "buffered".to_string();
         Ok(())
     }
 
+    pub fn interrupt(&self) {
+        self.interrupted.store(true, Ordering::Relaxed);
+    }
+
     pub fn is_interrupted(&self) ->bool {
-        self.bsread.is_interrupted()
+        self.interrupted.load(Ordering::Relaxed) || self.bsread.is_interrupted()
     }
 
 
     pub fn stop(&mut self) -> IOResult<()> {
-        self.bsread.interrupt();
+        self.interrupt();
         self.join()?;
+        self.fifo = None;
         Ok(())
     }
 
@@ -283,10 +301,7 @@ impl
     }
 
     pub fn get_mode(&self) -> &str {
-        if self.fifo.is_some(){
-            return "sync"
-        }
-        "async"
+        self.mode.as_str()
     }
     pub fn get_socket_type(&self) -> SocketType {
         self.socket_type

@@ -12,13 +12,12 @@ pub struct Bsread {
 
 impl Bsread {
     pub fn new() ->IOResult<Self> {
-        let context = zmq::Context::new();
         let interrupted = Arc::new(AtomicBool::new(false));
-        Ok(Self { context, interrupted })
+        Bsread::new_with_interrupted(interrupted)
     }
 
-    pub fn new_forked(interrupted: Arc<AtomicBool>) ->IOResult<Self> {
-        let context = zmq::Context::new();
+    pub fn new_with_interrupted(interrupted: Arc<AtomicBool>) ->IOResult<Self> {
+        let context = Context::new();
         Ok(Self { context, interrupted })
     }
 
@@ -43,12 +42,12 @@ impl Bsread {
     }
 
     pub fn get_context(&self) -> &Context {
-        return &self.context;
+        &self.context
     }
 
 
     pub fn get_interrupted(&self) -> &Arc<AtomicBool> {
-        return &self.interrupted;
+        &self.interrupted
     }
 }
 

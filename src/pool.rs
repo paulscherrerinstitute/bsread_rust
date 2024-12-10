@@ -82,7 +82,9 @@ impl
     }
 
     pub fn stop(&mut self) -> IOResult<()> {
-        self.bsread.interrupt();
+        for receiver in &mut self.receivers{
+            receiver.interrupt();
+        }
         for receiver in &mut self.receivers{
             receiver.join()?;
         }

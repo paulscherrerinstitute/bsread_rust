@@ -116,7 +116,8 @@ fn interrupting() ->  IOResult<()> {
     thread::sleep(Duration::from_millis(50));
     let ret = rec.stop();
     println!("Stop result: {:?}", ret);
-    println!("Is interrupted: {:?}", rec.is_interrupted());
+    println!("Receiver is interrupted: {:?}", rec.is_interrupted());
+    println!("Context is interrupted: {:?}", bsread.is_interrupted());
     print_stats_rec(&rec);
     Ok(())
 }
@@ -130,14 +131,15 @@ fn joining() ->  IOResult<()> {
     bsread.interrupt();
     let ret = rec.join();
     println!("Join result: {:?}", ret);
-    println!("Is interrupted: {:?}", rec.is_interrupted());
+    println!("Receiver is interrupted: {:?}", rec.is_interrupted());
+    println!("Context is interrupted: {:?}", bsread.is_interrupted());
     print_stats_rec(&rec);
     Ok(())
 }
 
 #[test]
 fn compression() ->  IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
+    let bsread = Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), SOCKET_TYPE)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
@@ -156,7 +158,7 @@ fn bitshuffle() -> IOResult<()> {
 
 #[test]
 fn conversion() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
+    let bsread = Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
     match rec.connect(PIPELINES[0]) {
         Ok(_) => {}
@@ -176,7 +178,7 @@ fn conversion() -> IOResult<()> {
 
 #[test]
 fn booleans() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
+    let bsread = Bsread::new().unwrap();
     let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
     match rec.connect(BSREADSENDER) {
         Ok(_) => {}
@@ -270,7 +272,7 @@ fn pool_manual() -> IOResult<()> {
 #[test]
 fn pool_buffered() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, PIPELINES[0]], SOCKET_TYPE, 2)?;
+    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], SOCKET_TYPE, 2)?;
     pool.start_buffered(on_message,100)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
