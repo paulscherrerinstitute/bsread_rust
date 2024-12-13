@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::*;
 use reqwest::Error as ReqwestError;
 use reqwest::blocking::{Client, Response};

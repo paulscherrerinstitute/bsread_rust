@@ -7,6 +7,7 @@ use std::time::Duration;
 use byteorder::{BigEndian, WriteBytesExt};
 use rand::Rng;
 use crate::reader::READER_ABOOL;
+use crate::sender::Sender;
 use crate::writer::WRITER_ABOOL;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
@@ -382,4 +383,19 @@ fn serializer() ->  IOResult<()> {
     }
     Ok(())
 
+}
+
+#[test]
+fn sender() ->  IOResult<()> {
+    let bsread = Bsread::new().unwrap();
+    let mut sender = Sender::new(&bsread,  zmq::PUB, 5555, None, None, None, None, None, None)?;
+    let value = Value::U8(100);
+    let little_endian = true;
+    let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
+    let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+
+    sender.start(vec![ch]);
+    sender.send(vec![value]);
+    sender.stop();
+    Ok(())
 }

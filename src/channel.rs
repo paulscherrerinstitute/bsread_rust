@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use crate::*;
 use crate::value::Value;
 use std::io::Cursor;
+use serde_json::Value as JsonValue;
 use crate::reader::{READER_ABF32, READER_ABF64, READER_ABI16, READER_ABI32, READER_ABI64, READER_ABOOL, READER_ABU16, READER_ABU32, READER_ABU64, READER_AF32, READER_AF64, READER_AI16, READER_AI32, READER_AI64, READER_AI8, READER_AU16, READER_AU32, READER_AU64, READER_AU8, READER_BF32, READER_BF64, READER_BI16, READER_BI32, READER_BI64, READER_BOOL, READER_BU16, READER_BU32, READER_BU64, READER_F32, READER_F64, READER_I16, READER_I32, READER_I64, READER_I8, READER_STRING, READER_U16, READER_U32, READER_U64, READER_U8};
 use crate::writer::{WRITER_ABF32, WRITER_ABF64, WRITER_ABI16, WRITER_ABI32, WRITER_ABI64, WRITER_ABOOL, WRITER_ABU16, WRITER_ABU32, WRITER_ABU64, WRITER_AF32, WRITER_AF64, WRITER_AI16, WRITER_AI32, WRITER_AI64, WRITER_AI8, WRITER_AU16, WRITER_AU32, WRITER_AU64, WRITER_AU8, WRITER_BF32, WRITER_BF64, WRITER_BI16, WRITER_BI32, WRITER_BI64, WRITER_BOOL, WRITER_BU16, WRITER_BU32, WRITER_BU64, WRITER_F32, WRITER_F64, WRITER_I16, WRITER_I32, WRITER_I64, WRITER_I8, WRITER_STRING, WRITER_U16, WRITER_U32, WRITER_U64, WRITER_U8};
 
@@ -28,11 +30,28 @@ impl ChannelConfig {
     pub fn get_elements(&self) -> usize {
         self.elements.clone()
     }
+    pub fn get_element_size(&self) -> usize {
+        self.element_size.clone()
+    }
+    pub fn is_little_endian(&self) -> bool {
+        self.little_endian
+    }
     pub fn get_compression(&self) -> String {
         self.compression.clone()
     }
-    pub fn get_element_size(&self) -> usize {
-        self.element_size.clone()
+
+    pub fn get_metadata(&self) -> HashMap<String, JsonValue> {
+        let mut metadata: HashMap<String, JsonValue> = HashMap::new();
+        metadata.insert("name".to_string(), JsonValue::String(self.get_name()));
+        let shape = self.get_shape().unwrap_or(Vec::new());
+        let shape_json = JsonValue::Array(shape.into_iter().map(|num| JsonValue::Number(num.into())).collect());
+        metadata.insert("shape".to_string(),shape_json);
+        metadata.insert("type".to_string(), JsonValue::String(self.get_type()));
+        metadata.insert("encoding".to_string(), JsonValue::String((if self.is_little_endian(){"little"} else {"big"}).to_string()));
+        if self.get_compression() != "none" {
+            metadata.insert("compression".to_string(), JsonValue::String(self.get_compression()));
+        }
+        metadata
     }
 }
 

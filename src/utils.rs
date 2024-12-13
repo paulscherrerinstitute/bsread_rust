@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex};
+use md5::{Md5, Digest};
 
 /// Ordered HashMap with a maximum size
 pub struct LimitedHashMap<K, V> {
@@ -121,4 +122,13 @@ impl<K> FifoQueue<K> {
     pub fn get_available_count(&self) -> usize {
         self.queue.lock().unwrap().len()
     }
+}
+
+
+pub fn get_hash(bytes: &[u8]) -> String{
+    let mut hasher = Md5::new();
+    hasher.update(bytes);
+    let result = hasher.finalize();
+    let hash_hex = format!("{:x}", result);
+    hash_hex
 }
