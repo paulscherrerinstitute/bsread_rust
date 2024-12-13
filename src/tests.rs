@@ -1,11 +1,13 @@
 use crate::*;
 use crate::compression::*;
+use crate::channel::new_channel;
 use std::{cmp, thread};
 use std::io::Cursor;
 use std::time::Duration;
 use byteorder::{BigEndian, WriteBytesExt};
 use rand::Rng;
-
+use crate::reader::READER_ABOOL;
+use crate::writer::WRITER_ABOOL;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
@@ -351,8 +353,33 @@ fn bitshuffle_lz4() ->  IOResult<()> {
 }
 
 #[test]
-fn writer() ->  IOResult<()> {
-
+fn serializer() ->  IOResult<()> {
+    let mut buf = vec![0u8; 2000];
+    let values = vec!(
+        Value::STR("hello world".to_string()),
+        Value::BOOL(true), Value::ABOOL(vec![true;100]),
+        Value::U8(100),Value::AU8(vec![10;100]),
+        Value::U16(100), Value::AU16(vec![10;100]),
+        Value::U32(100), Value::AU32(vec![10;100]),
+        Value::U64(100), Value::AU64(vec![10;100]),
+        Value::I8(100), Value::AI8(vec![10;100]),
+        Value::I16(100), Value::AI16(vec![10;100]),
+        Value::I32(100), Value::AI32(vec![10;100]),
+        Value::I64(100), Value::AI64(vec![10;100]),
+        Value::F32(100.0), Value::AF32(vec![10.0;100]),
+        Value::F64(100.0), Value::AF64(vec![10.0;100]),
+    );
+    for value in values {
+        for little_endian in  vec!(true, false) {
+            let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
+            let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+            let mut cursor = Cursor::new(&mut buf);
+            ch.write(&mut cursor, &value)?;
+            let mut cursor = Cursor::new(&buf);
+            let ret = ch.read(&mut cursor)?;
+            assert_eq!(&value, &ret);
+        }
+    }
     Ok(())
 
 }

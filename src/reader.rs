@@ -34,7 +34,10 @@ pub const READER_BF64: fn(&mut Cursor<&Vec<u8>>) -> IOResult<f64> = |cursor: &mu
 pub const READER_BOOL: fn(&mut Cursor<&Vec<u8>>) -> IOResult<bool> = |cursor: &mut Cursor<&Vec<u8>>| READER_U8(cursor).map(|value| value != 0);
 pub const READER_STRING: fn(&mut Cursor<&Vec<u8>>) -> IOResult<String> = |cursor: &mut Cursor<&Vec<u8>>| {
     let mut buffer = Vec::new();
-    cursor.read_to_end(&mut buffer)?; // Read the remaining bytes into the buffer
+    cursor.read_to_end(&mut buffer)?;
+    if let Some(pos) = buffer.iter().position(|&b| b == 0) {
+        buffer.truncate(pos);
+    }
     String::from_utf8(buffer).map_err(|e| new_error(ErrorKind::InvalidData, e.to_string().as_str()))
 };
 

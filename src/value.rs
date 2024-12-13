@@ -1,7 +1,7 @@
 use crate::convert::*;
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Value {
     STR(String),
     BOOL(bool),
@@ -201,7 +201,7 @@ impl Value {
             Value::AF64(data) => { format!("{:?}", data) }
         }
     }
-    pub fn get_type(&self) -> &str
+    pub fn get_name(&self) -> &str
     {
         match self {
             Value::STR(_) => {"STR"}
@@ -228,6 +228,23 @@ impl Value {
             Value::AU64(_) => {"AU64"}
             Value::AF32(_) => {"AF32"}
             Value::AF64(_) => {"AF64"}
+        }
+    }
+
+    pub fn get_type(&self) -> &str {
+        match self {
+            Value::STR(_) | Value::ASTR(_) => { "string" }
+            Value::BOOL(_) | Value::ABOOL(_) => { "bool" }
+            Value::I8(_) | Value::AI8(_) => { "int8" }
+            Value::U8(_) | Value::AU8(_) => { "uint8" }
+            Value::I16(_) | Value::AI16(_) => { "int16" }
+            Value::U16(_) | Value::AU16(_) => { "uint16" }
+            Value::I32(_) | Value::AI32(_) => { "int32" }
+            Value::U32(_) | Value::AU32(_) => { "uint32" }
+            Value::I64(_) | Value::AI64(_) => { "int64" }
+            Value::U64(_) | Value::AU64(_) => { "uint64" }
+            Value::F32(_) | Value::AF32(_) => { "float32" }
+            Value::F64(_) | Value::AF64 (_) => {"float64"}
         }
     }
 }
