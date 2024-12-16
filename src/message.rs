@@ -203,12 +203,14 @@ impl Message {
         };
         Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
     }
-    pub fn create(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:  IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
+    pub fn new_from_ch(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:  IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
         main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
         main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(id)));
-        main_header.insert("global_timestamp".to_string(), JsonValue::Array(vec![JsonValue::Number(JsonNumber::from(timestamp.0)),JsonValue::Number(JsonNumber::from(timestamp.1)),]));
-
+        let mut global_timestamp = JsonMap::new();
+        global_timestamp.insert("sec".to_string(), JsonValue::Number(timestamp.0.into()));
+        global_timestamp.insert("ns".to_string(), JsonValue::Number(timestamp.1.into()));
+        main_header.insert("global_timestamp".to_string(), JsonValue::Object(global_timestamp));
         let data_header = create_data_header(&channels)?;
 
         let data_header_json = serde_json::to_string(&data_header)?;

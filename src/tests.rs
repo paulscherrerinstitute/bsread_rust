@@ -7,6 +7,7 @@ use std::time::Duration;
 use indexmap::IndexMap;
 use byteorder::{BigEndian, WriteBytesExt};
 use rand::Rng;
+use crate::debug::{start_sender, stop_senders};
 use crate::reader::READER_ABOOL;
 use crate::sender::Sender;
 use crate::writer::WRITER_ABOOL;
@@ -401,29 +402,14 @@ fn sender() ->  IOResult<()> {
     sender.start()?;
     sender.create_data_header(&channels)?;
     sender.send(&channels, &data)?;
-
-    sender.stop()?;
+    sender.stop();
     Ok(())
 }
 
 #[test]
 fn sender_msg() ->  IOResult<()> {
-    let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(&bsread,  zmq::PUB, 10300, None, None, None, None, None, None)?;
-    let value = Value::U8(100);
-    let little_endian = true;
-    let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-    let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
-    let channels = vec![ch];
-    let channel_data =  vec![Some(ChannelData::new(value,(0,0)))];
-    let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
-    for i in 0..channels.len() {
-        //data.insert(channels[i].get_config().get_name().clone(),channel_data[i] );
-    }
-
-    sender.start()?;
-    let msg = Message::create(0,(0,0), channels, data)?;
-    sender.send_message(msg, true)?;
-    sender.stop()?;
+    start_sender(10300, zmq::PUB)?;
+    thread::sleep(Duration::from_millis(5000));
+    stop_senders();
     Ok(())
 }

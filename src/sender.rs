@@ -47,6 +47,10 @@ impl
         let start_id = start_id.unwrap_or(0);
         let data_compression = data_compression.unwrap_or("none".to_string());
         let header_compression = header_compression.unwrap_or("none".to_string());
+
+        let address = if address.starts_with("tcp://"){address } else { "tcp://".to_string() + address.as_str() };
+        socket.set_sndhwm(queue_size as i32);
+
         Ok(Self { socket, socket_type, main_header:HashMap::new(), data_header: HashMap::new(), data_header_buffer: vec![],
             bsread, port, address, queue_size, block,pulse_id:start_id, data_compression, header_compression, started:false})
     }
@@ -71,7 +75,8 @@ impl
 
     pub fn start(&mut self) -> IOResult<()> {
         let url = self.get_url();
-        println!("url: {}", url);
+        println!("Binding url: {}", url);
+
         self.socket.bind(url.as_str())?;
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
         main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
@@ -82,10 +87,14 @@ impl
         Ok(())
     }
 
-    pub fn stop(&mut self) -> IOResult<()> {
+    pub fn stop(&mut self){
         self.started = false;
-        self.socket.unbind(self.get_url().as_str())?;
-        Ok(())
+        let url = self.get_url();
+        println!("Unbinding url: {}", url);
+        match(self.socket.unbind(url.as_str())){
+            Ok(_) => (),
+            Err(_) => ()
+        };
     }
 
 
@@ -97,13 +106,17 @@ impl
             return Err(new_error(ErrorKind::InvalidInput, "Invalid size of channel data list"));
         }
 
+        let flags_last = if self.block {0} else {zmq::DONTWAIT};
+        let flags_more = flags_last | zmq::SNDMORE;
+
+
         let valid_channels = channel_data.iter().filter(|item| item.is_some()).count();
         let main_header_json = serde_json::to_string(&self.main_header)?;
         let blob = main_header_json.as_bytes();
         let main_header_buffer = (*blob).to_vec();
 
-        self.socket.send(main_header_buffer, zmq::SNDMORE)?;
-        self.socket.send(&self.data_header_buffer, if valid_channels>0 {zmq::SNDMORE} else {0} )?;
+        self.socket.send(main_header_buffer, flags_more)?;
+        self.socket.send(&self.data_header_buffer, if valid_channels>0 {flags_more} else {flags_last} )?;
 
         let mut channel_index = 0;
         for i in 0..channels.len(){
@@ -111,8 +124,8 @@ impl
             if let Some(channel_data) = &channel_data[i] {
                 let last = channel_index >= (valid_channels- 1);
                 let (data,tm) =  serialize_channel(&ch, &channel_data)?;
-                self.socket.send(data, zmq::SNDMORE)?;
-                self.socket.send(tm, if last {0} else { zmq::SNDMORE})?;
+                self.socket.send(data, flags_more)?;
+                self.socket.send(tm, if last {flags_last} else {flags_more})?;
                 channel_index = channel_index + 1;
             } ;
         }
@@ -120,7 +133,7 @@ impl
     }
 
 
-    pub fn send_message(&mut self, message: Message, check_channels:bool) -> IOResult<()> {
+    pub fn send_message(&mut self, message: &Message, check_channels:bool) -> IOResult<()> {
         if check_channels {
             self.create_data_header(message.get_channels())?;
         }

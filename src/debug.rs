@@ -2,8 +2,17 @@ use crate::IOResult;
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
 use crate::message::{Message, ChannelData};
-use std::sync::Mutex;
 use std::thread;
+use std::time::Duration;
+use indexmap::IndexMap;
+use crate::bsread::Bsread;
+use crate::channel::new_channel;
+use crate::sender::Sender;
+use crate::value::Value;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use zmq::SocketType;
+use lazy_static::lazy_static;
 
 pub fn vec_to_hex_string(vec: &[u8]) -> String {
     vec.iter()
@@ -127,4 +136,45 @@ pub fn print_stats_pool(pool: &Pool) -> () {
     for rec in pool.receivers(){
         print_stats_rec(rec);
     }
+}
+
+lazy_static! {
+    static ref SENDER_INTERRUPTED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+}
+
+pub fn start_sender(port:u32, socketType:SocketType) -> IOResult<()>{
+    let interrupted = Arc::clone(&SENDER_INTERRUPTED);
+    let handle = thread::Builder::new()
+        .name("Sender".to_string())
+        .spawn(move || -> IOResult<()> {
+            let bsread = Bsread::new().unwrap();
+            let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, None, None, None, None)?;
+            let value = Value::U8(100);
+            let little_endian = true;
+            let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
+            let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+            let channels = vec![ch];
+            let mut channel_data =  vec![Some(ChannelData::new(value,(0,0)))];
+            let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
+            for i in 0..channels.len() {
+                data.insert(channels[i].get_config().get_name().clone(),channel_data[i].take() );
+            }
+            sender.start()?;
+
+            let msg = Message::new_from_ch(0,(0,0), channels, data)?;
+            while  !interrupted.load(Ordering::Relaxed){
+                sender.send_message(&msg, true)?;
+                thread::sleep(Duration::from_millis(1000));
+            }
+            sender.stop();
+            Ok(())
+
+        })
+        .expect("Failed to spawn thread");
+
+    Ok(())
+}
+
+pub fn stop_senders(){
+    SENDER_INTERRUPTED.store(true, Ordering::Relaxed);
 }
