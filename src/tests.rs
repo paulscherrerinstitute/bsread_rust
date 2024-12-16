@@ -409,7 +409,13 @@ fn sender() ->  IOResult<()> {
 #[test]
 fn sender_msg() ->  IOResult<()> {
     start_sender(10300, zmq::PUB)?;
-    thread::sleep(Duration::from_millis(5000));
+
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10300"]), zmq::SUB)?;
+    rec.listen(on_message, Some(1))?;
+    print_stats_rec(&rec);
+
+
     stop_senders();
     Ok(())
 }

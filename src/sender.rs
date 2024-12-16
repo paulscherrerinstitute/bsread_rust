@@ -143,6 +143,7 @@ impl
             let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
             tm = ( now.as_secs(),  now.subsec_nanos() as u64)
         }
+        self.main_header.insert("htype".to_string(),  JsonValue::String("bsr_m-1.1".to_string()));
         self.main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(self.pulse_id)));
         self.main_header.insert("global_timestamp".to_string(), JsonValue::Array(vec![JsonValue::Number(JsonNumber::from(tm.0)),JsonValue::Number(JsonNumber::from(tm.1)),]));
         let channel_data = message.get_data();
