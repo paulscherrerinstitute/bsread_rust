@@ -31,9 +31,9 @@ impl<T: std::fmt::Debug> std::fmt::Debug for LimitedDebugVec<T>  {
     }
 }
 
-pub fn print_channel_data(channel_data: &IOResult<ChannelData>, prefix:&str, max_elements: usize) {
+pub fn print_channel_data(channel_data: &Option<ChannelData>, prefix:&str, max_elements: usize) {
     match &channel_data {
-        Ok(channel_data) => {
+        Some(channel_data) => {
             //println!("{}{:?}", prefix, channel_data.get_value());
             //println!("{}{:?}", prefix, LimitedDebug { data: channel_data.get_value().as_slice(), limit: 5});
             let value = channel_data.get_value();
@@ -43,8 +43,8 @@ pub fn print_channel_data(channel_data: &IOResult<ChannelData>, prefix:&str, max
                 println!("{}{}", prefix, channel_data.get_value().as_str());
             }
         }
-        Err(e) => {
-            println!("{}{:?}", prefix, e);
+        None => {
+            println!("{}<None>", prefix);
         }
     }
 }

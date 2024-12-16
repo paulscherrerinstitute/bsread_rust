@@ -33,6 +33,9 @@ impl ChannelConfig {
     pub fn get_element_size(&self) -> usize {
         self.element_size.clone()
     }
+    pub fn get_size(&self) -> usize {
+        self.element_size * self.elements
+    }
     pub fn is_little_endian(&self) -> bool {
         self.little_endian
     }
