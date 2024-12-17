@@ -51,7 +51,7 @@ fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> IOResult<Box<dyn Ch
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let little_endian = if (encoding == ">" || encoding.to_lowercase()=="big") { false } else { true };
+    let little_endian = if encoding == ">" || encoding.to_lowercase()=="big" { false } else { true };
 
     //"none" or "bitshuffle_lz4"
     let compression = channel_data.get("compression")
@@ -272,7 +272,7 @@ impl Message {
 
 }
 
-pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<(HashMap<String,JsonValue>)> {
+pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<HashMap<String,JsonValue>> {
     let mut data_header = HashMap::new();
     data_header.insert("htype".to_string(), JsonValue::String("bsr_d-1.1".to_string()));
 

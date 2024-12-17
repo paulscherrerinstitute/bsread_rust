@@ -1,21 +1,14 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
-use std::{io, thread};
 use std::error::Error;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
+use std::thread;
 use std::collections::HashMap;
-use zmq::{Context, SocketType};
-use std::time::{Duration, Instant};
-use serde_json::Error as JSonError;
+use zmq::SocketType;
 use serde_json::Value as JsonValue;
 use crate::compression::*;
 use serde_json::Map as JsonMap;
 use serde_json::Number as JsonNumber;
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::compression::{decompress_bitshuffle_lz4, decompress_lz4};
 
 
 pub struct Sender<'a> {

@@ -1,20 +1,19 @@
-use std::any::Any;
 use std::ops::Sub;
 use crate::*;
 use crate::IOResult;
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
 use crate::message::{Message, ChannelData};
-use std::{error, thread};
-use indexmap::IndexMap;
 use crate::bsread::Bsread;
 use crate::channel::new_channel;
 use crate::sender::Sender;
 use crate::value::Value;
+use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zmq::SocketType;
 use lazy_static::lazy_static;
+use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -192,10 +191,10 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     Message::new_from_ch(0,(0,0), channels, data)
 }
 
-pub fn start_sender(port:u32, socketType:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
-    fn create_sender(port:u32, socketType:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
+pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
+    fn create_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
         let bsread = Bsread::new().unwrap();
-        let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, block, None, None)?;
+        let mut sender = Sender::new(&bsread,  socket_type, port, Some("127.0.0.1".to_string()), None, block, None, None)?;
         sender.start()?;
         let mut count = 0;
         let mut start_time = Instant::now().sub( Duration::from_secs(1));
@@ -205,10 +204,10 @@ pub fn start_sender(port:u32, socketType:SocketType, interval_ms:u64, block:Opti
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(_) => {}
-                            Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socketType, e)}
+                            Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
                         }
                     }
-                    Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socketType, e)}
+                    Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
                 }
                 count = count+1;
                 start_time = Instant::now();
@@ -222,9 +221,9 @@ pub fn start_sender(port:u32, socketType:SocketType, interval_ms:u64, block:Opti
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            match create_sender(port, socketType, interval_ms, block, compression){
+            match create_sender(port, socket_type, interval_ms, block, compression){
                 Ok(_) => {}
-                Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socketType, e)}
+                Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
             }
             Ok(())
 

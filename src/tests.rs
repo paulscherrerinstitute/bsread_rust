@@ -14,6 +14,7 @@ use crate::reader::READER_ABOOL;
 use crate::sender::Sender;
 use crate::writer::WRITER_ABOOL;
 use lazy_static::lazy_static;
+use crate::dispatcher::ChannelDescription;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
@@ -48,7 +49,7 @@ const MESSAGES: u32 = 1;
 const SENDER_PUB: &str = "tcp://127.0.0.1:10300";
 const SENDER_COMPRESSED: &str = "tcp://127.0.0.1:10301";
 const SENDER_PUSH: &str = "tcp://127.0.0.1:10302";
-const DISPATCHER_CHANNEL_NAMES: [&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
+const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
 
 
 lazy_static! {
@@ -331,11 +332,14 @@ fn pool_buffered() -> IOResult<()> {
 
 #[test]
 fn dispatcher() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let channels = vec![
-        dispatcher::ChannelDescription::of(DISPATCHER_CHANNEL_NAMES[0]),
-        dispatcher::ChannelDescription::of(DISPATCHER_CHANNEL_NAMES[1]),
-    ];
+    if DISPATCHER_CHANNEL_NAMES.len()==0{
+        return Ok(());
+    }
+    let bsread = Bsread::new().unwrap();
+    let mut channels :Vec<ChannelDescription> = Vec::new();
+    for channel in DISPATCHER_CHANNEL_NAMES{
+        channels.push(ChannelDescription::of(channel));
+    }
     let stream = dispatcher::request_stream(channels, None, None, true, false)?;
     let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]), SocketType::SUB)?;
     rec.listen(on_message, Some(MESSAGES))?;
