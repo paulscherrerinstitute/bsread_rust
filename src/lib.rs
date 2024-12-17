@@ -12,6 +12,7 @@ use zmq::{Context, SocketType};
 use std::io::Result as IOResult;
 use std::io::Error as IOError;
 use std::io::ErrorKind as ErrorKind;
+use log;
 
 fn new_error(kind: ErrorKind, desc: &str) -> IOError {
     IOError::new(kind, desc)

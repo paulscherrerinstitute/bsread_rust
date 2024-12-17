@@ -160,9 +160,9 @@ impl
                     };
                     self.stats.lock().unwrap().increase_messages();
                 }
-                Err(_) => {
+                Err(e) => {
                     //TODO: error callback?
-                    //println!("Socket Listen Error: {}", e);
+                    log::error!("Socket Listen Error: {}", e);
                     self.stats.lock().unwrap().increase_errors();
                 }
             }

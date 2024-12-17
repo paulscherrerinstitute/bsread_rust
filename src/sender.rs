@@ -91,7 +91,7 @@ impl
         println!("Unbinding url: {}", url);
         match(self.socket.unbind(url.as_str())){
             Ok(_) => (),
-            Err(_) => ()
+            Err(e) =>  log::warn!("Error in Sender [{}]: {:?}", url, e)
         };
     }
 

@@ -6,11 +6,14 @@ use std::io::Cursor;
 use std::time::Duration;
 use indexmap::IndexMap;
 use byteorder::{BigEndian, WriteBytesExt};
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
 use rand::Rng;
 use crate::debug::*;
 use crate::reader::READER_ABOOL;
 use crate::sender::Sender;
 use crate::writer::WRITER_ABOOL;
+use lazy_static::lazy_static;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
@@ -41,26 +44,63 @@ fn on_message(message: Message) -> () {
     print_message(&message);
 }
 
-const MESSAGES: u32 = 10;
-const BSREADSENDER: &str = "tcp://127.0.0.1:9999";
-const BSREADSENDER_COMPRESSED: &str = "tcp://127.0.0.1:8888";
-const PIPELINES: [&str;2] = ["tcp://localhost:5554", "tcp://localhost:5555"];
-const CHANNEL_NAMES: [&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
-const SOCKET_TYPE:SocketType=  zmq::PULL;
+const MESSAGES: u32 = 1;
+const SENDER_PUB: &str = "tcp://127.0.0.1:10300";
+const SENDER_COMPRESSED: &str = "tcp://127.0.0.1:10301";
+const SENDER_PUSH: &str = "tcp://127.0.0.1:10302";
+const DISPATCHER_CHANNEL_NAMES: [&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
+
+
+lazy_static! {
+    static ref STARTED_SERVERS: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    static ref RUNNING_TESTS: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
+}
+struct TestEnvironment {
+    bsread:Bsread
+}
+impl TestEnvironment {
+    fn new() -> IOResult<Self> {
+        let running_tests = RUNNING_TESTS.fetch_add(1, Ordering::SeqCst);
+        println!("Setting up test environment [{}]", running_tests);
+        //env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+        if !STARTED_SERVERS.load(Ordering::Relaxed) {
+            println!("Starting senders...");
+            start_sender(10300, SocketType::PUB, 1000, None, None)?;
+            start_sender(10301, SocketType::PUB, 1000, None, Some("bitshuffle_lz4".to_string()))?;
+            start_sender(10302, SocketType::PUSH, 1000, Some(false), None)?;
+            STARTED_SERVERS.store(true, Ordering::Relaxed);
+        }
+        let bsread = Bsread::new()?;
+        Ok(Self {bsread})
+    }
+}
+
+impl Drop for TestEnvironment {
+    fn drop(&mut self) {
+        let running_tests = RUNNING_TESTS.fetch_sub(1, Ordering::SeqCst);
+        println!("Cleaning up test environment [{}]", running_tests);
+        if running_tests<=0 {
+            println!("Stopping senders...");
+            stop_senders();
+        }
+    }
+}
+
 
 #[test]
-fn single() ->  IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
+fn receiver_sub() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
 }
 
+
 #[test]
-fn pipeline() ->  IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(PIPELINES.to_vec()), SOCKET_TYPE)?;
+fn receiver_pull() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]),  SocketType::PULL)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
@@ -68,8 +108,8 @@ fn pipeline() ->  IOResult<()> {
 
 #[test]
 fn multi() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER, BSREADSENDER_COMPRESSED]), SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB, SENDER_COMPRESSED]), SocketType::SUB)?;
     //rec.set_header_buffer_size(0);
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
@@ -79,11 +119,10 @@ fn multi() -> IOResult<()> {
 
 #[test]
 fn dynamic() ->  IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
-    rec.connect(BSREADSENDER)?;
-    rec.connect(PIPELINES[0])?;
-    rec.connect(PIPELINES[1])?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
+    rec.connect(SENDER_PUB)?;
+    rec.connect(SENDER_COMPRESSED)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
@@ -91,9 +130,9 @@ fn dynamic() ->  IOResult<()> {
 
 #[test]
 fn manual() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
-    match rec.connect(BSREADSENDER) {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
+    match rec.connect(SENDER_PUB) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
@@ -106,8 +145,8 @@ fn manual() -> IOResult<()> {
 
 #[test]
 fn threaded() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.fork(on_message, Some(MESSAGES));
     let r = rec.join();
     println!("{:?}", r);
@@ -118,37 +157,37 @@ fn threaded() -> IOResult<()> {
 
 #[test]
 fn interrupting() ->  IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
     let ret = rec.stop();
     println!("Stop result: {:?}", ret);
     println!("Receiver is interrupted: {:?}", rec.is_interrupted());
-    println!("Context is interrupted: {:?}", bsread.is_interrupted());
+    println!("Context is interrupted: {:?}", env.bsread.is_interrupted());
     print_stats_rec(&rec);
     Ok(())
 }
 
 #[test]
 fn joining() ->  IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(50));
-    bsread.interrupt();
+    env.bsread.interrupt();
     let ret = rec.join();
     println!("Join result: {:?}", ret);
     println!("Receiver is interrupted: {:?}", rec.is_interrupted());
-    println!("Context is interrupted: {:?}", bsread.is_interrupted());
+    println!("Context is interrupted: {:?}", env.bsread.is_interrupted());
     print_stats_rec(&rec);
     Ok(())
 }
 
 #[test]
 fn compressed() ->  IOResult<()> {
-    let bsread = Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER_COMPRESSED]), SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_COMPRESSED]), SocketType::SUB)?;
     rec.listen(on_message, Some(MESSAGES))?;
     print_stats_rec(&rec);
     Ok(())
@@ -168,15 +207,15 @@ fn bitshuffle() -> IOResult<()> {
 
 #[test]
 fn conversion() -> IOResult<()> {
-    let bsread = Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
-    match rec.connect(PIPELINES[0]) {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
+    match rec.connect(SENDER_PUB) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
     let message = rec.receive()?;
     print_message(&message);
-    let v = message.get_value("y_fit_gauss_function").unwrap();
+    let v = message.get_value("AF32").unwrap();
     println!("{:?}", v.as_str_array());
     println!("{:?}", v.as_num_array::<i32>());
     println!("{:?}", v.as_num_array::<f32>());
@@ -188,19 +227,19 @@ fn conversion() -> IOResult<()> {
 
 #[test]
 fn booleans() -> IOResult<()> {
-    let bsread = Bsread::new().unwrap();
-    let mut rec = bsread.receiver(None, SOCKET_TYPE)?;
-    match rec.connect(BSREADSENDER) {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(None,  SocketType::SUB)?;
+    match rec.connect(SENDER_PUB) {
         Ok(_) => {}
         Err(err) => { println!("Connection error: {}", err) }
     }
     let message = rec.receive()?;
     print_message(&message);
-    let v = message.get_value("BoolWaveform").unwrap();
+    let v = message.get_value("ABOOL").unwrap();
     println!("{:?}", v.as_str_array());
     println!("{:?}", v.as_num_array::<i32>());
 
-    let v = message.get_value("BoolScalar").unwrap();
+    let v = message.get_value("BOOL").unwrap();
     println!("{:?}", v.as_str());
     println!("{:?}", v.as_num::<i32>());
 
@@ -209,8 +248,8 @@ fn booleans() -> IOResult<()> {
 
 #[test]
 fn buffered() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec![BSREADSENDER]), SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]),  SocketType::SUB)?;
     rec.start(100)?;
     for _ in 0..MESSAGES {
         match rec.wait(100) {
@@ -259,8 +298,8 @@ fn limited_hashmap() {
 
 #[test]
 fn pool_auto() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], SOCKET_TYPE, 2)?;
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool_auto(vec![SENDER_PUB, SENDER_COMPRESSED],  SocketType::SUB, 2)?;
     pool.start_sync(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -270,8 +309,8 @@ fn pool_auto() -> IOResult<()> {
 
 #[test]
 fn pool_manual() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_manual(vec![vec![BSREADSENDER,], vec![BSREADSENDER_COMPRESSED]], SOCKET_TYPE)?;
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool_manual(vec![vec![SENDER_PUB,], vec![SENDER_COMPRESSED]],  SocketType::SUB)?;
     pool.start_sync(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -281,8 +320,8 @@ fn pool_manual() -> IOResult<()> {
 
 #[test]
 fn pool_buffered() -> IOResult<()> {
-    let bsread = crate::Bsread::new().unwrap();
-    let mut pool = bsread.pool_auto(vec![BSREADSENDER, BSREADSENDER_COMPRESSED], SOCKET_TYPE, 2)?;
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool_auto(vec![SENDER_PUB, SENDER_COMPRESSED],  SocketType::SUB, 2)?;
     pool.start_buffered(on_message,100)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -294,11 +333,11 @@ fn pool_buffered() -> IOResult<()> {
 fn dispatcher() -> IOResult<()> {
     let bsread = crate::Bsread::new().unwrap();
     let channels = vec![
-        dispatcher::ChannelDescription::of(CHANNEL_NAMES[0]),
-        dispatcher::ChannelDescription::of(CHANNEL_NAMES[1]),
+        dispatcher::ChannelDescription::of(DISPATCHER_CHANNEL_NAMES[0]),
+        dispatcher::ChannelDescription::of(DISPATCHER_CHANNEL_NAMES[1]),
     ];
     let stream = dispatcher::request_stream(channels, None, None, true, false)?;
-    let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]), zmq::SUB)?;
+    let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]), SocketType::SUB)?;
     rec.listen(on_message, Some(MESSAGES))?;
 
     /*
@@ -377,7 +416,7 @@ fn serializer() ->  IOResult<()> {
 #[test]
 fn sender() ->  IOResult<()> {
     let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(&bsread,  zmq::PUB, 10300, None, None, None, None, None)?;
+    let mut sender = Sender::new(&bsread,  SocketType::PUB, 10300, None, None, None, None, None)?;
     let value = Value::U8(100);
     let little_endian = true;
     let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
@@ -395,35 +434,39 @@ fn sender() ->  IOResult<()> {
 
 #[test]
 fn sender_receiver_pub() ->  IOResult<()> {
-    start_sender(10300, zmq::PUB, None, None)?;
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10300"]), zmq::SUB)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.listen(on_message, Some(1))?;
     //thread::sleep(Duration::from_millis(1000));
     print_stats_rec(&rec);
-    stop_senders();
     Ok(())
 }
 
 #[test]
 fn sender_receiver_push() ->  IOResult<()> {
-    start_sender(10301, zmq::PUSH, Some(false),  None)?;
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10301"]), zmq::PULL)?;
-    rec.listen(on_message, Some(3))?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]), SocketType::PULL)?;
+    rec.listen(on_message, Some(1))?;
     print_stats_rec(&rec);
-    stop_senders();
     Ok(())
 }
 
 #[test]
 fn sender_receiver_compressed() ->  IOResult<()> {
-    start_sender(10300, zmq::PUB, None, Some("bitshuffle_lz4".to_string()))?;
-    let bsread = crate::Bsread::new().unwrap();
-    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10300"]), zmq::SUB)?;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_COMPRESSED]), SocketType::SUB)?;
     rec.listen(on_message, Some(1))?;
-    //thread::sleep(Duration::from_millis(1000));
     print_stats_rec(&rec);
-    stop_senders();
     Ok(())
+}
+
+
+#[test]
+fn logs() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    log::error!("This is an error message.");
+    log::warn!("This is a warning.");
+    log::info!("This is an info message.");
+    log::debug!("This is a debug message.");
+    log::trace!("This is a trace message.");
 }

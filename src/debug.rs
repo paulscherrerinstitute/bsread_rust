@@ -1,10 +1,11 @@
+use std::any::Any;
+use std::ops::Sub;
 use crate::*;
 use crate::IOResult;
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
 use crate::message::{Message, ChannelData};
-use std::thread;
-use std::time::Duration;
+use std::{error, thread};
 use indexmap::IndexMap;
 use crate::bsread::Bsread;
 use crate::channel::new_channel;
@@ -15,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zmq::SocketType;
 use lazy_static::lazy_static;
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 pub fn vec_to_hex_string(vec: &[u8]) -> String {
     vec.iter()
@@ -190,25 +192,40 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     Message::new_from_ch(0,(0,0), channels, data)
 }
 
-pub fn start_sender(port:u32, socketType:SocketType, block:Option<bool>, compression:Option<String>) -> IOResult<()>{
+pub fn start_sender(port:u32, socketType:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
+    fn create_sender(port:u32, socketType:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
+        let bsread = Bsread::new().unwrap();
+        let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, block, None, None)?;
+        sender.start()?;
+        let mut count = 0;
+        let mut start_time = Instant::now().sub( Duration::from_secs(1));
+        while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
+            if start_time.elapsed() >= Duration::from_millis(interval_ms){
+                match create_message(count, 100, compression.clone()){
+                    Ok(msg) => {
+                        match sender.send_message(&msg, true){
+                            Ok(_) => {}
+                            Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socketType, e)}
+                        }
+                    }
+                    Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socketType, e)}
+                }
+                count = count+1;
+                start_time = Instant::now();
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        sender.stop();
+        Ok(())
+    }
     //let interrupted = Arc::clone(&SENDER_INTERRUPTED);
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            let bsread = Bsread::new().unwrap();
-            let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, block, None, None)?;
-            sender.start()?;
-            let mut count = 0;
-            while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
-                let msg = create_message(count, 100, compression.clone());
-                match sender.send_message(&msg?, true){
-                    Ok(_) => {}
-                    Err(e) => {eprintln!("Error: {:?}", e); break}
-                }
-                thread::sleep(Duration::from_millis(1000));
-                count = count+1;
+            match create_sender(port, socketType, interval_ms, block, compression){
+                Ok(_) => {}
+                Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socketType, e)}
             }
-            sender.stop();
             Ok(())
 
         })
@@ -223,7 +240,7 @@ pub fn stop_senders(){
     let mut handles = SENDER_HANDLES.lock().unwrap(); // Acquire the lock
     for handle in handles.drain(..) {
         if let Err(e) = handle.join().unwrap() {
-            eprintln!("Error: {:?}", e);
+            log::warn!("Error: {:?}", e);
         }
     }
 }
