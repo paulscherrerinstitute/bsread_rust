@@ -19,7 +19,7 @@ const PRINT_ATTRS: bool = false;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = false;
+const PRINT_DATA: bool = true;
 
 pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
@@ -377,7 +377,7 @@ fn serializer() ->  IOResult<()> {
 #[test]
 fn sender() ->  IOResult<()> {
     let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(&bsread,  zmq::PUB, 10300, None, None, None, None, None, None)?;
+    let mut sender = Sender::new(&bsread,  zmq::PUB, 10300, None, None, None, None, None)?;
     let value = Value::U8(100);
     let little_endian = true;
     let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
@@ -394,11 +394,34 @@ fn sender() ->  IOResult<()> {
 }
 
 #[test]
-fn sender_receiver() ->  IOResult<()> {
-    start_sender(10300, zmq::PUB)?;
+fn sender_receiver_pub() ->  IOResult<()> {
+    start_sender(10300, zmq::PUB, None, None)?;
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10300"]), zmq::SUB)?;
-    rec.listen(on_message, Some(1000))?;
+    rec.listen(on_message, Some(1))?;
+    //thread::sleep(Duration::from_millis(1000));
+    print_stats_rec(&rec);
+    stop_senders();
+    Ok(())
+}
+
+#[test]
+fn sender_receiver_push() ->  IOResult<()> {
+    start_sender(10301, zmq::PUSH, Some(false),  None)?;
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10301"]), zmq::PULL)?;
+    rec.listen(on_message, Some(3))?;
+    print_stats_rec(&rec);
+    stop_senders();
+    Ok(())
+}
+
+#[test]
+fn sender_receiver_compressed() ->  IOResult<()> {
+    start_sender(10300, zmq::PUB, None, Some("bitshuffle_lz4".to_string()))?;
+    let bsread = crate::Bsread::new().unwrap();
+    let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10300"]), zmq::SUB)?;
+    rec.listen(on_message, Some(1))?;
     //thread::sleep(Duration::from_millis(1000));
     print_stats_rec(&rec);
     stop_senders();

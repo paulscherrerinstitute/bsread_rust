@@ -272,26 +272,6 @@ impl Message {
 
 }
 
-pub fn update_main_header(main_header: & mut HashMap<String, JsonValue>, simulated_id:u64, message: &Message) {
-    let id = if message.id == 0 {
-        simulated_id
-    } else {
-        message.id
-    };
-    main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(id)));
-
-    let tm =  if message.timestamp == (0, 0) {
-        get_cur_timestamp()
-    } else {
-        message.timestamp
-    };
-    let mut global_timestamp = JsonMap::new();
-    global_timestamp.insert("sec".to_string(), JsonValue::Number(tm.0.into()));
-    global_timestamp.insert("ns".to_string(), JsonValue::Number(tm.1.into()));
-    main_header.insert("global_timestamp".to_string(), JsonValue::Object(global_timestamp));
-}
-
-
 pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<(HashMap<String,JsonValue>)> {
     let mut data_header = HashMap::new();
     data_header.insert("htype".to_string(), JsonValue::String("bsr_d-1.1".to_string()));

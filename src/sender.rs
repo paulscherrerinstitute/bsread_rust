@@ -30,7 +30,6 @@ pub struct Sender<'a> {
     queue_size: usize,
     block:bool,
     pulse_id:u64,
-    data_compression:String,
     header_compression:String,
     started: bool
 }
@@ -39,26 +38,25 @@ impl
 <'a> Sender<'a> {
     pub fn new(bsread: &'a Bsread, socket_type: SocketType, port: u32,
                address:Option<String>, queue_size: Option<usize>, block:Option<bool>,
-               start_id:Option<u64>, data_compression:Option<String>, header_compression:Option<String>) -> IOResult<Self> {
+               start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Self> {
         let socket = bsread.get_context().socket(socket_type)?;
         let address = address.unwrap_or("tcp://*".to_string());
         let queue_size = queue_size.unwrap_or(10);
         let block = block.unwrap_or(false);
         let start_id = start_id.unwrap_or(0);
-        let data_compression = data_compression.unwrap_or("none".to_string());
         let header_compression = header_compression.unwrap_or("none".to_string());
 
         let address = if address.starts_with("tcp://"){address } else { "tcp://".to_string() + address.as_str() };
         socket.set_sndhwm(queue_size as i32);
 
         Ok(Self { socket, socket_type, main_header:HashMap::new(), data_header: HashMap::new(), data_header_buffer: vec![],
-            bsread, port, address, queue_size, block,pulse_id:start_id, data_compression, header_compression, started:false})
+            bsread, port, address, queue_size, block,pulse_id:start_id, header_compression, started:false})
     }
 
     pub fn create_data_header(&mut self, channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<()> {
         self.data_header = create_data_header(channels)?;
         let data_header_json = serde_json::to_string(&self.data_header)?;
-        let blob = match self.data_compression.as_str() {
+        let blob = match self.header_compression.as_str() {
             "bitshuffle_lz4" => {
                 &compress_bitshuffle_lz4(data_header_json.as_bytes(), 1)?
             }
@@ -140,10 +138,31 @@ impl
             self.create_data_header(message.get_channels())?;
         }
         self.pulse_id = if message.get_id() > 0 {message.get_id()} else {self.pulse_id + 1};
-        update_main_header(&mut self.main_header, self.pulse_id, message);
+        self.update_main_header(self.pulse_id, message);
+
         let channel_data = message.get_data();
         let ordered_values: Vec<Option<&ChannelData>> = channel_data.values().map(|result| result.as_ref()).collect();
         self.send(message.get_channels(), &ordered_values)
+    }
+
+    pub fn update_main_header(& mut self, simulated_id:u64, message: &Message) {
+        let id = message.get_id();
+        let id = if id == 0 {
+            simulated_id
+        } else {
+            id
+        };
+        self.main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(id)));
+        let tm = message.get_timestamp();
+        let tm =  if tm == (0, 0) {
+            get_cur_timestamp()
+        } else {
+            tm
+        };
+        let mut global_timestamp = JsonMap::new();
+        global_timestamp.insert("sec".to_string(), JsonValue::Number(tm.0.into()));
+        global_timestamp.insert("ns".to_string(), JsonValue::Number(tm.1.into()));
+        self.main_header.insert("global_timestamp".to_string(), JsonValue::Object(global_timestamp));
     }
 
     pub fn is_started(&self) -> bool{

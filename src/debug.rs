@@ -169,14 +169,15 @@ lazy_static! {
 
 }
 
-fn create_message(v:u64, s:usize) -> IOResult<Message>{
+fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Message>{
+    let comp = compression.unwrap_or("none".to_string());
     let mut channels = Vec::new();
     let mut channel_data = Vec::new();
     let values = create_test_values(v, s);
     for value in values {
         let little_endian = true;
         let shape = if value.is_array() { Some(vec![value.get_size() as u32]) } else { None };
-        let ch = new_channel(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+        let ch = new_channel(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone())?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
         channels.push(ch);
         channel_data.push(ch_data);
@@ -189,17 +190,17 @@ fn create_message(v:u64, s:usize) -> IOResult<Message>{
     Message::new_from_ch(0,(0,0), channels, data)
 }
 
-pub fn start_sender(port:u32, socketType:SocketType) -> IOResult<()>{
+pub fn start_sender(port:u32, socketType:SocketType, block:Option<bool>, compression:Option<String>) -> IOResult<()>{
     //let interrupted = Arc::clone(&SENDER_INTERRUPTED);
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
             let bsread = Bsread::new().unwrap();
-            let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, None, None, None, None)?;
+            let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, block, None, None)?;
             sender.start()?;
             let mut count = 0;
             while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
-                let msg = create_message(count, 100);
+                let msg = create_message(count, 100, compression.clone());
                 match sender.send_message(&msg?, true){
                     Ok(_) => {}
                     Err(e) => {eprintln!("Error: {:?}", e); break}
