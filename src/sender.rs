@@ -111,6 +111,7 @@ impl
 
 
         let valid_channels = channel_data.iter().filter(|item| item.is_some()).count();
+
         let main_header_json = serde_json::to_string(&self.main_header)?;
         let blob = main_header_json.as_bytes();
         let main_header_buffer = (*blob).to_vec();
@@ -133,21 +134,14 @@ impl
     }
 
 
-    pub fn send_message(&mut self, message: &Message, check_channels:bool) -> IOResult<()> {
+    pub fn send_message(&mut self,  message: &Message, check_channels:bool) -> IOResult<()> {
+        self.main_header = message.get_main_header().clone();
         if check_channels {
             self.create_data_header(message.get_channels())?;
         }
         self.pulse_id = if message.get_id() > 0 {message.get_id()} else {self.pulse_id + 1};
-        let mut tm =message.get_timestamp();
-        if tm == (0,0){
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
-            tm = ( now.as_secs(),  now.subsec_nanos() as u64)
-        }
-        self.main_header.insert("htype".to_string(),  JsonValue::String("bsr_m-1.1".to_string()));
-        self.main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(self.pulse_id)));
-        self.main_header.insert("global_timestamp".to_string(), JsonValue::Array(vec![JsonValue::Number(JsonNumber::from(tm.0)),JsonValue::Number(JsonNumber::from(tm.1)),]));
+        update_main_header(&mut self.main_header, self.pulse_id, message);
         let channel_data = message.get_data();
-
         let ordered_values: Vec<Option<&ChannelData>> = channel_data.values().map(|result| result.as_ref()).collect();
         self.send(message.get_channels(), &ordered_values)
     }

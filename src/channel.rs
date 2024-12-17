@@ -46,7 +46,8 @@ impl ChannelConfig {
     pub fn get_metadata(&self) -> HashMap<String, JsonValue> {
         let mut metadata: HashMap<String, JsonValue> = HashMap::new();
         metadata.insert("name".to_string(), JsonValue::String(self.get_name()));
-        let shape = self.get_shape().unwrap_or(Vec::new());
+        //let shape = self.get_shape().unwrap_or(Vec::new());
+        let shape = self.get_shape().unwrap_or(vec![1]);
         let shape_json = JsonValue::Array(shape.into_iter().map(|num| JsonValue::Number(num.into())).collect());
         metadata.insert("shape".to_string(),shape_json);
         metadata.insert("type".to_string(), JsonValue::String(self.get_type()));

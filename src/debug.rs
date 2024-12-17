@@ -1,3 +1,4 @@
+use crate::*;
 use crate::IOResult;
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
@@ -13,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zmq::SocketType;
 use lazy_static::lazy_static;
+use std::thread::JoinHandle;
 
 pub fn vec_to_hex_string(vec: &[u8]) -> String {
     vec.iter()
@@ -138,43 +140,89 @@ pub fn print_stats_pool(pool: &Pool) -> () {
     }
 }
 
+
+pub fn create_test_values(value: u64, size:usize) -> Vec<Value>{
+    let value = (value % 100) as u8;
+    let bvalue = (value % 2) == 1;
+    let values = vec!(
+        Value::STR(format!("{}", value).to_string()),
+        Value::BOOL(bvalue), Value::ABOOL(vec![bvalue;size]),
+        Value::U8(value),Value::AU8(vec![value;size]),
+        Value::U16(value as u16), Value::AU16(vec![value as u16;size]),
+        Value::U32(value as u32), Value::AU32(vec![value as u32;size]),
+        Value::U64(value as u64), Value::AU64(vec![value as u64;size]),
+        Value::I8(value as i8), Value::AI8(vec![value as i8;size]),
+        Value::I16(value as i16), Value::AI16(vec![value as i16;size]),
+        Value::I32(value as i32), Value::AI32(vec![value as i32;size]),
+        Value::I64(value as i64), Value::AI64(vec![value as i64;size]),
+        Value::F32(value as f32), Value::AF32(vec![value as f32;size]),
+        Value::F64(value as f64), Value::AF64(vec![value as f64;size]),
+    );
+    values
+}
+
+
+
 lazy_static! {
     static ref SENDER_INTERRUPTED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
+
+}
+
+fn create_message(v:u64, s:usize) -> IOResult<Message>{
+    let mut channels = Vec::new();
+    let mut channel_data = Vec::new();
+    let values = create_test_values(v, s);
+    for value in values {
+        let little_endian = true;
+        let shape = if value.is_array() { Some(vec![value.get_size() as u32]) } else { None };
+        let ch = new_channel(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+        let ch_data = Some(ChannelData::new(value, (0, 0)));
+        channels.push(ch);
+        channel_data.push(ch_data);
+    }
+
+    let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
+    for i in 0..channels.len() {
+        data.insert(channels[i].get_config().get_name().clone(),channel_data[i].take() );
+    }
+    Message::new_from_ch(0,(0,0), channels, data)
 }
 
 pub fn start_sender(port:u32, socketType:SocketType) -> IOResult<()>{
-    let interrupted = Arc::clone(&SENDER_INTERRUPTED);
+    //let interrupted = Arc::clone(&SENDER_INTERRUPTED);
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
             let bsread = Bsread::new().unwrap();
             let mut sender = Sender::new(&bsread,  socketType, port, Some("127.0.0.1".to_string()), None, None, None, None, None)?;
-            let value = Value::U8(100);
-            let little_endian = true;
-            let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-            let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
-            let channels = vec![ch];
-            let mut channel_data =  vec![Some(ChannelData::new(value,(0,0)))];
-            let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
-            for i in 0..channels.len() {
-                data.insert(channels[i].get_config().get_name().clone(),channel_data[i].take() );
-            }
             sender.start()?;
-
-            let msg = Message::new_from_ch(0,(0,0), channels, data)?;
-            while  !interrupted.load(Ordering::Relaxed){
-                sender.send_message(&msg, true)?;
+            let mut count = 0;
+            while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
+                let msg = create_message(count, 100);
+                match sender.send_message(&msg?, true){
+                    Ok(_) => {}
+                    Err(e) => {eprintln!("Error: {:?}", e); break}
+                }
                 thread::sleep(Duration::from_millis(1000));
+                count = count+1;
             }
             sender.stop();
             Ok(())
 
         })
         .expect("Failed to spawn thread");
-
+    let mut handles = SENDER_HANDLES.lock().unwrap(); // Acquire the lock
+    handles.push(handle);
     Ok(())
 }
 
 pub fn stop_senders(){
     SENDER_INTERRUPTED.store(true, Ordering::Relaxed);
+    let mut handles = SENDER_HANDLES.lock().unwrap(); // Acquire the lock
+    for handle in handles.drain(..) {
+        if let Err(e) = handle.join().unwrap() {
+            eprintln!("Error: {:?}", e);
+        }
+    }
 }

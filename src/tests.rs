@@ -7,7 +7,7 @@ use std::time::Duration;
 use indexmap::IndexMap;
 use byteorder::{BigEndian, WriteBytesExt};
 use rand::Rng;
-use crate::debug::{start_sender, stop_senders};
+use crate::debug::*;
 use crate::reader::READER_ABOOL;
 use crate::sender::Sender;
 use crate::writer::WRITER_ABOOL;
@@ -358,20 +358,7 @@ fn bitshuffle_lz4() ->  IOResult<()> {
 #[test]
 fn serializer() ->  IOResult<()> {
     let mut buf = vec![0u8; 2000];
-    let values = vec!(
-        Value::STR("hello world".to_string()),
-        Value::BOOL(true), Value::ABOOL(vec![true;100]),
-        Value::U8(100),Value::AU8(vec![10;100]),
-        Value::U16(100), Value::AU16(vec![10;100]),
-        Value::U32(100), Value::AU32(vec![10;100]),
-        Value::U64(100), Value::AU64(vec![10;100]),
-        Value::I8(100), Value::AI8(vec![10;100]),
-        Value::I16(100), Value::AI16(vec![10;100]),
-        Value::I32(100), Value::AI32(vec![10;100]),
-        Value::I64(100), Value::AI64(vec![10;100]),
-        Value::F32(100.0), Value::AF32(vec![10.0;100]),
-        Value::F64(100.0), Value::AF64(vec![10.0;100]),
-    );
+    let values = create_test_values(100, 100);
     for value in values {
         for little_endian in  vec!(true, false) {
             let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
@@ -407,15 +394,13 @@ fn sender() ->  IOResult<()> {
 }
 
 #[test]
-fn sender_msg() ->  IOResult<()> {
+fn sender_receiver() ->  IOResult<()> {
     start_sender(10300, zmq::PUB)?;
-
     let bsread = crate::Bsread::new().unwrap();
     let mut rec = bsread.receiver(Some(vec!["tcp://127.0.0.1:10300"]), zmq::SUB)?;
-    rec.listen(on_message, Some(1))?;
+    rec.listen(on_message, Some(1000))?;
+    //thread::sleep(Duration::from_millis(1000));
     print_stats_rec(&rec);
-
-
     stop_senders();
     Ok(())
 }
