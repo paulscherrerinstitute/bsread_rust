@@ -2,7 +2,7 @@ use crate::*;
 use crate::compression::*;
 use crate::channel::new_channel;
 use std::{cmp, thread};
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::time::Duration;
 use indexmap::IndexMap;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -14,6 +14,7 @@ use crate::reader::READER_ABOOL;
 use crate::sender::Sender;
 use crate::writer::WRITER_ABOOL;
 use lazy_static::lazy_static;
+use log::SetLoggerError;
 use crate::dispatcher::ChannelDescription;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
@@ -23,7 +24,7 @@ const PRINT_ATTRS: bool = false;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = true;
+const PRINT_DATA: bool = false;
 
 pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
@@ -53,6 +54,7 @@ const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1
 
 
 lazy_static! {
+    static ref RUN_ONCE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     static ref STARTED_SERVERS: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     static ref RUNNING_TESTS: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 }
@@ -61,9 +63,15 @@ struct TestEnvironment {
 }
 impl TestEnvironment {
     fn new() -> IOResult<Self> {
+        if !RUN_ONCE.load(Ordering::Relaxed) {
+            RUN_ONCE.store(true, Ordering::Relaxed);
+            match env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init() {
+                Ok(_) => {}
+                Err(e) => {eprintln!("Error initializing env logger [{:?}]", e);}
+            };
+        }
         let running_tests = RUNNING_TESTS.fetch_add(1, Ordering::SeqCst);
-        println!("Setting up test environment [{}]", running_tests);
-        //env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+        eprintln!("Setting up test environment [{}]", running_tests);
         if !STARTED_SERVERS.load(Ordering::Relaxed) {
             println!("Starting senders...");
             start_sender(10300, SocketType::PUB, 1000, None, None)?;
@@ -440,7 +448,7 @@ fn sender() ->  IOResult<()> {
 fn sender_receiver_pub() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
-    rec.listen(on_message, Some(1))?;
+    rec.listen(on_message, Some(10))?;
     //thread::sleep(Duration::from_millis(1000));
     print_stats_rec(&rec);
     Ok(())
@@ -467,7 +475,7 @@ fn sender_receiver_compressed() ->  IOResult<()> {
 
 #[test]
 fn logs() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
     log::error!("This is an error message.");
     log::warn!("This is a warning.");
     log::info!("This is an info message.");

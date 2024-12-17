@@ -4,6 +4,7 @@ use crate::utils::*;
 use std::error::Error;
 use std::thread;
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use zmq::SocketType;
 use serde_json::Value as JsonValue;
 use crate::compression::*;
@@ -48,7 +49,10 @@ impl
 
     pub fn create_data_header(&mut self, channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<()> {
         self.data_header = create_data_header(channels)?;
-        let data_header_json = serde_json::to_string(&self.data_header)?;
+        // Convert the HashMap to a BTreeMap to enforce key order
+        let ordered_data_header: BTreeMap<_, _> = self.data_header.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let data_header_json = serde_json::to_string(&ordered_data_header)?;
+
         let blob = match self.header_compression.as_str() {
             "bitshuffle_lz4" => {
                 &compress_bitshuffle_lz4(data_header_json.as_bytes(), 1)?
@@ -58,7 +62,10 @@ impl
             }
             &_ => { data_header_json.as_bytes() }
         };
-        self.main_header.insert("hash".to_string(),  JsonValue::String(get_hash(blob)));
+        let hash = get_hash(blob);
+        println!("{:?}", ordered_data_header);
+        println!("{:?}",hash);
+        self.main_header.insert("hash".to_string(),  JsonValue::String(hash));
         self.data_header_buffer = (*blob).to_vec();
         Ok(())
     }
@@ -125,9 +132,11 @@ impl
     }
 
 
-    pub fn send_message(&mut self,  message: &Message, check_channels:bool) -> IOResult<()> {
+    pub fn send_message(&mut self,  message: &Message, create_data_header:bool) -> IOResult<()> {
         self.main_header = message.get_main_header().clone();
-        if check_channels {
+        let empty_data_header = self.data_header_buffer.len() == 0;
+        if create_data_header || empty_data_header {
+            println!("{} {}", create_data_header,  empty_data_header);
             self.create_data_header(message.get_channels())?;
         }
         self.pulse_id = if message.get_id() > 0 {message.get_id()} else {self.pulse_id + 1};

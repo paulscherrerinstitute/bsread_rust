@@ -202,7 +202,7 @@ pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Opt
             if start_time.elapsed() >= Duration::from_millis(interval_ms){
                 match create_message(count, 100, compression.clone()){
                     Ok(msg) => {
-                        match sender.send_message(&msg, true){
+                        match sender.send_message(&msg, false){
                             Ok(_) => {}
                             Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
                         }
