@@ -41,7 +41,7 @@ impl
         let header_compression = header_compression.unwrap_or("none".to_string());
 
         let address = if address.starts_with("tcp://"){address } else { "tcp://".to_string() + address.as_str() };
-        socket.set_sndhwm(queue_size as i32);
+        socket.set_sndhwm(queue_size as i32)?;
 
         Ok(Self { socket, socket_type, main_header:HashMap::new(), data_header: HashMap::new(), data_header_buffer: vec![],
             bsread, port, address, queue_size, block,pulse_id:start_id, header_compression, started:false})
@@ -89,7 +89,7 @@ impl
         log::info!("Unbinding url: {}", url);
         match self.socket.unbind(url.as_str()) {
             Ok(_) => (),
-            Err(e) =>  log::warn!("Error unbinding {}", url)
+            Err(e) =>  log::warn!("Error unbinding {}: {}", url, e)
         };
     }
 

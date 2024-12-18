@@ -68,11 +68,11 @@ impl TestEnvironment {
             RUN_ONCE.store(true, Ordering::Relaxed);
             match env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init() {
                 Ok(_) => {}
-                Err(e) => {eprintln!("Error initializing env logger [{:?}]", e);}
+                Err(e) => {println!("Error initializing env logger [{:?}]", e);}
             };
         }
         let running_tests = RUNNING_TESTS.fetch_add(1, Ordering::SeqCst);
-        eprintln!("Setting up test environment [{}]", running_tests);
+        println!("Setting up test environment [{}]", running_tests);
         if !STARTED_SERVERS.load(Ordering::Relaxed) {
             STARTED_SERVERS.store(true, Ordering::Relaxed);
             println!("Starting senders...");

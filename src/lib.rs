@@ -1,18 +1,20 @@
 extern crate core;
 
-use crate::bsread::{Bsread};
-use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
-use crate::value::{Value};
-use crate::message::{ChannelData, Message};
-use crate::receiver::Receiver;
-use crate::pool::Pool;
+pub use crate::bsread::{Bsread};
+pub use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
+pub use crate::value::{Value};
+pub use crate::message::{ChannelData, Message, DataHeaderInfo};
+pub use crate::receiver::Receiver;
+pub use crate::pool::Pool;
+pub use crate::sender::Sender;
+pub use zmq::SocketType;
+pub use std::io::Result as IOResult;
+pub use std::io::Error as IOError;
+pub use std::io::ErrorKind as ErrorKind;
+use zmq::Context;
+use log;
 use core::result::Result;
 use std::io;
-use zmq::{Context, SocketType};
-use std::io::Result as IOResult;
-use std::io::Error as IOError;
-use std::io::ErrorKind as ErrorKind;
-use log;
 
 fn new_error(kind: ErrorKind, desc: &str) -> IOError {
     IOError::new(kind, desc)
@@ -21,18 +23,18 @@ fn new_error(kind: ErrorKind, desc: &str) -> IOError {
 //Result<(), Box<dyn std::error::Error>>
 #[cfg(test)]
 mod tests;
-mod bsread;
-mod channel;
-mod message;
-mod reader;
-mod writer;
-mod receiver;
-mod compression;
-mod utils;
-mod convert;
-mod value;
-mod debug;
-mod pool;
-mod dispatcher;
-mod sender;
+pub mod bsread;
+pub mod channel;
+pub mod message;
+pub mod reader;
+pub mod writer;
+pub mod receiver;
+pub mod compression;
+pub mod utils;
+pub mod convert;
+pub mod value;
+pub mod debug;
+pub mod pool;
+pub mod dispatcher;
+pub mod sender;
 

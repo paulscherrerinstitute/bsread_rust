@@ -135,7 +135,7 @@ pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & Channe
     let size = channel.get_config().get_size();
     let mut buf = vec![0u8; size];
     let mut cursor = Cursor::new(&mut buf);
-    channel.write(& mut cursor, &value);
+    channel.write(& mut cursor, &value)?;
     let data = match channel.get_config().get_compression().as_str() {
         "bitshuffle_lz4" => {
             compress_bitshuffle_lz4(&buf, channel.get_config().get_element_size())?
@@ -149,8 +149,8 @@ pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & Channe
     let mut cursor = Cursor::new(&mut tm);
     let timestamp_secs = timestamp.0;
     let timestamp_nanos = timestamp.1;
-    WRITER_I64(& mut cursor, &timestamp_secs);
-    WRITER_I64(& mut cursor, &timestamp_nanos);
+    WRITER_I64(& mut cursor, &timestamp_secs)?;
+    WRITER_I64(& mut cursor, &timestamp_nanos)?;
     Ok((data, tm))
 }
 
