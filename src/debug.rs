@@ -167,21 +167,16 @@ lazy_static! {
 
 fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Message>{
     let comp = compression.unwrap_or("none".to_string());
+    let little_endian = true;
     let mut channels = Vec::new();
-    let mut channel_data = Vec::new();
+    let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
     let values = create_test_values(v, s);
     for value in values {
-        let little_endian = true;
         let shape = if value.is_array() { Some(vec![value.get_size() as u32]) } else { None };
         let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone())?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
+        data.insert(ch.get_config().get_name().clone(),ch_data );
         channels.push(ch);
-        channel_data.push(ch_data);
-    }
-
-    let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
-    for i in 0..channels.len() {
-        data.insert(channels[i].get_config().get_name().clone(),channel_data[i].take() );
     }
     Message::new_from_channel_map(0,(0,0), channels, data)
 }
