@@ -86,10 +86,10 @@ impl
     pub fn stop(&mut self){
         self.started = false;
         let url = self.get_url();
-        log::info!("Unbinding url: {}  [{}]", url, self.get_url());
-        match(self.socket.unbind(url.as_str())){
+        log::info!("Unbinding url: {}", url);
+        match self.socket.unbind(url.as_str()) {
             Ok(_) => (),
-            Err(e) =>  log::warn!("Error in Sender [{}]: {:?}", url, e)
+            Err(e) =>  log::warn!("Error unbinding {}", url)
         };
     }
 

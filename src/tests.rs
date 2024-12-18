@@ -74,11 +74,12 @@ impl TestEnvironment {
         let running_tests = RUNNING_TESTS.fetch_add(1, Ordering::SeqCst);
         eprintln!("Setting up test environment [{}]", running_tests);
         if !STARTED_SERVERS.load(Ordering::Relaxed) {
+            STARTED_SERVERS.store(true, Ordering::Relaxed);
             println!("Starting senders...");
             start_sender(10300, SocketType::PUB, SENDER_INTERVAL, None, None)?;
             start_sender(10301, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()))?;
             start_sender(10302, SocketType::PUSH, SENDER_INTERVAL, Some(false), None)?;
-            STARTED_SERVERS.store(true, Ordering::Relaxed);
+
         }
         let bsread = Bsread::new()?;
         Ok(Self {bsread})
@@ -89,7 +90,7 @@ impl Drop for TestEnvironment {
     fn drop(&mut self) {
         let running_tests = RUNNING_TESTS.fetch_sub(1, Ordering::SeqCst);
         println!("Cleaning up test environment [{}]", running_tests);
-        if running_tests<=0 {
+        if running_tests<=1 {
             println!("Stopping senders...");
             stop_senders();
         }
@@ -422,7 +423,7 @@ fn serializer() ->  IOResult<()> {
 #[test]
 fn sender() ->  IOResult<()> {
     let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(&bsread,  SocketType::PUB, 10300, None, None, None, None, None)?;
+    let mut sender = Sender::new(&bsread,  SocketType::PUB, 10400, None, None, None, None, None)?;
     let value = Value::U8(100);
     let little_endian = true;
     let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
