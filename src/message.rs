@@ -305,7 +305,6 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     let main_header = decode_json(&message_parts[0])?;
     let hash = get_hash(&main_header);
 
-
     // Determine whether to reuse or reparse data
     let (data_header, channels) = if let Some(last_msg) = last_headers.remove(&hash) {
         // Reuse the previous data header and channels

@@ -56,7 +56,7 @@ impl Drop for DispatcherStream {
     fn drop(& mut self) {
         match remove_stream(self.endpoint.as_str()) {
             Ok(_) => {}
-            Err(e) => {println!("Error removing stream: {}", e)}
+            Err(e) => {log::error!("Error removing stream: {}", e)}
         }
     }
 }
@@ -109,13 +109,13 @@ pub fn request_stream(channels: Vec<ChannelDescription>, stream_type: Option<Str
 
     let json: serde_json::Value = response.json().map_err(|e: ReqwestError|new_error(ErrorKind::InvalidData, e.to_string().as_str()))?;
     let endpoint = json["stream"].as_str().unwrap().to_string();
-    println!("Created stream: {}", endpoint);
+    log::info!("Created stream : {}", endpoint);
     Ok(DispatcherStream{endpoint})
 }
 
 
 fn remove_stream(stream: &str) -> IOResult<()> {
-    println!("Removing stream: {}", stream);
+    log::info!("Removing stream: {}", stream);
     let client = Client::new();
     let url = format!("{}/stream", BASE_URL);
 

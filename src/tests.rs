@@ -46,7 +46,8 @@ fn on_message(message: Message) -> () {
     print_message(&message);
 }
 
-const MESSAGES: u32 = 1;
+const SENDER_INTERVAL: u64 = 100;
+const MESSAGE_COUNT: u32 = 10;
 const SENDER_PUB: &str = "tcp://127.0.0.1:10300";
 const SENDER_COMPRESSED: &str = "tcp://127.0.0.1:10301";
 const SENDER_PUSH: &str = "tcp://127.0.0.1:10302";
@@ -74,9 +75,9 @@ impl TestEnvironment {
         eprintln!("Setting up test environment [{}]", running_tests);
         if !STARTED_SERVERS.load(Ordering::Relaxed) {
             println!("Starting senders...");
-            start_sender(10300, SocketType::PUB, 1000, None, None)?;
-            start_sender(10301, SocketType::PUB, 1000, None, Some("bitshuffle_lz4".to_string()))?;
-            start_sender(10302, SocketType::PUSH, 1000, Some(false), None)?;
+            start_sender(10300, SocketType::PUB, SENDER_INTERVAL, None, None)?;
+            start_sender(10301, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()))?;
+            start_sender(10302, SocketType::PUSH, SENDER_INTERVAL, Some(false), None)?;
             STARTED_SERVERS.store(true, Ordering::Relaxed);
         }
         let bsread = Bsread::new()?;
@@ -95,13 +96,34 @@ impl Drop for TestEnvironment {
     }
 }
 
+fn assert_rec(rec : &Receiver, min_msg_count: Option<u32>, connections: Option<u32>){
+    assert_eq!(rec.connections(), connections.unwrap_or(1) as usize);
+    assert_eq!(rec.dropped(),0);
+    match min_msg_count{
+        None => {
+            assert_eq!(rec.message_count(),MESSAGE_COUNT);
+        }
+        Some(count) => {
+            assert!(rec.message_count() >= count);
+        }
+    }
+    assert_eq!(rec.error_count(),0);
+    assert_eq!(rec.change_count(), connections.unwrap_or(1));
+}
+
+fn assert_pool(pool: &Pool){
+    for rec in pool.receivers(){
+        assert_rec(rec, Some(1), None);
+    }
+}
 
 #[test]
 fn receiver_sub() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
-    rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
     Ok(())
 }
 
@@ -110,8 +132,9 @@ fn receiver_sub() ->  IOResult<()> {
 fn receiver_pull() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]),  SocketType::PULL)?;
-    rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
     Ok(())
 }
 
@@ -120,8 +143,9 @@ fn multi() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB, SENDER_COMPRESSED]), SocketType::SUB)?;
     //rec.set_header_buffer_size(0);
-    rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, Some(2));
     Ok(())
 }
 
@@ -132,8 +156,9 @@ fn dynamic() ->  IOResult<()> {
     let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
     rec.connect(SENDER_PUB)?;
     rec.connect(SENDER_COMPRESSED)?;
-    rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, Some(2));
     Ok(())
 }
 
@@ -141,10 +166,7 @@ fn dynamic() ->  IOResult<()> {
 fn manual() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
-    match rec.connect(SENDER_PUB) {
-        Ok(_) => {}
-        Err(err) => { println!("Connection error: {}", err) }
-    }
+    rec.connect(SENDER_PUB)?;
     let message = rec.receive()?;
     print_message(&message);
     print_stats_rec(&rec);
@@ -156,10 +178,10 @@ fn manual() -> IOResult<()> {
 fn threaded() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
-    rec.fork(on_message, Some(MESSAGES));
-    let r = rec.join();
-    println!("{:?}", r);
+    rec.fork(on_message, Some(MESSAGE_COUNT));
+    rec.join()?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
     Ok(())
 }
 
@@ -169,12 +191,12 @@ fn interrupting() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.fork(on_message, None);
-    thread::sleep(Duration::from_millis(50));
-    let ret = rec.stop();
-    println!("Stop result: {:?}", ret);
-    println!("Receiver is interrupted: {:?}", rec.is_interrupted());
-    println!("Context is interrupted: {:?}", env.bsread.is_interrupted());
+    thread::sleep(Duration::from_millis(500));
+    rec.stop()?;
+    assert_eq!(rec.is_interrupted(), true);
+    assert_eq!(env.bsread.is_interrupted(), false);
     print_stats_rec(&rec);
+    assert_rec(&rec, Some(1), None);
     Ok(())
 }
 
@@ -183,13 +205,13 @@ fn joining() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     rec.fork(on_message, None);
-    thread::sleep(Duration::from_millis(50));
+    thread::sleep(Duration::from_millis(500));
     env.bsread.interrupt();
     let ret = rec.join();
-    println!("Join result: {:?}", ret);
-    println!("Receiver is interrupted: {:?}", rec.is_interrupted());
-    println!("Context is interrupted: {:?}", env.bsread.is_interrupted());
+    assert_eq!(rec.is_interrupted(), true);
+    assert_eq!(env.bsread.is_interrupted(), true);
     print_stats_rec(&rec);
+    assert_rec(&rec, Some(1), None);
     Ok(())
 }
 
@@ -197,13 +219,11 @@ fn joining() ->  IOResult<()> {
 fn compressed() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_COMPRESSED]), SocketType::SUB)?;
-    rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
     Ok(())
 }
-
-
-
 
 #[test]
 fn bitshuffle() -> IOResult<()> {
@@ -218,10 +238,7 @@ fn bitshuffle() -> IOResult<()> {
 fn conversion() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
-    match rec.connect(SENDER_PUB) {
-        Ok(_) => {}
-        Err(err) => { println!("Connection error: {}", err) }
-    }
+    rec.connect(SENDER_PUB)?;
     let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("AF32").unwrap();
@@ -229,7 +246,6 @@ fn conversion() -> IOResult<()> {
     println!("{:?}", v.as_num_array::<i32>());
     println!("{:?}", v.as_num_array::<f32>());
     println!("{:?}", v.as_num_array::<f64>());
-    //.unwrap().get_value();
     Ok(())
 }
 
@@ -238,20 +254,15 @@ fn conversion() -> IOResult<()> {
 fn booleans() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None,  SocketType::SUB)?;
-    match rec.connect(SENDER_PUB) {
-        Ok(_) => {}
-        Err(err) => { println!("Connection error: {}", err) }
-    }
+    rec.connect(SENDER_PUB)?;
     let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("ABOOL").unwrap();
     println!("{:?}", v.as_str_array());
     println!("{:?}", v.as_num_array::<i32>());
-
     let v = message.get_value("BOOL").unwrap();
     println!("{:?}", v.as_str());
     println!("{:?}", v.as_num::<i32>());
-
     Ok(())
 }
 
@@ -260,49 +271,30 @@ fn buffered() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]),  SocketType::SUB)?;
     rec.start(100)?;
-    for _ in 0..MESSAGES {
-        match rec.wait(100) {
+    for _ in 0..MESSAGE_COUNT {
+        match rec.wait(1000) {
             Ok(msg) => {print_message(&msg)}
             Err(e) => {println!("{}",e)}
         }
     }
     rec.stop()?;
     print_stats_rec(&rec);
+    assert_rec(&rec, Some(MESSAGE_COUNT), None);
     Ok(())
 }
 
 #[test]
 fn limited_hashmap() {
-    let mut limited_map = crate::utils::LimitedHashMap::new(3);
-
+    let mut limited_map = utils::LimitedHashMap::new(3);
     limited_map.insert("a", 1);
     limited_map.insert("b", 2);
     limited_map.insert("c", 3);
     limited_map.insert("d", 1);
     limited_map.insert("e", 2);
     limited_map.insert("f", 3);
-    limited_map.insert("a", 5);
-    limited_map.insert("d", 4); // "a" will be dropped
-
-    println!("{:?}", limited_map.get(&"a")); // None
-    println!("{:?}", limited_map.get(&"b")); // Some(2)
-    println!("{:?}", limited_map.get(&"c")); // Some(3)
-    println!("{:?}", limited_map.get(&"d")); // Some(4)
-
-    println!("{:?}", limited_map.remove(&"a")); // Some(4)
-    println!("---"); // Some(4)
-    limited_map.insert("a", 6);
-    println!("---"); // Some(4)
-    println!("{:?}", limited_map.remove(&"a")); // Some(4)
-
-    println!("{:?}", limited_map.is_void()); // Some(4)
-
-    limited_map = crate::utils::LimitedHashMap::new(1);
-    println!("{:?}", limited_map.is_void()); // Some(4)
-    limited_map = crate::utils::LimitedHashMap::new(0);
-    println!("{:?}", limited_map.is_void()); // Some(4)
-    limited_map = crate::utils::LimitedHashMap::void();
-    println!("{:?}", limited_map.is_void()); // Some(4)
+    limited_map.insert("d", 4);
+    limited_map.remove(&"c");
+    assert_eq!(limited_map.keys(), vec!["e", "f", "d"]);
 }
 
 #[test]
@@ -313,6 +305,7 @@ fn pool_auto() -> IOResult<()> {
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
+    assert_pool(&pool);
     Ok(())
 }
 
@@ -324,6 +317,7 @@ fn pool_manual() -> IOResult<()> {
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
+    assert_pool(&pool);
     Ok(())
 }
 
@@ -335,6 +329,7 @@ fn pool_buffered() -> IOResult<()> {
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
+    assert_pool(&pool);
     Ok(())
 }
 
@@ -350,7 +345,7 @@ fn dispatcher() -> IOResult<()> {
     }
     let stream = dispatcher::request_stream(channels, None, None, true, false)?;
     let mut rec = bsread.receiver(Some(vec![stream.get_endpoint()]), SocketType::SUB)?;
-    rec.listen(on_message, Some(MESSAGES))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
 
     /*
     rec.start(100)?;
@@ -422,7 +417,6 @@ fn serializer() ->  IOResult<()> {
         }
     }
     Ok(())
-
 }
 
 #[test]
@@ -448,9 +442,9 @@ fn sender() ->  IOResult<()> {
 fn sender_receiver_pub() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
-    rec.listen(on_message, Some(10))?;
-    //thread::sleep(Duration::from_millis(1000));
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
     Ok(())
 }
 
@@ -458,7 +452,7 @@ fn sender_receiver_pub() ->  IOResult<()> {
 fn sender_receiver_push() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]), SocketType::PULL)?;
-    rec.listen(on_message, Some(1))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     Ok(())
 }
@@ -467,8 +461,9 @@ fn sender_receiver_push() ->  IOResult<()> {
 fn sender_receiver_compressed() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_COMPRESSED]), SocketType::SUB)?;
-    rec.listen(on_message, Some(1))?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
     Ok(())
 }
 

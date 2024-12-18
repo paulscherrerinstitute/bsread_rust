@@ -46,8 +46,6 @@ impl<T: std::fmt::Debug> std::fmt::Debug for LimitedDebugVec<T>  {
 pub fn print_channel_data(channel_data: &Option<ChannelData>, prefix:&str, max_elements: usize) {
     match &channel_data {
         Some(channel_data) => {
-            //println!("{}{:?}", prefix, channel_data.get_value());
-            //println!("{}{:?}", prefix, LimitedDebug { data: channel_data.get_value().as_slice(), limit: 5});
             let value = channel_data.get_value();
             if value.is_array() {
                 println!("{}{:?}", prefix, LimitedDebugVec { data: value.as_str_array().unwrap(), limit: max_elements });
@@ -162,8 +160,6 @@ pub fn create_test_values(value: u64, size:usize) -> Vec<Value>{
     values
 }
 
-
-
 lazy_static! {
     static ref SENDER_INTERRUPTED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
@@ -202,7 +198,7 @@ pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Opt
             if start_time.elapsed() >= Duration::from_millis(interval_ms){
                 match create_message(count, 100, compression.clone()){
                     Ok(msg) => {
-                        match sender.send_message(&msg, false){
+                        match sender.send_message(&msg, true){
                             Ok(_) => {}
                             Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
                         }

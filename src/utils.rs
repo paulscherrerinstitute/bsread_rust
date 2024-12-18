@@ -4,6 +4,7 @@ use md5::{Md5, Digest};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
+#[derive(Debug)]
 /// Ordered HashMap with a maximum size
 pub struct LimitedHashMap<K, V> {
     map: HashMap<K, V>,

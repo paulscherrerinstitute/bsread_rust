@@ -63,8 +63,6 @@ impl
             &_ => { data_header_json.as_bytes() }
         };
         let hash = get_hash(blob);
-        println!("{:?}", ordered_data_header);
-        println!("{:?}",hash);
         self.main_header.insert("hash".to_string(),  JsonValue::String(hash));
         self.data_header_buffer = (*blob).to_vec();
         Ok(())
@@ -73,7 +71,7 @@ impl
 
     pub fn start(&mut self) -> IOResult<()> {
         let url = self.get_url();
-        println!("Binding url: {}", url);
+        log::info!("Binding endpoint: {}", url);
 
         self.socket.bind(url.as_str())?;
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
@@ -88,7 +86,7 @@ impl
     pub fn stop(&mut self){
         self.started = false;
         let url = self.get_url();
-        println!("Unbinding url: {}", url);
+        log::info!("Unbinding url: {}  [{}]", url, self.get_url());
         match(self.socket.unbind(url.as_str())){
             Ok(_) => (),
             Err(e) =>  log::warn!("Error in Sender [{}]: {:?}", url, e)
@@ -133,10 +131,9 @@ impl
 
 
     pub fn send_message(&mut self,  message: &Message, create_data_header:bool) -> IOResult<()> {
-        self.main_header = message.get_main_header().clone();
+        self.main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
         let empty_data_header = self.data_header_buffer.len() == 0;
         if create_data_header || empty_data_header {
-            println!("{} {}", create_data_header,  empty_data_header);
             self.create_data_header(message.get_channels())?;
         }
         self.pulse_id = if message.get_id() > 0 {message.get_id()} else {self.pulse_id + 1};

@@ -25,8 +25,10 @@ impl TrackedSocket {
 
     fn connect(&mut self, endpoint: &str) -> IOResult<()> {
         if !self.has_connected_to(endpoint) {
+            let socket_type = self.socket.get_socket_type()?;
+            log::info!("Connecting to endpoint: {}  socket type: {:?}", endpoint, socket_type);
             self.socket.connect(endpoint)?;
-            if self.socket.get_socket_type().unwrap() == SocketType::SUB {
+            if socket_type == SocketType::SUB {
                 self.socket.set_subscribe(b"")?;
             }
             self.connections.push(endpoint.to_string());
@@ -223,6 +225,7 @@ impl
             handle
                 .join()
                 .map_err(|e| {
+                    log::error!("Listener thread error: {:?}", e);
                     // Handle thread panic and convert to a std::io::Error
                     let error_message = format!("Thread error: {:?}", e);
                     new_error(ErrorKind::Other, error_message.as_str())
@@ -230,7 +233,7 @@ impl
                 .map_err(|e| {
                     let desc = e.to_string();
                     let parts: Vec<&str> = desc.split('|').collect();
-                    println!("{:?}", parts);
+                    log::error!("Listener thread join error: {:?}", parts);
                     new_error(error_kind_from_str(parts[0]), parts[1])
                 })?;
         }
