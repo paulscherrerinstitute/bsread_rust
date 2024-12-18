@@ -5,7 +5,6 @@ use crate::receiver::{Receiver};
 use crate::pool::{Pool};
 use crate::message::{Message, ChannelData};
 use crate::bsread::Bsread;
-use crate::channel::new_channel;
 use crate::sender::Sender;
 use crate::value::Value;
 use indexmap::IndexMap;
@@ -174,7 +173,7 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     for value in values {
         let little_endian = true;
         let shape = if value.is_array() { Some(vec![value.get_size() as u32]) } else { None };
-        let ch = new_channel(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone())?;
+        let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone())?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
         channels.push(ch);
         channel_data.push(ch_data);
@@ -184,7 +183,7 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     for i in 0..channels.len() {
         data.insert(channels[i].get_config().get_name().clone(),channel_data[i].take() );
     }
-    Message::new_from_ch(0,(0,0), channels, data)
+    Message::new_from_channel_map(0,(0,0), channels, data)
 }
 
 pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {

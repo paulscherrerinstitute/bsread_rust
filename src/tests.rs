@@ -1,6 +1,5 @@
 use crate::*;
 use crate::compression::*;
-use crate::channel::new_channel;
 use std::{cmp, thread};
 use std::io::{Cursor, Write};
 use std::time::Duration;
@@ -20,11 +19,11 @@ use crate::dispatcher::ChannelDescription;
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
 const PRINT_ID: bool = true;
-const PRINT_ATTRS: bool = false;
-const PRINT_MAIN_HEADER: bool = false;
-const PRINT_DATA_HEADER: bool = false;
-const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = false;
+const PRINT_ATTRS: bool = true;
+const PRINT_MAIN_HEADER: bool = true;
+const PRINT_DATA_HEADER: bool = true;
+const PRINT_META_DATA: bool = true;
+const PRINT_DATA: bool = true;
 
 pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
@@ -409,7 +408,7 @@ fn serializer() ->  IOResult<()> {
     for value in values {
         for little_endian in  vec!(true, false) {
             let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-            let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+            let ch = channel::new(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
             let mut cursor = Cursor::new(&mut buf);
             ch.write(&mut cursor, &value)?;
             let mut cursor = Cursor::new(&buf);
@@ -427,7 +426,7 @@ fn sender() ->  IOResult<()> {
     let value = Value::U8(100);
     let little_endian = true;
     let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-    let ch = new_channel(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+    let ch = channel::new(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
 
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,(0,0));
@@ -477,4 +476,42 @@ fn logs() {
     log::info!("This is an info message.");
     log::debug!("This is a debug message.");
     log::trace!("This is a trace message.");
+}
+
+
+#[test]
+fn sender_demo() ->  IOResult<()> {
+    //Sender creation
+    let bsread = Bsread::new().unwrap();
+    let mut sender = bsread.sender(SocketType::PUB, 10500, Some("127.0.0.1".to_string()), None, None, None, None)?;
+
+    //Definition of the channels
+    let little_endian = true;
+    let array_size =100;
+    let mut channels = Vec::new();
+    //# Channels: uint64 scalar, float64 scalar and array of uint8
+    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string())?);
+    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string())?);
+    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, "bitshuffle_lz4".to_string())?);
+
+    //Starts the sender, binding to the port
+    sender.start()?;
+
+    //Sends MESSAGE_COUNT messages every SENDER_INTERVAL ms.
+    let mut count:u32 = 0;
+    while count < MESSAGE_COUNT{
+        let timestamp = (0, 0);
+        let mut data = Vec::new();
+        data.push(Some(ChannelData::new(Value::U64(count as u64), timestamp)));
+        data.push(Some(ChannelData::new(Value::F64(count as f64), timestamp)));
+        data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; array_size as usize] ), timestamp)));
+        let message = Message::new_from_channel_vec(0,(0,0), &channels, data)?;
+        sender.send_message(&message ,false);
+        print_message(&message);
+        thread::sleep(Duration::from_millis(SENDER_INTERVAL));
+        count = count+1;
+    }
+    //Stops the sender, unbinding the port
+    sender.stop();
+    Ok(())
 }

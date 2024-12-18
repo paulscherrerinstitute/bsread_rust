@@ -155,3 +155,44 @@ pub enum Value {
     AF64(Vec<f64>),
 }
 ```
+
+
+## Sender
+
+The Sender struct implements sending of BSREAD streams. This is a simple example sending 3 channels, 2 scalars and 
+an array, which is compressed:
+
+```rust
+    //Sender creation
+    let bsread = Bsread::new().unwrap();
+    let mut sender = bsread.sender(SocketType::PUB, 10500, Some("127.0.0.1".to_string()), None, None, None, None)?;
+
+    //Definition of the channels
+    let little_endian = true;
+    let array_size =100;
+    let mut channels = Vec::new();
+    //# Channels: uint64 scalar, float64 scalar and array of uint8
+    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string())?);
+    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string())?);
+    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, "bitshuffle_lz4".to_string())?);
+
+    //Starts the sender, binding to the port
+    sender.start()?;
+
+    //Sends 10 messages every second.
+    let mut count:u32 = 0;
+    while count < 10 {
+        let timestamp = (0, 0);
+        let mut data = Vec::new();
+        data.push(Some(ChannelData::new(Value::U64(count as u64), timestamp)));
+        data.push(Some(ChannelData::new(Value::F64(count as f64), timestamp)));
+        data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; array_size as usize] ), timestamp)));
+        let message = Message::new_from_channel_vec(0,(0,0), &channels, data)?;
+        sender.send_message(&message ,false);
+        thread::sleep(Duration::from_millis(1000));
+        count = count+1;
+    }
+    //Stops the sender, unbinding the port
+    sender.stop();
+
+```

@@ -28,10 +28,10 @@ impl ChannelConfig {
         self.shape.clone()
     }
     pub fn get_elements(&self) -> usize {
-        self.elements.clone()
+        self.elements
     }
     pub fn get_element_size(&self) -> usize {
-        self.element_size.clone()
+        self.element_size
     }
     pub fn get_size(&self) -> usize {
         self.element_size * self.elements
@@ -225,7 +225,7 @@ impl ChannelTrait for ChannelArray<String> {
     }
 }
 
-pub fn new_channel(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:String) -> IOResult<Box<dyn ChannelTrait>> {
+pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:String) -> IOResult<Box<dyn ChannelTrait>> {
     let array = shape.clone().unwrap_or(vec![]).len() > 0;
     if  array {
         match typ.as_str() {
@@ -261,4 +261,12 @@ pub fn new_channel(name: String, typ:String, shape:Option<Vec<u32>>, little_endi
             _ => Err(new_error(ErrorKind::Unsupported,"Unsupported data type"))
         }
     }
+}
+pub fn copy(channel:& Box<dyn ChannelTrait>) -> IOResult<Box<dyn ChannelTrait>> {
+    let name = channel.get_config().get_name().to_string();
+    let typ = channel.get_config().get_type();
+    let shape = channel.get_config().get_shape();
+    let little_endian   =   channel.get_config().is_little_endian();
+    let compression = channel.get_config().get_compression();
+    new(name, typ, shape, little_endian, compression)
 }

@@ -1,5 +1,4 @@
 use crate::*;
-use crate::channel::new_channel;
 use crate::value::*;
 use crate::reader::*;
 use crate::writer::*;
@@ -59,7 +58,7 @@ fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> IOResult<Box<dyn Ch
         .unwrap_or("none")
         .to_string();
 
-    new_channel(name, typ, shape, little_endian, compression)
+    channel::new(name, typ, shape, little_endian, compression)
 }
 
 //fn get_channels(data_header: &HashMap<String, Value>) -> Result<HashMap<String, Channel>, &'static str> {
@@ -87,7 +86,7 @@ fn get_channels(data_header: &HashMap<String, JsonValue>) -> IOResult<Vec<Box<dy
     Ok(channels)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChannelData {
     value: Value,
     timestamp: (i64, i64),
@@ -203,7 +202,7 @@ impl Message {
         };
         Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
     }
-    pub fn new_from_ch(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:  IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
+    pub fn new_from_channel_map(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
         main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
         main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(id)));
@@ -217,6 +216,19 @@ impl Message {
         let blob = data_header_json.as_bytes();
         main_header.insert("hash".to_string(),  JsonValue::String(crate::utils::get_hash(blob)));
         Message::new(main_header, data_header, channels, channel_data)
+    }
+
+    pub fn new_from_channel_vec(id:u64, timestamp: (u64, u64),  channels: &Vec<Box<dyn ChannelTrait>>, mut channel_data:Vec<Option<ChannelData>>) -> IOResult<Self> {
+        let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
+        for i in 0..channels.len() {
+            //data.insert(channels[i].get_config().get_name().clone(),channel_data[i].clone());
+            data.insert(channels[i].get_config().get_name().clone(),channel_data[i].take());
+        }
+        let mut cloned_channels = Vec::new();
+        for channel in channels {
+            cloned_channels.push(channel::copy(&channel)?);
+        }
+        Message::new_from_channel_map(id, timestamp, cloned_channels, data )
     }
 
     pub fn get_main_header(&self) -> &HashMap<String, JsonValue> {

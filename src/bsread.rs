@@ -1,5 +1,6 @@
 use crate::IOResult;
 use crate::receiver::Receiver;
+use crate::sender::Sender;
 use crate::pool::Pool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +34,11 @@ impl Bsread {
 
     pub fn pool_manual(&self, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
         Pool::new_manual(&self, endpoints, socket_type)
+    }
+
+    pub fn sender(&self, socket_type: SocketType, port: u32, address:Option<String>, queue_size: Option<usize>,
+                  block:Option<bool>, start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Sender> {
+        Sender::new(&self, socket_type, port,address, queue_size, block, start_id, header_compression)
     }
 
     pub fn interrupt(&self) {

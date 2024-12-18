@@ -1,7 +1,7 @@
 use crate::convert::*;
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     STR(String),
     BOOL(bool),
