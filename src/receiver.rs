@@ -2,12 +2,14 @@ use crate::*;
 use crate::message::*;
 use crate::utils::*;
 use std::{io, thread};
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
+use crate::debug::get_local_address;
 
 struct TrackedSocket {
     socket: zmq::Socket,
@@ -71,7 +73,7 @@ impl Stats{
         self.counter_header_changes = self.counter_header_changes + 1;
     }
 
-    fn reset(& mut self){
+    pub fn reset(& mut self){
         self.counter_messages = 0;
         self.counter_error = 0;
         self.counter_header_changes = 0;
@@ -89,6 +91,8 @@ pub struct Receiver<'a> {
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     stats: Arc<Mutex<Stats>>,
     index: u32,
+    forwarder: Option<Forwarder >,
+    forwarder_sender: Option<Sender<'a>>,
     interrupted: Arc<AtomicBool>,
     mode: String
 }
@@ -106,7 +110,8 @@ impl
         let index =  get_index();
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
         let mode = "sync".to_string();
-        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index, interrupted, mode })
+        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
+                  forwarder:None, forwarder_sender:None,interrupted, mode })
     }
 
     pub fn to_string(& self,) -> String {
@@ -139,14 +144,45 @@ impl
         }
     }
 
+    pub fn setForwarder(&mut self, forwarder: Forwarder) {
+        self.forwarder = Some(forwarder);
+    }
+
+    pub fn setForwarderSender(&mut self, forwarder_sender: sender::Sender<'static>) {
+        self.forwarder_sender = Some(forwarder_sender);
+    }
+
+
     //Asynchronous API
-    pub fn receive(& mut self) -> IOResult<Message> {
+    pub fn receive(&mut self) -> IOResult<Message> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
+        if let Some(sender) = self.forwarder_sender.as_mut() {
+            match sender.forward(&message_parts) {
+                Ok(_) => (),
+                Err(e) => log::warn!("Error forwarding message to {}: {}", sender.get_url(), e),
+            }
+        }
         let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes);
         message
     }
 
     pub fn listen(&mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) -> IOResult<()> {
+        self.reset_counters();
+        if let Some(forwarder) = self.forwarder.as_mut() {
+            let forwarder_sender =Sender::new(&self.bsread, forwarder.socket_type, forwarder.port, forwarder.address.clone(), forwarder.queue_size, None, None, None);
+            match forwarder_sender{
+                Ok(mut sender) => {
+                    match sender.start(){
+                        Ok(_) => {
+                            thread::sleep(Duration::from_millis(100));
+                            self.forwarder_sender = Some(sender)
+                        }
+                        Err(e) => {log::warn!("Error binding forwarder port {}: {}", forwarder.port, e)}
+                    }
+                }
+                Err(e) => {log::warn!("Error creating forwarder port {}: {}", forwarder.port, e)}
+            }
+        }
         self.connect_all()?;
         if self.header_buffer.is_void(){
             self.set_header_buffer_size(self.connections());
@@ -175,24 +211,32 @@ impl
                 break;
             }
         }
-        Result::Ok(())
+        //Only handle lifecycle of forwarder created with setForwarder
+        if let Some(forwarder) = self.forwarder.as_mut() {
+            if let Some(sender) = self.forwarder_sender.as_mut() {
+                sender.stop();
+            }
+        }
+        Ok(())
     }
 
     pub fn fork(& mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) {
         fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: Message) -> (), num_messages: Option<u32>,
-                          producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,
+                          producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>, forwarder:Option<Forwarder>,
                           interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>) -> IOResult<()> {
             let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
             receiver.stats = producer_stats;
             receiver.interrupted = interrupted_self;
+            receiver.forwarder = forwarder;
             receiver.listen(callback, num_messages)
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
         let interrupted_context = Arc::clone(self.bsread.get_interrupted());
         let interrupted_self = Arc::clone(&self.interrupted);
+        let forwarder = self.forwarder.clone();
 
         let producer_fifo = match &self.fifo {
             None => { None }
@@ -207,7 +251,7 @@ impl
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, producer_stats, interrupted_context, interrupted_self).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, producer_stats, forwarder, interrupted_context, interrupted_self).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error
@@ -379,5 +423,19 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
         "unexpectedeof" => ErrorKind::UnexpectedEof,
         "outofmemory" => ErrorKind::OutOfMemory,
         _ => ErrorKind::Other,  // Return Other for unknown variants
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Forwarder {
+    socket_type: SocketType,
+    port: u32,
+    address:Option<String>,
+    queue_size: Option<usize>
+}
+
+impl Forwarder {
+    pub fn new(socket_type: SocketType, port: u32, address: Option<String>, queue_size: Option<usize>) -> Self {
+        Self { socket_type, port, address, queue_size }
     }
 }

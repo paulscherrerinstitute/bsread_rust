@@ -4,7 +4,7 @@ use std::{cmp, thread};
 use std::io::{Cursor, Write};
 use std::time::Duration;
 use indexmap::IndexMap;
-use byteorder::{BigEndian, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
 use rand::Rng;
@@ -16,15 +16,16 @@ use lazy_static::lazy_static;
 use log::SetLoggerError;
 use crate::dispatcher::ChannelDescription;
 use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};
+use crate::receiver::Forwarder;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
 const PRINT_ID: bool = true;
-const PRINT_ATTRS: bool = true;
-const PRINT_MAIN_HEADER: bool = true;
-const PRINT_DATA_HEADER: bool = true;
-const PRINT_META_DATA: bool = true;
-const PRINT_DATA: bool = true;
+const PRINT_ATTRS: bool = false;
+const PRINT_MAIN_HEADER: bool = false;
+const PRINT_DATA_HEADER: bool = false;
+const PRINT_META_DATA: bool = false;
+const PRINT_DATA: bool = false;
 
 pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
@@ -549,3 +550,46 @@ fn sender_demo() ->  IOResult<()> {
     sender.stop();
     Ok(())
 }
+
+#[test]
+fn forwarder() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rxtx = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
+    rxtx.setForwarder(Forwarder::new(SocketType::PUB, 10600, Some(get_local_address().to_string()), None));
+    let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10600"]), SocketType::SUB)?;
+    rec.fork(on_message, None);
+
+    //Synchronous
+    rxtx.listen(|_msg| {}, Some(MESSAGE_COUNT))?;
+    thread::sleep(Duration::from_millis(100));
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+
+    //Asynchronous
+    rec.reset_counters();
+    rec.fork(on_message, None); //Why doen't it work if I don't fork it again?
+    rxtx.fork(|_msg| {log::info!("OK")}, Some(MESSAGE_COUNT));
+    rxtx.join();
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+    Ok(())
+}
+
+
+#[test]
+fn forwarder_with_sender() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rxtx = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
+    let forwarder = env.bsread.sender(SocketType::PUB, 10700, Some(get_local_address().to_string()), None, None, None, None)?;
+    rxtx.setForwarderSender(forwarder);
+    let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10600"]), SocketType::SUB)?;
+    rec.fork(on_message, None);
+    rxtx.listen(|_msg| {}, Some(MESSAGE_COUNT))?;
+    thread::sleep(Duration::from_millis(100));
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+    Ok(())
+}
+
+
+

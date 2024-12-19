@@ -5,6 +5,7 @@ use std::error::Error;
 use std::thread;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::io::Read;
 use env_logger::fmt::Timestamp;
 use zmq::SocketType;
 use serde_json::Value as JsonValue;
@@ -44,7 +45,13 @@ impl
         let address = if address.starts_with("tcp://"){address } else { "tcp://".to_string() + address.as_str() };
         socket.set_sndhwm(queue_size as i32)?;
         let mut main_header = HashMap::new();
+
+        //Initialize main header
         main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
+        if header_compression != "none" {
+            main_header.insert("dh_compression".to_string(), JsonValue::String(header_compression.to_string()));
+        }
+
         Ok(Self { socket, socket_type, main_header:main_header, data_header: HashMap::new(), data_header_buffer: vec![],
             bsread, port, address, queue_size, block,pulse_id:start_id, header_compression, started:false})
     }
@@ -77,25 +84,21 @@ impl
     pub fn start(&mut self) -> IOResult<()> {
         let url = self.get_url();
         log::info!("Binding endpoint: {}", url);
-
         self.socket.bind(url.as_str())?;
-        let mut main_header: HashMap<String, JsonValue> = HashMap::new();
-        main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
-        if self.header_compression != "none" {
-            main_header.insert("dh_compression".to_string(), JsonValue::String(self.header_compression.to_string()));
-        }
         self.started = true;
         Ok(())
     }
 
     pub fn stop(&mut self){
-        self.started = false;
-        let url = self.get_url();
-        log::info!("Unbinding url: {}", url);
-        match self.socket.unbind(url.as_str()) {
-            Ok(_) => (),
-            Err(e) =>  log::warn!("Error unbinding {}: {}", url, e)
-        };
+        if self.started{
+            self.started = false;
+            let url = self.get_url();
+            log::info!("Unbinding url: {}", url);
+            match self.socket.unbind(url.as_str()) {
+                Ok(_) => (),
+                Err(e) =>  log::warn!("Error unbinding {}: {}", url, e)
+            };
+        }
     }
 
 
@@ -131,6 +134,16 @@ impl
                 self.socket.send(tm, if last {flags_last} else {flags_more})?;
                 channel_index = channel_index + 1;
             } ;
+        }
+        Ok(())
+    }
+
+    pub fn forward (&mut self,  message_parts:&Vec<Vec<u8>>) -> IOResult<()> {
+        let flags_last = if self.block {0} else {zmq::DONTWAIT};
+        let flags_more = flags_last | zmq::SNDMORE;
+        for (index, msg) in message_parts.iter().enumerate() {
+            let is_last = index == message_parts.len() - 1;
+            self.socket.send(msg, if is_last {flags_last} else {flags_more})?;
         }
         Ok(())
     }
