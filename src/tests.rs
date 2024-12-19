@@ -15,6 +15,7 @@ use crate::writer::WRITER_ABOOL;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
 use crate::dispatcher::ChannelDescription;
+use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_HEADER: bool = true;
@@ -420,20 +421,54 @@ fn serializer() ->  IOResult<()> {
 }
 
 #[test]
-fn sender() ->  IOResult<()> {
+fn sender_pub() ->  IOResult<()> {
     let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(&bsread,  SocketType::PUB, 10400, None, None, None, None, None)?;
-    let value = Value::U8(100);
-    let little_endian = true;
-    let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-    let ch = channel::new(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+    let mut sender = Sender::new(&bsread,  SocketType::PUB, 10400, Some(get_local_address()), None, None, None, None)?;
 
+    let value = Value::U8(100);
+    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string())?;
     let channels = vec![ch];
-    let channel_data = ChannelData::new(value,(0,0));
+    let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
+
     sender.start()?;
     sender.create_data_header(&channels)?;
-    sender.send(&channels, &data)?;
+    for i in 0.. MESSAGE_COUNT {
+        match sender.send(ID_SIMULATED, TIMESTAMP_NOW, &channels, &data) {
+            Ok(_) => {println!("Sent ID {}", sender.get_last_id());}
+            Err(e) => {println!("Failed ID {}: {}", sender.get_last_id(), e)}
+        }
+        thread::sleep(Duration::from_millis(SENDER_INTERVAL));
+    }
+    sender.stop();
+    Ok(())
+}
+
+#[test]
+fn sender_push() ->  IOResult<()> {
+    let queue_size = 5;
+    let block = false;
+    let bsread = Bsread::new().unwrap();
+    let mut sender = Sender::new(&bsread,  SocketType::PUSH, 10410, Some(get_local_address()), Some(queue_size), Some(block), None, None)?;
+
+    let value = Value::U8(100);
+    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string())?;
+    let channels = vec![ch];
+    let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
+    let data = vec![Some(&channel_data)];
+
+    sender.start()?;
+    sender.create_data_header(&channels)?;
+    thread::sleep(Duration::from_millis(500));
+
+    for i in 0.. MESSAGE_COUNT+1 {
+        match sender.send(ID_SIMULATED, TIMESTAMP_NOW, &channels, &data) {
+            Ok(_) => {println!("Sent ID {}", sender.get_last_id());}
+            Err(e) => {println!("Failed ID {}: {}", sender.get_last_id(), e)}
+        }
+        thread::sleep(Duration::from_millis(SENDER_INTERVAL));
+    }
+
     sender.stop();
     Ok(())
 }
@@ -483,7 +518,7 @@ fn logs() {
 fn sender_demo() ->  IOResult<()> {
     //Sender creation
     let bsread = Bsread::new().unwrap();
-    let mut sender = bsread.sender(SocketType::PUB, 10500, Some("127.0.0.1".to_string()), None, None, None, None)?;
+    let mut sender = bsread.sender(SocketType::PUB, 10500, Some(get_local_address().to_string()), None, None, None, None)?;
 
     //Definition of the channels
     let little_endian = true;
@@ -500,13 +535,12 @@ fn sender_demo() ->  IOResult<()> {
     //Sends MESSAGE_COUNT messages every SENDER_INTERVAL ms.
     let mut count:u32 = 0;
     while count < MESSAGE_COUNT{
-        let timestamp = (0, 0);
         let mut data = Vec::new();
-        data.push(Some(ChannelData::new(Value::U64(count as u64), timestamp)));
-        data.push(Some(ChannelData::new(Value::F64(count as f64), timestamp)));
-        data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; array_size as usize] ), timestamp)));
-        let message = Message::new_from_channel_vec(0,(0,0), &channels, data)?;
-        sender.send_message(&message ,false);
+        data.push(Some(ChannelData::new(Value::U64(count as u64), TIMESTAMP_NOW)));
+        data.push(Some(ChannelData::new(Value::F64(count as f64), TIMESTAMP_NOW)));
+        data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; array_size as usize] ), TIMESTAMP_NOW)));
+        let message = Message::new_from_channel_vec(ID_SIMULATED,TIMESTAMP_NOW, &channels, data)?;
+        sender.send_message(&message ,false)?;
         print_message(&message);
         thread::sleep(Duration::from_millis(SENDER_INTERVAL));
         count = count+1;

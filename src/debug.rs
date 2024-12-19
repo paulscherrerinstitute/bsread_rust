@@ -3,7 +3,7 @@ use crate::*;
 use crate::IOResult;
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
-use crate::message::{Message, ChannelData};
+use crate::message::{Message, ChannelData, ID_SIMULATED, TIMESTAMP_NOW};
 use crate::bsread::Bsread;
 use crate::sender::Sender;
 use crate::value::Value;
@@ -27,6 +27,10 @@ pub fn vec_to_hex_string(vec: &[u8]) -> String {
 pub struct LimitedDebugVec<T> {
     pub data: Vec<T>,
     pub limit: usize,
+}
+
+pub fn get_local_address() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for LimitedDebugVec<T>  {
@@ -178,13 +182,13 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
         data.insert(ch.get_config().get_name().clone(),ch_data );
         channels.push(ch);
     }
-    Message::new_from_channel_map(0,(0,0), channels, data)
+    Message::new_from_channel_map(ID_SIMULATED,TIMESTAMP_NOW, channels, data)
 }
 
 pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
     fn create_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
         let bsread = Bsread::new().unwrap();
-        let mut sender = Sender::new(&bsread,  socket_type, port, Some("127.0.0.1".to_string()), None, block, None, None)?;
+        let mut sender = Sender::new(&bsread,  socket_type, port, Some(get_local_address()), None, block, None, None)?;
         sender.start()?;
         let mut count = 0;
         let mut start_time = Instant::now().sub( Duration::from_secs(1));
@@ -194,10 +198,10 @@ pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Opt
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(_) => {}
-                            Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
+                            Err(e) => {log::warn!("Error sending ID {} in Sender [port={}, socketType={:?}]: {:?}", sender.get_last_id(), port, socket_type, e)}
                         }
                     }
-                    Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
+                    Err(e) => {log::warn!("Error creating mesage in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
                 }
                 count = count+1;
                 start_time = Instant::now();
@@ -213,7 +217,7 @@ pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Opt
         .spawn(move || -> IOResult<()> {
             match create_sender(port, socket_type, interval_ms, block, compression){
                 Ok(_) => {}
-                Err(e) => {log::warn!("Error in Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
+                Err(e) => {log::warn!("Error creating Sender [port={}, socketType={:?}]: {:?}", port, socket_type, e)}
             }
             Ok(())
 

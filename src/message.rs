@@ -13,6 +13,9 @@ use serde_json::Value as JsonValue;
 use serde_json::Map as JsonMap;
 use serde_json::Number as JsonNumber;
 
+pub const ID_SIMULATED:u64 = 0;
+pub const TIMESTAMP_NOW:(u64,u64) = (0,0);
+
 fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, JsonValue>, JSonError> {
     serde_json::from_slice(&bytes)
 }
@@ -89,17 +92,17 @@ fn get_channels(data_header: &HashMap<String, JsonValue>) -> IOResult<Vec<Box<dy
 #[derive(Debug, Clone)]
 pub struct ChannelData {
     value: Value,
-    timestamp: (i64, i64),
+    timestamp: (u64, u64),
 }
 
 impl ChannelData {
-    pub fn new(value: Value, timestamp: (i64, i64)) -> Self {
+    pub fn new(value: Value, timestamp: (u64, u64)) -> Self {
         Self { value, timestamp }
     }
     pub fn get_value(&self) -> &Value {
         &self.value
     }
-    pub fn get_timestamp(&self) -> &(i64, i64) {
+    pub fn get_timestamp(&self) -> &(u64, u64) {
         &self.timestamp
     }
 }
@@ -122,8 +125,8 @@ fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> I
     let mut cursor = Cursor::new(data);
     let value = channel.read(&mut cursor);
     let mut cursor = Cursor::new(t);
-    let timestamp_secs = READER_I64(&mut cursor)?;
-    let timestamp_nanos = READER_I64(&mut cursor)?;
+    let timestamp_secs = READER_U64(&mut cursor)?;
+    let timestamp_nanos = READER_U64(&mut cursor)?;
     let timestamp = (timestamp_secs, timestamp_nanos);
     Ok(ChannelData { value: value.unwrap(), timestamp: timestamp })
 }
@@ -148,8 +151,8 @@ pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & Channe
     let mut cursor = Cursor::new(&mut tm);
     let timestamp_secs = timestamp.0;
     let timestamp_nanos = timestamp.1;
-    WRITER_I64(& mut cursor, &timestamp_secs)?;
-    WRITER_I64(& mut cursor, &timestamp_nanos)?;
+    WRITER_U64(& mut cursor, &timestamp_secs)?;
+    WRITER_U64(& mut cursor, &timestamp_nanos)?;
     Ok((data, tm))
 }
 

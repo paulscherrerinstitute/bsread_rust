@@ -159,8 +159,11 @@ pub enum Value {
 
 ## Sender
 
-The Sender struct implements sending of BSREAD streams. This is a simple example sending 3 channels, 2 scalars and 
-an array, which is compressed:
+The Sender struct implements sending of BSREAD streams.
+There are different patterns to implement a Sender. 
+
+The example below is a simple example sending 3 channels, 2 scalars and 
+a compressed array, implemented using the Message struct and using Sender::send_message().
 
 ```rust
     //Sender creation
@@ -179,20 +182,42 @@ an array, which is compressed:
     //Starts the sender, binding to the port
     sender.start()?;
 
-    //Sends 10 messages every second.
+    //Sends 10 messages, every second.
     let mut count:u32 = 0;
     while count < 10 {
-        let timestamp = (0, 0);
         let mut data = Vec::new();
-        data.push(Some(ChannelData::new(Value::U64(count as u64), timestamp)));
-        data.push(Some(ChannelData::new(Value::F64(count as f64), timestamp)));
+        data.push(Some(ChannelData::new(Value::U64(count as u64), TIMESTAMP_NOW)));
+        data.push(Some(ChannelData::new(Value::F64(count as f64), TIMESTAMP_NOW)));
         data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; array_size as usize] ), timestamp)));
-        let message = Message::new_from_channel_vec(0,(0,0), &channels, data)?;
-        sender.send_message(&message ,false);
+        let message = Message::new_from_channel_vec(ID_SIMULATED, TIMESTAMP_NOW, &channels, data)?;
+        sender.send_message(&message ,false)?;
         thread::sleep(Duration::from_millis(1000));
         count = count+1;
     }
     //Stops the sender, unbinding the port
     sender.stop();
+```
 
+This simpler pattern doesn't create Message structs and uses Sender::send() instead:
+
+```rust
+    let bsread = Bsread::new().unwrap();
+    let mut sender = Sender::new(&bsread,  SocketType::PUB, 10400, Some(get_local_address()), None, None, None, None)?;
+
+    let value = Value::U8(100);
+    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string())?;
+    let channels = vec![ch];
+    let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
+    let data = vec![Some(&channel_data)];
+
+    sender.start()?;
+    sender.create_data_header(&channels)?;
+
+    //Sends 10 messages, every second.
+    let mut count:u32 = 0;
+    while count < 10 {
+        sender.send(ID_SIMULATED, TIMESTAMP_NOW, &channels, &data)?;
+        thread::sleep(Duration::from_millis(1000));
+    }
+    sender.stop();
 ```
