@@ -28,10 +28,16 @@ impl TrackedSocket {
     fn connect(&mut self, endpoint: &str) -> IOResult<()> {
         if !self.has_connected_to(endpoint) {
             let socket_type = self.socket.get_socket_type()?;
-            log::info!("Connecting to endpoint: {}  socket type: {:?}", endpoint, socket_type);
-            self.socket.connect(endpoint)?;
+            log::info!("Connecting to endpoint {}  socket type:{:?}", endpoint, socket_type);
+            if let Err(e) = self.socket.connect(endpoint) {
+                log::error!("Error connecting to endpoint {}: {}", endpoint, e);
+                return Err(e.into());
+            }
             if socket_type == SocketType::SUB {
-                self.socket.set_subscribe(b"")?;
+                if let Err(e) =  self.socket.set_subscribe(b"") {
+                    log::error!("Error subscribing {}: {}", endpoint, e);
+                    return Err(e.into());
+                }
             }
             self.connections.push(endpoint.to_string());
         }
@@ -45,12 +51,28 @@ impl TrackedSocket {
     fn has_any_connection(&self) -> bool {
         !self.connections.is_empty()
     }
+
+    fn disconnect(&mut self, endpoint: &str){
+        if self.has_connected_to(endpoint) {
+            //self.connections.retain(|x| x != endpoint);
+            log::info!("Disonnecting endpoint {}", endpoint);
+            if let Err(e) =  self.socket.disconnect(endpoint) {
+                log::error!("Error disonnecting endpoint {}: {}", endpoint, e);
+            }
+        }
+    }
+
+    fn disconnect_all(&mut self) {
+        for endpoint in self.connections.clone(){
+            self.disconnect(endpoint.as_str());
+        }
+    }
 }
 
 impl Drop for TrackedSocket {
     fn drop(&mut self) {
         if self.has_any_connection(){
-            log::info!("Disconnected endpoints: {:?}", self.connections);
+            self.disconnect_all();
         }
     }
 }
@@ -139,6 +161,14 @@ Receiver{
             }
         }
         Ok(())
+    }
+
+    pub fn disconnect(&mut self, endpoint: &str)  {
+        self.socket.disconnect(endpoint);
+    }
+
+    pub fn disconnect_all(&mut self)  {
+        self.socket.disconnect_all();
     }
 
     pub fn add_endpoint(&mut self, endpoint: String) {

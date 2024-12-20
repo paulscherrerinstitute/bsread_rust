@@ -21,11 +21,7 @@ impl Bsread {
 
     pub fn new_with_interrupted(interrupted: Arc<AtomicBool>) ->IOResult<Arc<Self>> {
         let context = Context::new();
-        Ok(Arc::new(Self {
-            context,
-            interrupted: Arc::new(AtomicBool::new(false)),
-            })
-        )
+        Ok(Arc::new(Self { context,interrupted }))
     }
 
     pub fn receiver(self: &Arc<Self>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
