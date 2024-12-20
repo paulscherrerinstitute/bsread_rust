@@ -1,6 +1,7 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
+use crate::debug::get_local_address;
 use std::{io, thread};
 use std::collections::HashMap;
 use std::error::Error;
@@ -9,7 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
-use crate::debug::get_local_address;
 
 struct TrackedSocket {
     socket: zmq::Socket,
@@ -47,6 +47,14 @@ impl TrackedSocket {
     }
 }
 
+impl Drop for TrackedSocket {
+    fn drop(&mut self) {
+        if self.has_any_connection(){
+            log::info!("Disconnected endpoints: {:?}", self.connections);
+        }
+    }
+}
+
 static mut RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
 fn get_index() -> u32{
     unsafe {
@@ -81,30 +89,30 @@ impl Stats{
 
 }
 
-pub struct Receiver<'a> {
+pub struct Receiver {
     socket: TrackedSocket,
     endpoints: Option<Vec<String>>,
     socket_type: SocketType,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
-    bsread: &'a Bsread,
+    bsread: Arc<Bsread>,
     fifo: Option<Arc<FifoQueue<Message>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     stats: Arc<Mutex<Stats>>,
     index: u32,
     forwarder: Option<Forwarder >,
-    forwarder_sender: Option<Sender<'a>>,
+    forwarder_sender: Option<Sender>,
     interrupted: Arc<AtomicBool>,
     mode: String
 }
 
 impl
-<'a> Receiver<'a> {
-    pub fn new(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
+Receiver{
+    pub fn new(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let interrupted = Arc::new(AtomicBool::new(false));
         Receiver::new_with_interrupted(bsread, endpoint, socket_type, interrupted)
     }
 
-    pub fn new_with_interrupted(bsread: &'a Bsread, endpoint: Option<Vec<&str>>, socket_type: SocketType, interrupted: Arc<AtomicBool>) -> IOResult<Self> {
+    pub fn new_with_interrupted(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType, interrupted: Arc<AtomicBool>) -> IOResult<Self> {
         let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let index =  get_index();
@@ -148,7 +156,7 @@ impl
         self.forwarder = Some(forwarder);
     }
 
-    pub fn setForwarderSender(&mut self, forwarder_sender: sender::Sender<'static>) {
+    pub fn setForwarderSender(&mut self, forwarder_sender: sender::Sender) {
         self.forwarder_sender = Some(forwarder_sender);
     }
 
@@ -169,7 +177,7 @@ impl
     pub fn listen(&mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) -> IOResult<()> {
         self.reset_counters();
         if let Some(forwarder) = self.forwarder.as_mut() {
-            let forwarder_sender =Sender::new(&self.bsread, forwarder.socket_type, forwarder.port, forwarder.address.clone(), forwarder.queue_size, None, None, None);
+            let forwarder_sender =Sender::new(self.bsread.clone(), forwarder.socket_type, forwarder.port, forwarder.address.clone(), forwarder.queue_size, None, None, None);
             match forwarder_sender{
                 Ok(mut sender) => {
                     match sender.start(){
@@ -425,6 +433,19 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
         _ => ErrorKind::Other,  // Return Other for unknown variants
     }
 }
+
+impl Drop for Receiver {
+    fn drop(&mut self) {
+        if let Some(sender) = self.forwarder_sender.as_mut() {
+            if sender.is_started() {
+                sender.stop();
+            }
+        }
+    }
+}
+
+
+
 
 #[derive(Debug, Clone)]
 pub struct Forwarder {

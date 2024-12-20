@@ -14,31 +14,35 @@ pub struct Bsread {
 
 impl Bsread {
     ///
-    pub fn new() ->IOResult<Self> {
+    pub fn new() ->IOResult<Arc<Self>> {
         let interrupted = Arc::new(AtomicBool::new(false));
         Bsread::new_with_interrupted(interrupted)
     }
 
-    pub fn new_with_interrupted(interrupted: Arc<AtomicBool>) ->IOResult<Self> {
+    pub fn new_with_interrupted(interrupted: Arc<AtomicBool>) ->IOResult<Arc<Self>> {
         let context = Context::new();
-        Ok(Self { context, interrupted })
+        Ok(Arc::new(Self {
+            context,
+            interrupted: Arc::new(AtomicBool::new(false)),
+            })
+        )
     }
 
-    pub fn receiver(&self, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
-        Receiver::new(&self, endpoint, socket_type)
+    pub fn receiver(self: &Arc<Self>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
+        Receiver::new(self.clone(), endpoint, socket_type)
     }
 
-    pub fn pool_auto(&self, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
-        Pool::new_auto(&self, endpoints, socket_type, threads)
+    pub fn pool_auto(self: &Arc<Self>, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
+        Pool::new_auto(self.clone(), endpoints, socket_type, threads)
     }
 
-    pub fn pool_manual(&self, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
-        Pool::new_manual(&self, endpoints, socket_type)
+    pub fn pool_manual(self: &Arc<Self>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
+        Pool::new_manual(self.clone(), endpoints, socket_type)
     }
 
-    pub fn sender(&self, socket_type: SocketType, port: u32, address:Option<String>, queue_size: Option<usize>,
+    pub fn sender(self: &Arc<Self>, socket_type: SocketType, port: u32, address:Option<String>, queue_size: Option<usize>,
                   block:Option<bool>, start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Sender> {
-        Sender::new(&self, socket_type, port,address, queue_size, block, start_id, header_compression)
+        Sender::new(self.clone(), socket_type, port,address, queue_size, block, start_id, header_compression)
     }
 
     pub fn interrupt(&self) {

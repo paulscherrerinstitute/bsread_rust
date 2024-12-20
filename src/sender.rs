@@ -1,6 +1,7 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
+use crate::compression::*;
 use std::error::Error;
 use std::thread;
 use std::collections::HashMap;
@@ -9,18 +10,18 @@ use std::io::Read;
 use env_logger::fmt::Timestamp;
 use zmq::SocketType;
 use serde_json::Value as JsonValue;
-use crate::compression::*;
+use std::sync::Arc;
 use serde_json::Map as JsonMap;
 use serde_json::Number as JsonNumber;
 
 
-pub struct Sender<'a> {
+pub struct Sender {
     socket: zmq::Socket,
     socket_type: SocketType,
     main_header: HashMap<String, JsonValue>,
     data_header: HashMap<String, JsonValue>,
     data_header_buffer: Vec<u8>,
-    bsread: &'a Bsread,
+    bsread: Arc<Bsread>,
     port: u32,
     address:String,
     queue_size: usize,
@@ -31,8 +32,8 @@ pub struct Sender<'a> {
 }
 
 impl
-<'a> Sender<'a> {
-    pub fn new(bsread: &'a Bsread, socket_type: SocketType, port: u32,
+Sender {
+    pub fn new(bsread: Arc<Bsread>, socket_type: SocketType, port: u32,
                address:Option<String>, queue_size: Option<usize>, block:Option<bool>,
                start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Self> {
         let socket = bsread.get_context().socket(socket_type)?;
@@ -93,7 +94,7 @@ impl
         if self.started{
             self.started = false;
             let url = self.get_url();
-            log::info!("Unbinding url: {}", url);
+            log::info!("Unbinding endpoint: {}", url);
             match self.socket.unbind(url.as_str()) {
                 Ok(_) => (),
                 Err(e) =>  log::warn!("Error unbinding {}: {}", url, e)

@@ -6,20 +6,20 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use zmq::SocketType;
 
-pub struct Pool<'a> {
+pub struct Pool {
     socket_type: SocketType,
     threads: usize,
-    bsread: &'a Bsread,
-    receivers: Vec<Receiver<'a>>
+    bsread: Arc<Bsread>,
+    receivers: Vec<Receiver>
 }
 
 impl
-<'a> Pool<'a> {
-    pub fn new_auto(bsread: &'a Bsread, endpoints: Vec<&str>, socket_type: SocketType, threads: usize) -> IOResult<Self> {
+Pool {
+    pub fn new_auto(bsread: Arc<Bsread>, endpoints: Vec<&str>, socket_type: SocketType, threads: usize) -> IOResult<Self> {
         if threads<=0{
             return Err(new_error(ErrorKind::InvalidInput, "Invalid number of threads"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread, None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type).unwrap()).collect();
         let mut index = 0;
         for endpoint in endpoints{
             receivers[index].add_endpoint(endpoint.to_string());
@@ -31,12 +31,12 @@ impl
         Ok(Self { socket_type, threads, bsread,  receivers})
     }
 
-    pub fn new_manual(bsread: &'a Bsread, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
+    pub fn new_manual(bsread: Arc<Bsread>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let threads = endpoints.len();
         if threads==0{
             return Err(new_error(ErrorKind::InvalidInput, "Invalid configuration"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread, None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type).unwrap()).collect();
         let mut index = 0;
         for group in endpoints {
             for endpoint  in group {

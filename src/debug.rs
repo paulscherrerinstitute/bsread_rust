@@ -1,4 +1,3 @@
-use std::ops::Sub;
 use crate::*;
 use crate::IOResult;
 use crate::receiver::{Receiver};
@@ -8,6 +7,7 @@ use crate::bsread::Bsread;
 use crate::sender::Sender;
 use crate::value::Value;
 use indexmap::IndexMap;
+use std::ops::Sub;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zmq::SocketType;
@@ -188,7 +188,7 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
 pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
     fn create_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
         let bsread = Bsread::new().unwrap();
-        let mut sender = Sender::new(&bsread,  socket_type, port, Some(get_local_address()), None, block, None, None)?;
+        let mut sender = Sender::new(bsread,  socket_type, port, Some(get_local_address()), None, block, None, None)?;
         sender.start()?;
         let mut count = 0;
         let mut start_time = Instant::now().sub( Duration::from_secs(1));
