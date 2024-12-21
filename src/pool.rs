@@ -1,9 +1,11 @@
+use std::ops::DerefMut;
 use crate::*;
 use crate::receiver::Receiver;
 use crate::bsread::Bsread;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 use std::thread;
+use std::time::Duration;
 use zmq::SocketType;
 
 pub struct Pool {
@@ -52,26 +54,49 @@ Pool {
 
 
 
-    pub fn start_sync(&mut self, callback: fn(msg: Message) -> ()) -> IOResult<()> {
-        for receiver in &mut self.receivers{
-            receiver.fork(callback, None);
+
+    pub fn start_sync<F>(&mut self, callback: F) -> IOResult<()>
+    where
+        F: FnMut(Message) + Send + 'static,
+    {
+        let shared_callback = Arc::new(Mutex::new(callback));
+        for receiver in &mut self.receivers {
+            let callback_clone = Arc::clone(&shared_callback);
+            receiver.fork(move |msg| {
+                let mut callback = callback_clone.lock().unwrap();
+                callback(msg);
+            }, None);
+
         }
         Ok(())
     }
 
-    pub fn start_buffered(&mut self, callback: fn(msg: Message) -> (), buffer_size:usize) -> IOResult<()> {
+    pub fn start_buffered<F>(&mut self, mut callback: F, buffer_size:usize) -> IOResult<()>
+    where
+        F: FnMut(Message) + Send + 'static,
+    {
+        let shared_callback = Arc::new(Mutex::new(callback));
         for receiver in & mut self.receivers {
+            let callback_clone = Arc::clone(&shared_callback);
             let thread_name = format!("Pool {}", receiver.to_string());
             let interrupted = Arc::clone(self.bsread.get_interrupted());
             receiver.start(buffer_size)?;
             let fifo = receiver.get_fifo().unwrap();
+
             thread::Builder::new()
                 .name(thread_name.to_string())
                 .spawn(move || -> IOResult<()>{
                     while !interrupted.load(Ordering::Relaxed){
                         match fifo.get(){
-                            None => {}
-                            Some(msg) => {callback(msg)}
+                            None => {
+                                thread::sleep(Duration::from_millis(10));
+                            }
+                            Some(msg) => {
+                                // Lock the callback and extend the lifetime of the mutable reference
+                                let mut callback = callback_clone.lock().unwrap();
+                                let callback_ref = callback.deref_mut(); // Create a long-lived reference
+                                callback_ref(msg); // Call the callback using the long-lived reference
+                            }
                         }
                     }
                     Ok(())

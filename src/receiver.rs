@@ -5,6 +5,7 @@ use crate::debug::get_local_address;
 use std::{io, thread};
 use std::collections::HashMap;
 use std::error::Error;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -204,7 +205,10 @@ Receiver{
         message
     }
 
-    pub fn listen(&mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) -> IOResult<()> {
+    pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
+    where
+        F: FnMut(Message),
+    {
         self.reset_counters();
         if let Some(forwarder) = self.forwarder.as_mut() {
             let forwarder_sender =Sender::new(self.bsread.clone(), forwarder.socket_type, forwarder.port, forwarder.address.clone(), forwarder.queue_size, None, None, None);
@@ -258,17 +262,25 @@ Receiver{
         Ok(())
     }
 
-    pub fn fork(& mut self, callback: fn(msg: Message) -> (), num_messages: Option<u32>) {
-        fn listen_process(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: fn(msg: Message) -> (), num_messages: Option<u32>,
+    pub fn fork<F>(& mut self, mut callback: F,  num_messages: Option<u32>)
+        where
+        F: FnMut(Message) + Send + 'static,
+        {
+
+        fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType,callback: Arc<Mutex<F>>, num_messages: Option<u32>,
                           producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>, forwarder:Option<Forwarder>,
-                          interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>) -> IOResult<()> {
+                          interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>) -> IOResult<()>
+            where
+                F: FnMut(Message) + Send + 'static,
+            {
             let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
             let mut receiver = bsread.receiver(endpoint, socket_type)?;
             receiver.fifo = producer_fifo;
             receiver.stats = producer_stats;
             receiver.interrupted = interrupted_self;
             receiver.forwarder = forwarder;
-            receiver.listen(callback, num_messages)
+            let mut callback = callback.lock().unwrap();
+            receiver.listen(&mut callback.deref_mut(), num_messages)
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
@@ -283,13 +295,14 @@ Receiver{
         //let producer_stats = Arc::clone(&self.stats);
         //let producer_stats = Arc::new(Mutex::new(&self.stats));
         let producer_stats =self.stats.clone();
+        let shared_callback = Arc::new(Mutex::new(callback));
 
         let thread_name = self.to_string();
         let handle = thread::Builder::new()
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, callback, num_messages, producer_fifo, producer_stats, forwarder, interrupted_context, interrupted_self).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, shared_callback, num_messages, producer_fifo, producer_stats, forwarder, interrupted_context, interrupted_self).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error

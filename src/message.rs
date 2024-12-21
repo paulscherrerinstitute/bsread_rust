@@ -6,6 +6,7 @@ use crate::compression::*;
 use crate::utils::LimitedHashMap;
 use std::collections::HashMap;
 use std::io::{Cursor};
+use std::thread;
 use indexmap::IndexMap;
 use serde_json::Error as JSonError;
 use serde_json::Value as JsonValue;
@@ -283,7 +284,6 @@ impl Message {
         }
         Some(DataHeaderInfo {data_header, channels})
     }
-
 }
 
 pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<HashMap<String,JsonValue>> {

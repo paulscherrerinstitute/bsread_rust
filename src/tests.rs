@@ -9,6 +9,7 @@ use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};
 use crate::receiver::Forwarder;
 use std::{cmp, thread};
 use std::io::{Cursor, Write};
+use std::ops::DerefMut;
 use std::time::Duration;
 use indexmap::IndexMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -84,6 +85,10 @@ impl TestEnvironment {
         }
         let bsread = Bsread::new()?;
         Ok(Self {bsread})
+    }
+
+    pub fn on_message(&self, msg: &Message){
+        println!("Received {} [{}]", msg.get_id(), thread::current().name().unwrap_or("Unnamed Thread").to_string())
     }
 }
 
@@ -598,3 +603,34 @@ fn forwarder_with_sender() ->  IOResult<()> {
 
 
 
+#[test]
+fn closure() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
+    rec.listen(|msg| {env.on_message(&msg);}, Some(MESSAGE_COUNT))?;
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+
+    //Must move env to fork
+    rec.fork(move |msg| {env.on_message(&msg);}, Some(MESSAGE_COUNT));
+    rec.join()?;
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+    Ok(())
+}
+
+#[test]
+fn closure_interrupt() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
+
+    rec.listen(|msg| {
+        env.on_message(&msg);
+        if msg.get_id() > 15{
+            env.bsread.interrupt();
+        }
+    }, None)?;
+    print_stats_rec(&rec);
+    assert_rec(&rec, Some(10), None);
+    Ok(())
+}
