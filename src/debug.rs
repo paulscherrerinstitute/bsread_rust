@@ -15,6 +15,7 @@ use lazy_static::lazy_static;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use serde_json::Value as JsonValue;
 
 pub fn vec_to_hex_string(vec: &[u8]) -> String {
     vec.iter()
@@ -72,35 +73,42 @@ fn increment_counter() {
     }
 }
 
-pub fn print_message(message: &Message, max_size:usize, header:bool, id:bool, attrs:bool, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
-    if header {
-        println!("{}", "-".repeat(80));
-        let current_thread = thread::current(); // Keep the thread alive
-        let thread_name = current_thread.name().unwrap_or("Unnamed Thread");
-        unsafe {
-            println!("Message: {} \t Thread: {}", *MESSAGE_COUNTER.lock().unwrap(), thread_name);
-        }
-
-        println!("{}", "-".repeat(80));
+pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
+    println!("{}", "-".repeat(110));
+    let current_thread = thread::current(); // Keep the thread alive
+    let thread_name = current_thread.name().unwrap_or("Unnamed Thread");
+    let ts = message.get_timestamp();
+    unsafe {
+        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{}  [{}]", *MESSAGE_COUNTER.lock().unwrap(), message.get_id(),
+                 ts.0, ts.1, message.get_hash(), thread_name);
     }
     increment_counter();
-    if id {
-        println!("ID = {:?}", message.get_id());
-    }
-    if attrs {
-        println!("Attrs:");
-        println!("\thtype: {:?}", message.get_htype());
-        println!("\tdh_compression: {:?}", message.get_dh_compression());
-        println!("\thash: {:?}", message.get_hash());
-        println!("\ttimestamp: {:?}", message.get_timestamp());
-    }
+
     if main_header {
         println!("Main Header:");
-        println!("\t {:?}", message.get_main_header());
+        for (key, value) in message.get_main_header() {
+            println!("\t{}: {}", key, value);
+        }
     }
     if data_header{
         println!("Data Header:");
-        println!("\t {:?}", message.get_data_header());
+        for (key, value) in  message.get_data_header() {
+            match value {
+                JsonValue::Object(map) => {
+                    println!("\t{}", key);
+                    for (k, v) in map {
+                        println!("\t\t{}: {}", k, v);
+                    }
+                }
+                JsonValue::Array(array) => {
+                    println!("\t{}", key);
+                    for v in array {
+                        println!("\t\t{}", v);
+                    }
+                }
+                _ => println!("\t{}: {}", key, value),
+            }
+        }
     }
     if meta {
         let mut channel_names = Vec::new();
@@ -114,10 +122,13 @@ pub fn print_message(message: &Message, max_size:usize, header:bool, id:bool, at
     }
     if data{
         println!("Channel Data:");
+        let channels = message.get_channels();
         let data = message.get_data();
+        let mut index = 0;
         for (key, value) in data {
-            //println!("{}", key);
-            print_channel_data(value, format!("\t{}: ", key).as_str(), max_size);
+            let config = channels[index].get_config();
+            print_channel_data(value, format!("\t{} <{}>: ", key, config.get_type()).as_str(), max_size);
+            index = index + 1;
         }
     }
 }
@@ -125,7 +136,7 @@ pub fn print_message(message: &Message, max_size:usize, header:bool, id:bool, at
 pub fn print_stats_rec(rec: &Receiver) -> () {
     let mode = rec.get_mode();
     let socket_type = rec.get_socket_type();
-    println!("Receiver {}  {:?} [{}]", rec.index(), socket_type, mode);
+    println!("Receiver {}  {:?} [{}] stats:", rec.index(), socket_type, mode);
     println!("\tConnections: {}", rec.connections());
     println!("\tAvailable: {}", rec.available());
     println!("\tDropped: {}", rec.dropped());

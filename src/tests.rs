@@ -20,17 +20,14 @@ use lazy_static::lazy_static;
 use log::SetLoggerError;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
-const PRINT_HEADER: bool = true;
-const PRINT_ID: bool = true;
-const PRINT_ATTRS: bool = false;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
 const PRINT_DATA: bool = false;
 
 pub fn print_message(message: &Message){
-    debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_HEADER, PRINT_ID, PRINT_ATTRS,
-                         PRINT_MAIN_HEADER, PRINT_DATA_HEADER, PRINT_META_DATA, PRINT_DATA);
+    debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_MAIN_HEADER,
+                          PRINT_DATA_HEADER, PRINT_META_DATA, PRINT_DATA);
 }
 
 pub fn print_stats_rec(receiver: &Receiver){
@@ -75,8 +72,8 @@ impl TestEnvironment {
         }
         let running_tests = RUNNING_TESTS.fetch_add(1, Ordering::SeqCst);
         println!("Setting up test environment [{}]", running_tests);
-        if !STARTED_SERVERS.load(Ordering::Relaxed) {
-            STARTED_SERVERS.store(true, Ordering::Relaxed);
+        if !STARTED_SERVERS.load(Ordering::SeqCst) {
+            STARTED_SERVERS.store(true, Ordering::SeqCst);
             println!("Starting senders...");
             start_sender(10300, SocketType::PUB, SENDER_INTERVAL, None, None)?;
             start_sender(10301, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()))?;
@@ -98,7 +95,9 @@ impl Drop for TestEnvironment {
         println!("Cleaning up test environment [{}]", running_tests);
         if running_tests<=1 {
             println!("Stopping senders...");
-            stop_senders();
+            //TODO: Not stopping senders, or else we may have race conditions when running several tests.
+            //stop_senders();
+            //STARTED_SERVERS.store(false, Ordering::SeqCst)
         }
     }
 }
@@ -584,7 +583,7 @@ fn forwarder() ->  IOResult<()> {
 
 
 #[test]
-#[ignore]
+//#[ignore]
 fn forwarder_with_sender() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rxtx = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
