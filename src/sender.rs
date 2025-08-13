@@ -68,7 +68,7 @@ Sender {
                 &compress_bitshuffle_lz4(data_header_json.as_bytes(), 1)?
             }
             "lz4" => {
-                &compress_lz4(data_header_json.as_bytes())?
+                &compress_lz4(data_header_json.as_bytes(), false)?
             }
             &_ => { data_header_json.as_bytes() }
         };

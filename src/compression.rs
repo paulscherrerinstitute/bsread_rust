@@ -104,8 +104,14 @@ pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: usize) ->
     }
 }
 
-pub fn decompress_lz4(compressed_data: &[u8]) -> IOResult<Vec<u8>> {
-    let output = lz4_decompress(compressed_data, None)?;
+pub fn decompress_lz4(compressed_data: &[u8], little_endian:bool) -> IOResult<Vec<u8>> {
+    let size = if little_endian {
+        (compressed_data[0] as i32) | (compressed_data[1] as i32) << 8 | (compressed_data[2] as i32) << 16 | (compressed_data[3] as i32) << 24
+    } else {
+        (compressed_data[3] as i32) | (compressed_data[2] as i32) << 8 | (compressed_data[1] as i32) << 16 | (compressed_data[0] as i32) << 24
+    };
+    let blob: &[u8] = &compressed_data[4..];
+    let output = lz4_decompress(blob, Some(size))?;
     Ok(output)
 }
 
@@ -117,8 +123,19 @@ pub fn compress_bitshuffle_lz4(data: &[u8], element_size: usize) -> IOResult<Vec
     }
 }
 
-pub fn compress_lz4(data: &[u8]) -> IOResult<Vec<u8>> {
-    let output = lz4_compress(data, Some(CompressionMode::DEFAULT), true)?;
+pub fn compress_lz4(data: &[u8], little_endian:bool) -> IOResult<Vec<u8>> {
+    let size = data.len();
+    let header  = if little_endian {
+        [size as u8,  (size >> 8) as u8, (size >> 16) as u8, (size >> 24) as u8]
+    } else {
+        [(size >> 24)  as u8,  (size >> 16) as u8, (size >> 8) as u8, size as u8]
+    };
+
+    let blob = lz4_compress(data, Some(CompressionMode::DEFAULT), false)?;
+
+    let mut output = Vec::with_capacity(4 + blob.len());
+    output.extend_from_slice(&header);
+    output.extend_from_slice(&blob);
     Ok(output)
 }
 

@@ -124,6 +124,18 @@ fn assert_pool(pool: &Pool){
 }
 
 #[test]
+/*
+fn url_tst() ->  IOResult<()> {
+    let URL: &str = "tcp://localhost:9000";
+    let bsread = Bsread::new()?;
+    let mut rec =  bsread.receiver(Some(vec![URL]),  SocketType::PULL)?;
+    rec.listen(on_message, Some(1))?;
+    print_stats_rec(&rec);
+    Ok(())
+}
+*/
+
+#[test]
 fn receiver_sub() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
@@ -371,8 +383,13 @@ fn dispatcher() -> IOResult<()> {
 fn lz4() ->  IOResult<()> {
     let mut buffer = vec![0u8; 1024]; // Allocate 1024 bytes
     rand::thread_rng().fill(&mut buffer[..]); // Fill with random data
-    let compressed = compress_lz4(&buffer)?;
-    let decompressed = decompress_lz4(&compressed)?;
+    let little_endian=true;
+    let compressed = compress_lz4(&buffer,little_endian)?;
+    let decompressed = decompress_lz4(&compressed, little_endian)?;
+    assert_eq!(&buffer, &decompressed);
+    let little_endian=false;
+    let compressed = compress_lz4(&buffer,little_endian)?;
+    let decompressed = decompress_lz4(&compressed, little_endian)?;
     assert_eq!(&buffer, &decompressed);
     Ok(())
 }

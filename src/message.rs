@@ -64,8 +64,6 @@ fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> IOResult<Box<dyn Ch
     channel::new(name, typ, shape, little_endian, compression)
 }
 
-//fn get_channels(data_header: &HashMap<String, Value>) -> Result<HashMap<String, Channel>, &'static str> {
-//fn get_channels(data_header: &HashMap<String, Value>) -> Result<Vec<Channel>, &'static str> {
 fn get_channels(data_header: &HashMap<String, JsonValue>) -> IOResult<Vec<Box<dyn ChannelTrait>>> {
     // Attempt to get the "channels" key and ensure it is an array
     let items = data_header
@@ -107,27 +105,31 @@ impl ChannelData {
     }
 }
 
-fn parse_channel(channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> IOResult<ChannelData> {
-    if t.len() != 16 {
-        return Err(new_error(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
-    }
+fn parse_channel(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> IOResult<ChannelData> {
+    //if t.len() != 16 {
+    //    return Err(new_error(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
+    //}
+    let timestamp = if (t.len() == 16){
+        let mut cursor = Cursor::new(t);
+        let timestamp_secs = READER_U64(&mut cursor)?;
+        let timestamp_nanos = READER_U64(&mut cursor)?;
+        (timestamp_secs, timestamp_nanos)
+    } else {
+        global_timestamp.clone()
+    };
 
     let data = match channel.get_config().get_compression().as_str() {
         "bitshuffle_lz4" => {
             &decompress_bitshuffle_lz4(v, channel.get_config().get_element_size())?
         }
         "lz4" => {
-            &decompress_lz4(v)?
+            &decompress_lz4(v, channel.get_config().is_little_endian())?
         }
         &_ => { v }
     };
     // Create a Cursor to read from the vector
     let mut cursor = Cursor::new(data);
     let value = channel.read(&mut cursor);
-    let mut cursor = Cursor::new(t);
-    let timestamp_secs = READER_U64(&mut cursor)?;
-    let timestamp_nanos = READER_U64(&mut cursor)?;
-    let timestamp = (timestamp_secs, timestamp_nanos);
     Ok(ChannelData { value: value.unwrap(), timestamp: timestamp })
 }
 
@@ -143,7 +145,7 @@ pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & Channe
             compress_bitshuffle_lz4(&buf, channel.get_config().get_element_size())?
         }
         "lz4" => {
-            compress_lz4(&buf)?
+            compress_lz4(&buf, channel.get_config().is_little_endian())?
         }
         &_ => { buf }
     };
@@ -185,6 +187,18 @@ fn get_dh_compression(main_header: &HashMap<String, JsonValue>) -> String {
     }.to_string()
 }
 
+fn get_timestamp(main_header: &HashMap<String, JsonValue>) -> (u64, u64) {
+    match main_header.get("global_timestamp") {
+        None => { (0, 0) }
+        Some(v) => {
+            let m = v.as_object();
+            let ns = m.unwrap().get("ns").unwrap().as_u64().unwrap();
+            let sec = m.unwrap().get("sec").unwrap().as_u64().unwrap();
+            (sec, ns)
+        }
+    }
+}
+
 impl Message {
     pub fn new(main_header: HashMap<String, JsonValue>,
            data_header: HashMap<String, JsonValue>,
@@ -194,15 +208,8 @@ impl Message {
         let dh_compression = get_dh_compression(&main_header);
         let id = main_header.get("pulse_id").unwrap().as_u64().unwrap();
         let htype = main_header.get("htype").unwrap().as_str().unwrap().to_string();
-        let timestamp = match main_header.get("global_timestamp") {
-            None => { (0, 0) }
-            Some(v) => {
-                let m = v.as_object();
-                let ns = m.unwrap().get("ns").unwrap().as_u64().unwrap();
-                let sec = m.unwrap().get("sec").unwrap().as_u64().unwrap();
-                (sec, ns)
-            }
-        };
+        let timestamp = get_timestamp(&main_header);
+
         Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
     }
     pub fn new_from_channel_map(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
@@ -318,6 +325,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     }
     let main_header = decode_json(&message_parts[0])?;
     let hash = get_hash(&main_header);
+    let global_timestamp = get_timestamp(&main_header);
 
     // Determine whether to reuse or reparse data
     let (data_header, channels) = if let Some(last_msg) = last_headers.remove(&hash) {
@@ -333,7 +341,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
                 &decompress_bitshuffle_lz4(blob, 1)?
             }
             "lz4" => {
-                &decompress_lz4(blob)?
+                &decompress_lz4(blob, false)?
             }
             &_ => { &blob }
         };
@@ -350,7 +358,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         let v = &message_parts[2 * i + 2];
         let t = &message_parts[2 * i + 3];
 
-        let channel_data = parse_channel(channel, v, t).ok();
+        let channel_data = parse_channel(&global_timestamp, channel, v, t).ok();
         data.insert(channel.get_config().get_name(), channel_data);
     }
     let msg = Message::new(main_header, data_header, channels, data);
