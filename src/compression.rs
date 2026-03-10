@@ -6,7 +6,7 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::cmp;
 
 
-extern "C" {
+unsafe extern "C" {
     pub fn bshuf_decompress_lz4(
         input: *const u8,
         output: *mut u8,

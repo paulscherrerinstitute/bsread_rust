@@ -1,7 +1,7 @@
 [package]
 name = "bsread"
-version = "0.1.1"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 authors = ["Alexandre Gobbo <alexandre.gobbo@psi.ch>"]
 description = "Rust implementation of the BSREAD streaming protocol"
 license = "GPL-3.0-or-later"
@@ -19,14 +19,18 @@ zmq = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 byteorder = "1.4"
-indexmap = "1.9"
+indexmap = "2.13.0"
 log = "0.4.22"
-env_logger = "0.10"
+env_logger = "0.11.9"
 lz4 = "1.24"
 cc = "1.2.1"
 num = "0.4.3"
 num-traits = "0.2.19"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
-rand = "0.8"
+reqwest = { version = "0.13.2", optional = true, default-features = false, features = ["blocking", "json", "rustls"] }
+rand = "0.10.0"
 md-5 = "0.10"
 lazy_static = "1.4"
+
+[features]
+default = []
+dispatcher = ["dep:reqwest"]

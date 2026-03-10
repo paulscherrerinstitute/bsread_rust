@@ -1,6 +1,7 @@
 use crate::*;
 use crate::compression::*;
 use crate::debug::*;
+#[cfg(feature = "dispatcher")]
 use crate::dispatcher::ChannelDescription;
 use crate::sender::Sender;
 use crate::reader::READER_ABOOL;
@@ -15,7 +16,7 @@ use indexmap::IndexMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
-use rand::Rng;
+use rand::RngExt;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
 
@@ -351,6 +352,7 @@ fn pool_buffered() -> IOResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "dispatcher")]
 #[test]
 fn dispatcher() -> IOResult<()> {
     if DISPATCHER_CHANNEL_NAMES.len()==0{
@@ -382,7 +384,7 @@ fn dispatcher() -> IOResult<()> {
 #[test]
 fn lz4() ->  IOResult<()> {
     let mut buffer = vec![0u8; 1024]; // Allocate 1024 bytes
-    rand::thread_rng().fill(&mut buffer[..]); // Fill with random data
+    rand::rng().fill(&mut buffer[..]); // Fill with random data
     let little_endian=true;
     let compressed = compress_lz4(&buffer,little_endian)?;
     let decompressed = decompress_lz4(&compressed, little_endian)?;
@@ -399,7 +401,7 @@ fn lz4() ->  IOResult<()> {
 fn bitshuffle_lz4() ->  IOResult<()> {
     let elem_size = 1;
     let mut buffer = vec![0u8; 1024]; // Allocate 1024 bytes
-    rand::thread_rng().fill(&mut buffer[..]); // Fill with random data
+    rand::rng().fill(&mut buffer[..]); // Fill with random data
     let compressed = compress_bitshuffle_lz4(&buffer, elem_size)?;
     let decompressed = decompress_bitshuffle_lz4(&compressed, elem_size)?;
     assert_eq!(&buffer, &decompressed);
@@ -407,7 +409,7 @@ fn bitshuffle_lz4() ->  IOResult<()> {
 
     let elem_size = 4;
     let mut data = vec![0u32; 128];
-    rand::thread_rng().fill(&mut data[..]); // Fill with random data
+    rand::rng().fill(&mut data[..]); // Fill with random data
     let mut buffer = vec![0u8; elem_size*data.len()];
     let mut cursor = Cursor::new(&mut buffer);
     writer::WRITER_ABU32(& mut cursor, data.as_slice())?;

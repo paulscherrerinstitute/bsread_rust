@@ -35,6 +35,7 @@ pub mod convert;
 pub mod value;
 pub mod debug;
 pub mod pool;
+#[cfg(feature = "dispatcher")]
 pub mod dispatcher;
 pub mod sender;
 

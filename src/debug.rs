@@ -63,7 +63,7 @@ pub fn print_channel_data(channel_data: &Option<ChannelData>, prefix:&str, max_e
     }
 }
 
-static mut MESSAGE_COUNTER: Mutex<i32> = Mutex::new(0);
+static MESSAGE_COUNTER: Mutex<i32> = Mutex::new(0);
 
 
 fn increment_counter() {

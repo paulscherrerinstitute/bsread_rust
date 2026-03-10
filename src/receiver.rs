@@ -78,7 +78,7 @@ impl Drop for TrackedSocket {
     }
 }
 
-static mut RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
+static RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
 fn get_index() -> u32{
     unsafe {
         let mut counter = RECEIVER_INDEX.lock().unwrap();
