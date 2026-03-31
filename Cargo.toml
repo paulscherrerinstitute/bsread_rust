@@ -1,6 +1,6 @@
 [package]
 name = "bsread"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Alexandre Gobbo <alexandre.gobbo@psi.ch>"]
 description = "Rust implementation of the BSREAD streaming protocol"

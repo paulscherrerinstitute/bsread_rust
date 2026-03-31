@@ -79,8 +79,8 @@ pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_h
     let thread_name = current_thread.name().unwrap_or("Unnamed Thread");
     let ts = message.get_timestamp();
     unsafe {
-        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{}  [{}]", *MESSAGE_COUNTER.lock().unwrap(), message.get_id(),
-                 ts.0, ts.1, message.get_hash(), thread_name);
+        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{} {} [{}]", *MESSAGE_COUNTER.lock().unwrap(), message.get_id(),
+                 ts.0, ts.1, message.get_hash(),  if message.header_changed() {"*"} else {" "}, thread_name);
     }
     increment_counter();
 

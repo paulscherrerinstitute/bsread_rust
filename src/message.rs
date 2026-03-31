@@ -169,6 +169,7 @@ pub struct Message {
     htype: String,
     dh_compression: String,
     timestamp: (u64, u64),
+    header_changed: Option<bool>
 }
 
 pub struct DataHeaderInfo {
@@ -203,14 +204,15 @@ impl Message {
     pub fn new(main_header: HashMap<String, JsonValue>,
            data_header: HashMap<String, JsonValue>,
            channels: Vec<Box<dyn ChannelTrait>>,
-           data: IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
+           data: IndexMap<String, Option<ChannelData>>,
+           header_changed: Option<bool>) -> IOResult<Self> {
         let hash = get_hash(&main_header);
         let dh_compression = get_dh_compression(&main_header);
         let id = main_header.get("pulse_id").unwrap().as_u64().unwrap();
         let htype = main_header.get("htype").unwrap().as_str().unwrap().to_string();
         let timestamp = get_timestamp(&main_header);
 
-        Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp })
+        Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp, header_changed })
     }
     pub fn new_from_channel_map(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
@@ -225,7 +227,7 @@ impl Message {
         let data_header_json = serde_json::to_string(&data_header)?;
         let blob = data_header_json.as_bytes();
         main_header.insert("hash".to_string(),  JsonValue::String(crate::utils::get_hash(blob)));
-        Message::new(main_header, data_header, channels, channel_data)
+        Message::new(main_header, data_header, channels, channel_data, None)
     }
 
     pub fn new_from_channel_vec(id:u64, timestamp: (u64, u64),  channels: &Vec<Box<dyn ChannelTrait>>, mut channel_data:Vec<Option<ChannelData>>) -> IOResult<Self> {
@@ -274,6 +276,10 @@ impl Message {
 
     pub fn get_dh_compression(&self) -> String {
         self.dh_compression.clone()
+    }
+
+    pub fn header_changed(&self) -> bool {
+        self.header_changed.unwrap_or_else(|| false)
     }
 
     pub fn get_value(&self, channel_name: &str) -> Option<&Value> {
@@ -328,9 +334,9 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     let global_timestamp = get_timestamp(&main_header);
 
     // Determine whether to reuse or reparse data
-    let (data_header, channels) = if let Some(last_msg) = last_headers.remove(&hash) {
+    let (data_header, channels, changed) = if let Some(last_msg) = last_headers.remove(&hash) {
         // Reuse the previous data header and channels
-        (last_msg.data_header, last_msg.channels)
+        (last_msg.data_header, last_msg.channels, false)
     } else {
         *counter_header_changes = *counter_header_changes +1;
         let blob = &message_parts[1];
@@ -347,7 +353,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         };
         let data_header = decode_json(json)?;
         let channels = get_channels(&data_header).unwrap();
-        (data_header, channels)
+        (data_header, channels, true)
     };
 
     if message_parts.len() - 2 != channels.len() * 2 {
@@ -361,7 +367,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         let channel_data = parse_channel(&global_timestamp, channel, v, t).ok();
         data.insert(channel.get_config().get_name(), channel_data);
     }
-    let msg = Message::new(main_header, data_header, channels, data);
+    let msg = Message::new(main_header, data_header, channels, data, Some(changed));
 
     if let Ok(m) = &msg {
         if let Some(l) = m.clone_data_header_info() {

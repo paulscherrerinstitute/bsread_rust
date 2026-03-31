@@ -192,7 +192,6 @@ Receiver{
     }
 
 
-    //Asynchronous API
     pub fn receive(&mut self) -> IOResult<Message> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
         if let Some(sender) = self.forwarder_sender.as_mut() {
@@ -205,6 +204,7 @@ Receiver{
         message
     }
 
+    //Asynchronous API
     pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
     where
         F: FnMut(Message),
