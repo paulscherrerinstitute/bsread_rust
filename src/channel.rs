@@ -81,7 +81,8 @@ pub struct ChannelArray<T> {
 pub struct ChannelRaw {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()>,
-    writer: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()>
+    writer: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()>,
+    buffer: Option<Vec<u8>>
 }
 
 pub fn get_elements(shape: &Option<Vec<u32>>) -> usize {
@@ -137,21 +138,13 @@ impl ChannelRaw {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression, raw: true };
-        Self { config, reader, writer }
-    }
-    fn readRaw(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Vec<u8>> {
-        let size = self.config.elements * self.config.elements;
+
+        let size = config.elements * config.elements;
         let mut buffer: Vec<u8> = Vec::with_capacity(size);
         unsafe {
             buffer.set_len(size); // Initialize the buffer without default values
         }
-        (self.reader)(cursor, &mut buffer)?;
-        Ok(buffer)
-    }
-
-    fn writeRaw(&self, cursor: &mut Cursor<&mut Vec<u8>>, value: &Vec<u8>) -> IOResult<()> {
-        (self.writer)(cursor, value)?;
-        Ok(())
+        Self { config, reader, writer, buffer:Some(buffer) }
     }
 }
 
@@ -169,14 +162,6 @@ pub trait ChannelTrait: Send {
     }
 
 }
-/*
-impl ChannelTrait for Channel<i32> {
-    fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<ChannelValue> {
-        let result = (self.reader)(cursor)?;
-        Ok(Value::I32(result))
-    }
-}
- */
 
 impl ChannelTrait for ChannelRaw {
     fn get_config(&self) -> &ChannelConfig{
