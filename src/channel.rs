@@ -81,8 +81,7 @@ pub struct ChannelArray<T> {
 pub struct ChannelRaw {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()>,
-    writer: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()>,
-    buffer: Option<Vec<u8>>
+    writer: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()>
 }
 
 pub fn get_elements(shape: &Option<Vec<u32>>) -> usize {
@@ -138,13 +137,7 @@ impl ChannelRaw {
         let elements = get_elements(&shape);
         let element_size = get_element_size(&typ);
         let config = ChannelConfig { name, typ, shape, elements, element_size, little_endian, compression, raw: true };
-
-        let size = config.elements * config.elements;
-        let mut buffer: Vec<u8> = Vec::with_capacity(size);
-        unsafe {
-            buffer.set_len(size); // Initialize the buffer without default values
-        }
-        Self { config, reader, writer, buffer:Some(buffer) }
+        Self { config, reader, writer }
     }
 }
 
