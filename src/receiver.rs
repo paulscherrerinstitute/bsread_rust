@@ -125,7 +125,8 @@ pub struct Receiver {
     forwarder: Option<Forwarder >,
     forwarder_sender: Option<Sender>,
     interrupted: Arc<AtomicBool>,
-    mode: String
+    mode: String,
+    raw: bool
 }
 
 impl
@@ -142,7 +143,7 @@ Receiver{
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
         let mode = "sync".to_string();
         Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
-                  forwarder:None, forwarder_sender:None,interrupted, mode })
+                  forwarder:None, forwarder_sender:None,interrupted, mode , raw: false})
     }
 
     pub fn to_string(& self,) -> String {
@@ -183,14 +184,20 @@ Receiver{
         }
     }
 
-    pub fn setForwarder(&mut self, forwarder: Forwarder) {
+    pub fn set_forwarder(&mut self, forwarder: Forwarder) {
         self.forwarder = Some(forwarder);
     }
 
-    pub fn setForwarderSender(&mut self, forwarder_sender: sender::Sender) {
+    pub fn set_forwarder_sender(&mut self, forwarder_sender: sender::Sender) {
         self.forwarder_sender = Some(forwarder_sender);
     }
 
+    pub fn set_raw(&mut self, raw:bool) {
+        self.raw = raw;
+    }
+    pub fn is_raw(&self) -> bool{
+        self.raw
+    }
 
     pub fn receive(&mut self) -> IOResult<Message> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
@@ -200,7 +207,7 @@ Receiver{
                 Err(e) => log::warn!("Error forwarding message to {}: {}", sender.get_url(), e),
             }
         }
-        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes);
+        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw);
         message
     }
 
@@ -253,7 +260,7 @@ Receiver{
                 break;
             }
         }
-        //Only handle lifecycle of forwarder created with setForwarder
+        //Only handle lifecycle of forwarder created with set_forwarder
         if let Some(forwarder) = self.forwarder.as_mut() {
             if let Some(sender) = self.forwarder_sender.as_mut() {
                 sender.stop();
@@ -269,7 +276,7 @@ Receiver{
 
         fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType,callback: Arc<Mutex<F>>, num_messages: Option<u32>,
                           producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>, forwarder:Option<Forwarder>,
-                          interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>) -> IOResult<()>
+                          interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool) -> IOResult<()>
             where
                 F: FnMut(Message) + Send + 'static,
             {
@@ -279,6 +286,7 @@ Receiver{
             receiver.stats = producer_stats;
             receiver.interrupted = interrupted_self;
             receiver.forwarder = forwarder;
+            receiver.raw = raw;
             let mut callback = callback.lock().unwrap();
             receiver.listen(&mut callback.deref_mut(), num_messages)
         }
@@ -296,13 +304,13 @@ Receiver{
         //let producer_stats = Arc::new(Mutex::new(&self.stats));
         let producer_stats =self.stats.clone();
         let shared_callback = Arc::new(Mutex::new(callback));
-
-        let thread_name = self.to_string();
+        let raw = self.raw;
+        let thread_name = self.to_string(); 
         let handle = thread::Builder::new()
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, shared_callback, num_messages, producer_fifo, producer_stats, forwarder, interrupted_context, interrupted_self).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, shared_callback, num_messages, producer_fifo, producer_stats, forwarder, interrupted_context, interrupted_self, raw).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error

@@ -84,3 +84,47 @@ pub const WRITER_ABOOL: fn(&mut Cursor<&mut Vec<u8>>, &[bool]) -> IOResult<()>= 
 pub const WRITER_ASTRING: fn(&mut Cursor<&mut  Vec<u8>>, &[String]) -> IOResult<()> = |cursor: &mut Cursor<&mut Vec<u8>>, arr: &[String]| {
     for i in 0..1 { WRITER_STRING(cursor, &arr[i].clone())?;} return Ok(());
 };
+
+
+pub const WRITER_RAW: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()> =
+    |cursor: &mut Cursor<&mut Vec<u8>>, arr: &[u8]| {
+        use std::io::Write;
+        cursor.write_all(arr)
+    };
+
+pub const WRITER_BRAW16: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()> =
+    |cursor: &mut Cursor<&mut Vec<u8>>, arr: &[u8]| {
+        use std::io::Write;
+        let mut tmp = [0u8; 2];
+        for chunk in arr.chunks_exact(2) {
+            tmp.copy_from_slice(chunk);
+            tmp.reverse();
+            cursor.write_all(&tmp)?;
+        }
+        Ok(())
+    };
+
+pub const WRITER_BRAW32: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()> =
+    |cursor: &mut Cursor<&mut Vec<u8>>, arr: &[u8]| {
+        use std::io::Write;
+        let mut tmp = [0u8; 4];
+        for chunk in arr.chunks_exact(4) {
+            tmp.copy_from_slice(chunk);
+            tmp.reverse();
+            cursor.write_all(&tmp)?;
+        }
+
+        Ok(())
+    };
+
+pub const WRITER_BRAW64: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()> =
+    |cursor: &mut Cursor<&mut Vec<u8>>, arr: &[u8]| {
+        use std::io::Write;
+        let mut tmp = [0u8; 8];
+        for chunk in arr.chunks_exact(8) {
+            tmp.copy_from_slice(chunk);
+            tmp.reverse();
+            cursor.write_all(&tmp)?;
+        }
+        Ok(())
+    };

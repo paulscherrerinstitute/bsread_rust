@@ -1,3 +1,6 @@
+use std::io::Cursor;
+use byteorder::BigEndian;
+use std::mem;
 use crate::convert::*;
 
 
@@ -247,4 +250,45 @@ impl Value {
             Value::F64(_) | Value::AF64 (_) => {"float64"}
         }
     }
+
+    pub fn as_u8(&self) ->  Option<&Vec<u8>> {
+        if let Value::AU8(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+    
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            // Scalars
+            Value::STR(s) => s.as_bytes().to_vec(),
+            Value::BOOL(b) => vec![*b as u8],
+            Value::I8(v) => vec![*v as u8],
+            Value::U8(v) => vec![*v],
+            Value::I16(v) => v.to_ne_bytes().to_vec(),
+            Value::U16(v) => v.to_ne_bytes().to_vec(),
+            Value::I32(v) => v.to_ne_bytes().to_vec(),
+            Value::U32(v) => v.to_ne_bytes().to_vec(),
+            Value::I64(v) => v.to_ne_bytes().to_vec(),
+            Value::U64(v) => v.to_ne_bytes().to_vec(),
+            Value::F32(v) => v.to_ne_bytes().to_vec(),
+            Value::F64(v) => v.to_ne_bytes().to_vec(),
+
+            // Arrays
+            Value::ASTR(arr) => arr.iter().flat_map(|s| s.as_bytes()).copied().collect(),
+            Value::ABOOL(arr) => bool_arr_to_bytes(arr),
+            Value::AI8(arr) => arr.iter().map(|&v| v as u8).collect(),
+            Value::AU8(arr) => arr.clone(),
+            Value::AI16(arr) => array_to_bytes(arr),
+            Value::AU16(arr) => array_to_bytes(arr),
+            Value::AI32(arr) => array_to_bytes(arr),
+            Value::AU32(arr) => array_to_bytes(arr),
+            Value::AI64(arr) => array_to_bytes(arr),
+            Value::AU64(arr) => array_to_bytes(arr),
+            Value::AF32(arr) => array_to_bytes(arr),
+            Value::AF64(arr) => array_to_bytes(arr),
+        }
+    }
+
 }

@@ -71,3 +71,41 @@ pub const READER_ASTRING: fn(&mut Cursor<&Vec<u8>>, &mut [String]) -> IOResult<(
     }
     return Ok(());
 };
+
+
+//Raw readers
+pub fn new_raw_buffer (element_size: usize, count: usize) -> Vec<u8>{
+    let size = element_size * count;
+    vec![0u8; size]
+}
+pub fn new_typed_raw_buffer<T> (count: usize)-> Vec<u8>{
+    let element_size = std::mem::size_of::<T>();
+    new_raw_buffer(element_size, count)
+}
+pub const READER_RAW: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [u8]| {
+    cursor.read_exact(arr)
+};
+
+pub const READER_BRAW16: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [u8] | {
+    cursor.read_exact(arr)?;
+    for chunk in arr.chunks_exact_mut(2) {
+        chunk.reverse();
+    }
+    Ok(())
+};
+
+pub const READER_BRAW32: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [u8] | {
+    cursor.read_exact(arr)?;
+    for chunk in arr.chunks_exact_mut(4) {
+        chunk.reverse();
+    }
+    Ok(())
+};
+
+pub const READER_BRAW64: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [u8] | {
+    cursor.read_exact(arr)?;
+    for chunk in arr.chunks_exact_mut(8) {
+        chunk.reverse();
+    }
+    Ok(())
+};

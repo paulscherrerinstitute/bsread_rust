@@ -188,7 +188,7 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     let values = create_test_values(v, s);
     for value in values {
         let shape = if value.is_array() { Some(vec![value.get_size() as u32]) } else { None };
-        let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone())?;
+        let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone(), false)?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
         data.insert(ch.get_config().get_name().clone(),ch_data );
         channels.push(ch);

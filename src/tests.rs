@@ -19,12 +19,13 @@ use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
 use rand::RngExt;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
+use num_traits::ToPrimitive;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = false;
+const PRINT_DATA: bool = true;
 
 pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_MAIN_HEADER,
@@ -433,7 +434,7 @@ fn serializer() ->  IOResult<()> {
     for value in values {
         for little_endian in  vec!(true, false) {
             let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-            let ch = channel::new(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string())?;
+            let ch = channel::new(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string(), false)?;
             let mut cursor = Cursor::new(&mut buf);
             ch.write(&mut cursor, &value)?;
             let mut cursor = Cursor::new(&buf);
@@ -450,7 +451,7 @@ fn sender_pub() ->  IOResult<()> {
     let mut sender = Sender::new(bsread,  SocketType::PUB, 10400, Some(get_local_address()), None, None, None, None)?;
 
     let value = Value::U8(100);
-    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string())?;
+    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string(), false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
@@ -476,7 +477,7 @@ fn sender_push() ->  IOResult<()> {
     let mut sender = Sender::new(bsread,  SocketType::PUSH, 10410, Some(get_local_address()), Some(queue_size), Some(block), None, None)?;
 
     let value = Value::U8(100);
-    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string())?;
+    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string(), false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
@@ -526,6 +527,14 @@ fn sender_receiver_compressed() ->  IOResult<()> {
     Ok(())
 }
 
+#[test]
+fn sender_receiver_raw() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]), SocketType::PULL)?;
+    rec.listen(on_message, Some(1))?;
+    print_stats_rec(&rec);
+    Ok(())
+}
 
 #[test]
 fn logs() {
@@ -549,9 +558,9 @@ fn sender_demo() ->  IOResult<()> {
     let array_size =100;
     let mut channels = Vec::new();
     //# Channels: uint64 scalar, float64 scalar and array of uint8
-    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string())?);
-    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string())?);
-    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, "bitshuffle_lz4".to_string())?);
+    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string(), false)?);
+    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string(),false)?);
+    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, "bitshuffle_lz4".to_string(),false)?);
 
     //Starts the sender, binding to the port
     sender.start()?;
@@ -578,7 +587,7 @@ fn sender_demo() ->  IOResult<()> {
 fn forwarder() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rxtx = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
-    rxtx.setForwarder(Forwarder::new(SocketType::PUB, 10600, Some(get_local_address().to_string()), None));
+    rxtx.set_forwarder(Forwarder::new(SocketType::PUB, 10600, Some(get_local_address().to_string()), None));
     let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10600"]), SocketType::SUB)?;
     rec.fork(on_message, None);
 
@@ -608,7 +617,7 @@ fn forwarder_with_sender() ->  IOResult<()> {
     let mut rxtx = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
     let mut forwarder = env.bsread.sender(SocketType::PUB, 10700, Some(get_local_address().to_string()), None, None, None, None)?;
     forwarder.start()?;
-    rxtx.setForwarderSender(forwarder);
+    rxtx.set_forwarder_sender(forwarder);
     let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10700"]), SocketType::SUB)?;
     rec.fork(on_message, None);
     //Cannot fork rxrx because forwarder cannot be sent to other thread
@@ -650,5 +659,59 @@ fn closure_interrupt() ->  IOResult<()> {
     }, None)?;
     print_stats_rec(&rec);
     assert_rec(&rec, Some(10), None);
+    Ok(())
+}
+
+#[test]
+fn receiver_raw() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]),  SocketType::PULL)?;
+    rec.set_raw(true);
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+    Ok(())
+}
+
+#[test]
+fn receiver_raw_sync() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let array_size = 100;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]),  SocketType::SUB)?;
+    rec.set_raw(true);
+    rec.start(100)?;
+    for i in 1..MESSAGE_COUNT+1 {
+        match rec.wait(1000) {
+            Ok(msg) => {
+                let n = msg.get_id().to_u32().unwrap(); //i
+                //Systm.out = msg.get_id();
+                assert_eq!( msg.get_value("U8").unwrap().as_u8().unwrap(),&Value::U8(n.to_u8().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("U16").unwrap().as_u8().unwrap(),&Value::U16(n.to_u16().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("U32").unwrap().as_u8().unwrap(),&Value::U32(n).to_bytes());
+                assert_eq!( msg.get_value("U64").unwrap().as_u8().unwrap(),&Value::U64(n.to_u64().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("I8").unwrap().as_u8().unwrap(),&Value::U8(n.to_u8().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("I16").unwrap().as_u8().unwrap(),&Value::I16(n.to_i16().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("I32").unwrap().as_u8().unwrap(),&Value::I32(n.to_i32().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("I64").unwrap().as_u8().unwrap(),&Value::I64(n.to_i64().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("F32").unwrap().as_u8().unwrap(),&Value::F32(n.to_f32().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("F64").unwrap().as_u8().unwrap(),&Value::F64(n.to_f64().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("BOOL").unwrap().as_u8().unwrap(),&Value::U8((n%2).to_u8().unwrap()).to_bytes());
+                assert_eq!( msg.get_value("STR").unwrap().as_u8().unwrap(),&Value::STR(n.to_string()).to_bytes());
+                assert_eq!( msg.get_value("AU8").unwrap().as_u8().unwrap(),&Value::AU8(vec![n.to_u8().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("AU16").unwrap().as_u8().unwrap(),&Value::AU16(vec![n.to_u16().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("AU32").unwrap().as_u8().unwrap(),&Value::AU32(vec![n; array_size]).to_bytes());
+                assert_eq!( msg.get_value("AI64").unwrap().as_u8().unwrap(),&Value::AU64(vec![n.to_u64().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("AI8").unwrap().as_u8().unwrap(),&Value::AI8(vec![n.to_i8().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("AI16").unwrap().as_u8().unwrap(),&Value::AI16(vec![n.to_i16().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("AI32").unwrap().as_u8().unwrap(),&Value::AI32(vec![n.to_i32().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("AI64").unwrap().as_u8().unwrap(),&Value::AI64(vec![n.to_i64().unwrap(); array_size]).to_bytes());
+                assert_eq!( msg.get_value("ABOOL").unwrap().as_u8().unwrap(),&Value::AU8(vec![(n%2).to_u8().unwrap(); array_size]).to_bytes());
+            }
+            Err(e) => {println!("{}",e)}
+        }
+    }
+    rec.stop()?;
+    print_stats_rec(&rec);
+    assert_rec(&rec, Some(MESSAGE_COUNT), None);
     Ok(())
 }

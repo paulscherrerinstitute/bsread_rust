@@ -37,7 +37,7 @@ fn convert_shape_val_to_vec(opt_val: Option<&JsonValue>) -> Option<Vec<u32>> {
     })
 }
 
-fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> IOResult<Box<dyn ChannelTrait>> {
+fn get_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResult<Box<dyn ChannelTrait>> {
     let name = channel_data.get("name")
         .and_then(|v| v.as_str())
         .ok_or(new_error(ErrorKind::InvalidInput,"Invalid format: 'name' missing or not a string"))?
@@ -61,10 +61,10 @@ fn get_channel(channel_data: &JsonMap<String, JsonValue>) -> IOResult<Box<dyn Ch
         .unwrap_or("none")
         .to_string();
 
-    channel::new(name, typ, shape, little_endian, compression)
+    channel::new(name, typ, shape, little_endian, compression, raw)
 }
 
-fn get_channels(data_header: &HashMap<String, JsonValue>) -> IOResult<Vec<Box<dyn ChannelTrait>>> {
+fn get_channels(data_header: &HashMap<String, JsonValue>, raw: bool) -> IOResult<Vec<Box<dyn ChannelTrait>>> {
     // Attempt to get the "channels" key and ensure it is an array
     let items = data_header
         .get("channels")
@@ -80,7 +80,7 @@ fn get_channels(data_header: &HashMap<String, JsonValue>) -> IOResult<Vec<Box<dy
         // Ensure each item is a map with string keys and string values
         let channel_data = item.as_object().
             ok_or(new_error(ErrorKind::InvalidInput,"Invalid format: is not an object"))?;
-        let channel = get_channel(channel_data).unwrap();
+        let channel = get_channel(channel_data, raw).unwrap();
         //channels.insert(name, channel);
         channels.push(channel);
     }
@@ -105,7 +105,7 @@ impl ChannelData {
     }
 }
 
-fn parse_channel(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>) -> IOResult<ChannelData> {
+fn parse_channel(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>, raw:bool) -> IOResult<ChannelData> {
     //if t.len() != 16 {
     //    return Err(new_error(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
     //}
@@ -128,9 +128,13 @@ fn parse_channel(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, 
         &_ => { v }
     };
     // Create a Cursor to read from the vector
-    let mut cursor = Cursor::new(data);
-    let value = channel.read(&mut cursor);
-    Ok(ChannelData { value: value.unwrap(), timestamp: timestamp })
+    if raw {
+        Ok(ChannelData { value: Value::AU8(data.clone()), timestamp: timestamp })
+    } else {
+        let mut cursor = Cursor::new(data);
+        let value = channel.read(&mut cursor);
+        Ok(ChannelData { value: value.unwrap(), timestamp: timestamp })
+    }
 }
 
 pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & ChannelData) -> IOResult<(Vec<u8>,Vec<u8>)> {
@@ -169,7 +173,8 @@ pub struct Message {
     htype: String,
     dh_compression: String,
     timestamp: (u64, u64),
-    header_changed: Option<bool>
+    header_changed: Option<bool>,
+    raw: bool,
 }
 
 pub struct DataHeaderInfo {
@@ -205,14 +210,15 @@ impl Message {
            data_header: HashMap<String, JsonValue>,
            channels: Vec<Box<dyn ChannelTrait>>,
            data: IndexMap<String, Option<ChannelData>>,
-           header_changed: Option<bool>) -> IOResult<Self> {
+           header_changed: Option<bool>,
+           raw: bool) -> IOResult<Self> {
         let hash = get_hash(&main_header);
         let dh_compression = get_dh_compression(&main_header);
         let id = main_header.get("pulse_id").unwrap().as_u64().unwrap();
         let htype = main_header.get("htype").unwrap().as_str().unwrap().to_string();
         let timestamp = get_timestamp(&main_header);
 
-        Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp, header_changed })
+        Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp, header_changed, raw })
     }
     pub fn new_from_channel_map(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
@@ -227,7 +233,7 @@ impl Message {
         let data_header_json = serde_json::to_string(&data_header)?;
         let blob = data_header_json.as_bytes();
         main_header.insert("hash".to_string(),  JsonValue::String(crate::utils::get_hash(blob)));
-        Message::new(main_header, data_header, channels, channel_data, None)
+        Message::new(main_header, data_header, channels, channel_data, None, false)
     }
 
     pub fn new_from_channel_vec(id:u64, timestamp: (u64, u64),  channels: &Vec<Box<dyn ChannelTrait>>, mut channel_data:Vec<Option<ChannelData>>) -> IOResult<Self> {
@@ -291,7 +297,7 @@ impl Message {
         let data_header = self.data_header.clone();
         //TODO: is there a better way to clone channels?
         let channels;
-        match get_channels(&data_header){
+        match get_channels(&data_header, self.raw){
             Ok(ch) => {channels = ch;}
             Err(_) => {return None}
         }
@@ -324,7 +330,7 @@ pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<Has
     Ok(data_header)
 }
 
-pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32) -> IOResult<Message> {
+pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32, raw:bool) -> IOResult<Message> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
         return Err(new_error(ErrorKind::InvalidData, "Invalid message format"));
@@ -352,7 +358,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
             &_ => { &blob }
         };
         let data_header = decode_json(json)?;
-        let channels = get_channels(&data_header).unwrap();
+        let channels = get_channels(&data_header, raw).unwrap();
         (data_header, channels, true)
     };
 
@@ -364,10 +370,10 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         let v = &message_parts[2 * i + 2];
         let t = &message_parts[2 * i + 3];
 
-        let channel_data = parse_channel(&global_timestamp, channel, v, t).ok();
+        let channel_data = parse_channel(&global_timestamp, channel, v, t, raw).ok();
         data.insert(channel.get_config().get_name(), channel_data);
     }
-    let msg = Message::new(main_header, data_header, channels, data, Some(changed));
+    let msg = Message::new(main_header, data_header, channels, data, Some(changed), raw);
 
     if let Ok(m) = &msg {
         if let Some(l) = m.clone_data_header_info() {
