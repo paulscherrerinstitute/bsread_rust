@@ -293,7 +293,10 @@ fn buffered() -> IOResult<()> {
     rec.start(100)?;
     for _ in 0..MESSAGE_COUNT {
         match rec.wait(1000) {
-            Ok(msg) => {print_message(&msg)}
+            Ok(msg) => {
+                print_message(&msg);
+                assert_message_contents_ok(msg);
+            }
             Err(e) => {println!("{}",e)}
         }
     }
@@ -656,6 +659,7 @@ fn closure_interrupt() ->  IOResult<()> {
         if msg.get_id() > 15{
             env.bsread.interrupt();
         }
+        assert_message_contents_ok(msg);
     }, None)?;
     print_stats_rec(&rec);
     assert_rec(&rec, Some(10), None);
@@ -683,29 +687,7 @@ fn receiver_raw_sync() ->  IOResult<()> {
     for i in 1..MESSAGE_COUNT+1 {
         match rec.wait(1000) {
             Ok(msg) => {
-                let n = msg.get_id().to_u32().unwrap(); //i
-                //Systm.out = msg.get_id();
-                assert_eq!( msg.get_value("U8").unwrap().as_u8().unwrap(),&Value::U8(n.to_u8().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("U16").unwrap().as_u8().unwrap(),&Value::U16(n.to_u16().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("U32").unwrap().as_u8().unwrap(),&Value::U32(n).to_bytes());
-                assert_eq!( msg.get_value("U64").unwrap().as_u8().unwrap(),&Value::U64(n.to_u64().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("I8").unwrap().as_u8().unwrap(),&Value::U8(n.to_u8().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("I16").unwrap().as_u8().unwrap(),&Value::I16(n.to_i16().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("I32").unwrap().as_u8().unwrap(),&Value::I32(n.to_i32().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("I64").unwrap().as_u8().unwrap(),&Value::I64(n.to_i64().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("F32").unwrap().as_u8().unwrap(),&Value::F32(n.to_f32().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("F64").unwrap().as_u8().unwrap(),&Value::F64(n.to_f64().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("BOOL").unwrap().as_u8().unwrap(),&Value::U8((n%2).to_u8().unwrap()).to_bytes());
-                assert_eq!( msg.get_value("STR").unwrap().as_u8().unwrap(),&Value::STR(n.to_string()).to_bytes());
-                assert_eq!( msg.get_value("AU8").unwrap().as_u8().unwrap(),&Value::AU8(vec![n.to_u8().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("AU16").unwrap().as_u8().unwrap(),&Value::AU16(vec![n.to_u16().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("AU32").unwrap().as_u8().unwrap(),&Value::AU32(vec![n; array_size]).to_bytes());
-                assert_eq!( msg.get_value("AI64").unwrap().as_u8().unwrap(),&Value::AU64(vec![n.to_u64().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("AI8").unwrap().as_u8().unwrap(),&Value::AI8(vec![n.to_i8().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("AI16").unwrap().as_u8().unwrap(),&Value::AI16(vec![n.to_i16().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("AI32").unwrap().as_u8().unwrap(),&Value::AI32(vec![n.to_i32().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("AI64").unwrap().as_u8().unwrap(),&Value::AI64(vec![n.to_i64().unwrap(); array_size]).to_bytes());
-                assert_eq!( msg.get_value("ABOOL").unwrap().as_u8().unwrap(),&Value::AU8(vec![(n%2).to_u8().unwrap(); array_size]).to_bytes());
+                assert_message_contents_ok(msg);
             }
             Err(e) => {println!("{}",e)}
         }
@@ -715,3 +697,22 @@ fn receiver_raw_sync() ->  IOResult<()> {
     assert_rec(&rec, Some(MESSAGE_COUNT), None);
     Ok(())
 }
+
+#[test]
+fn receiver_raw_async () ->  IOResult<()> {
+    let count =10;
+    let raw =true;
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]), SocketType::SUB)?;
+    rec.set_raw(raw);
+    rec.listen(|_msg| {
+         println!("\tId: {}", _msg.get_id());
+         let v = _msg.get_value("AI64").unwrap().as_u8().unwrap();
+         println!("\tData: {:?}", v);
+        assert_message_contents_ok(_msg);
+    }, Some(count));
+    rec.stop()?;
+    assert_rec(&rec, Some(count), None);
+    Ok(())
+}
+

@@ -15,8 +15,11 @@ use lazy_static::lazy_static;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use num_traits::ToPrimitive;
 use serde_json::Value as JsonValue;
 
+
+pub const MESSAGE_ARRAY_SIZE:usize = 100;
 pub fn vec_to_hex_string(vec: &[u8]) -> String {
     vec.iter()
         .map(|byte| format!("0x{:02X}", byte)) // Format each byte as a two-digit hexadecimal
@@ -205,7 +208,7 @@ pub fn start_sender(port:u32, socket_type:SocketType, interval_ms:u64, block:Opt
         let mut start_time = Instant::now().sub( Duration::from_secs(1));
         while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
             if start_time.elapsed() >= Duration::from_millis(interval_ms){
-                match create_message(count, 100, compression.clone()){
+                match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone()){
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(_) => {}
@@ -246,5 +249,47 @@ pub fn stop_senders(){
         if let Err(e) = handle.join().unwrap() {
             log::warn!("Error: {:?}", e);
         }
+    }
+}
+
+pub fn assert_message_contents_ok(msg:Message){
+    let n = msg.get_id().to_u32().unwrap() ;
+    let array_size = MESSAGE_ARRAY_SIZE;
+
+    if msg.is_raw() {
+        assert_eq!(msg.get_value("U8").unwrap().as_u8().unwrap(), &Value::U8(n.to_u8().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("U16").unwrap().as_u8().unwrap(), &Value::U16(n.to_u16().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("U32").unwrap().as_u8().unwrap(), &Value::U32(n).to_bytes());
+        assert_eq!(msg.get_value("U64").unwrap().as_u8().unwrap(), &Value::U64(n.to_u64().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("I8").unwrap().as_u8().unwrap(), &Value::U8(n.to_u8().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("I16").unwrap().as_u8().unwrap(), &Value::I16(n.to_i16().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("I32").unwrap().as_u8().unwrap(), &Value::I32(n.to_i32().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("I64").unwrap().as_u8().unwrap(), &Value::I64(n.to_i64().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("F32").unwrap().as_u8().unwrap(), &Value::F32(n.to_f32().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("F64").unwrap().as_u8().unwrap(), &Value::F64(n.to_f64().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("BOOL").unwrap().as_u8().unwrap(), &Value::U8((n % 2).to_u8().unwrap()).to_bytes());
+        assert_eq!(msg.get_value("STR").unwrap().as_u8().unwrap(), &Value::STR(n.to_string()).to_bytes());
+        assert_eq!(msg.get_value("AU8").unwrap().as_u8().unwrap(), &Value::AU8(vec![n.to_u8().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AU16").unwrap().as_u8().unwrap(), &Value::AU16(vec![n.to_u16().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AU32").unwrap().as_u8().unwrap(), &Value::AU32(vec![n; array_size]).to_bytes());
+        assert_eq!(msg.get_value("AI64").unwrap().as_u8().unwrap(), &Value::AU64(vec![n.to_u64().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AI8").unwrap().as_u8().unwrap(), &Value::AI8(vec![n.to_i8().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AI16").unwrap().as_u8().unwrap(), &Value::AI16(vec![n.to_i16().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AI32").unwrap().as_u8().unwrap(), &Value::AI32(vec![n.to_i32().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AI64").unwrap().as_u8().unwrap(), &Value::AI64(vec![n.to_i64().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AF32").unwrap().as_u8().unwrap(), &Value::AF32(vec![n.to_f32().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("AF64").unwrap().as_u8().unwrap(), &Value::AF64(vec![n.to_f64().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.get_value("ABOOL").unwrap().as_u8().unwrap(), &Value::AU8(vec![(n % 2).to_u8().unwrap(); array_size]).to_bytes());
+    } else {
+        /*
+        let v = msg.get_value("U8");
+        println!("{:?}", v);
+        let v0 = msg.get_value("U8").unwrap().as_num::<u8>();
+        println!("{:?}", v0);
+        let v1 = msg.get_value("U8").unwrap().as_num::<u8>().unwrap();
+        let v2 = n.to_u8().unwrap();
+        assert_eq!(v1,v2);
+         */
+
     }
 }

@@ -288,6 +288,10 @@ impl Message {
         self.header_changed.unwrap_or_else(|| false)
     }
 
+    pub fn is_raw(&self) -> bool {
+        self.raw
+    }
+
     pub fn get_value(&self, channel_name: &str) -> Option<&Value> {
         self.get_data().get(channel_name)
             .and_then(|result| result.as_ref())
