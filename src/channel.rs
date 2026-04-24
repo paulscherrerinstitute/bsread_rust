@@ -172,7 +172,7 @@ impl ChannelTrait for ChannelRaw {
     }
 
     fn write(&self, cursor: &mut Cursor<&mut Vec<u8>>, value: &Value) -> IOResult<()> {
-        let buffer = match value.as_u8() {
+        let buffer = match value.as_bytes() {
             Some(v) => v,
             None => &value.to_bytes(),
         };

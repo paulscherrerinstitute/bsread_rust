@@ -262,10 +262,10 @@ fn conversion() -> IOResult<()> {
     let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("AF32").unwrap();
-    println!("{:?}", v.to_str_array());
-    println!("{:?}", v.to_num_array::<i32>());
-    println!("{:?}", v.to_num_array::<f32>());
-    println!("{:?}", v.to_num_array::<f64>());
+    println!("{:?}", v.to_astr());
+    println!("{:?}", v.to_ai32());
+    println!("{:?}", v.to_af32());
+    println!("{:?}", v.to_af64());
     Ok(())
 }
 
@@ -278,11 +278,11 @@ fn booleans() -> IOResult<()> {
     let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("ABOOL").unwrap();
-    println!("{:?}", v.to_str_array());
-    println!("{:?}", v.to_num_array::<i32>());
+    println!("{:?}", v.to_astr());
+    println!("{:?}", v.to_ai32());
     let v = message.get_value("BOOL").unwrap();
     println!("{:?}", v.to_str());
-    println!("{:?}", v.to_num::<i32>());
+    println!("{:?}", v.to_i32());
     Ok(())
 }
 
@@ -707,7 +707,7 @@ fn receiver_raw_async () ->  IOResult<()> {
     rec.set_raw(raw);
     rec.listen(|_msg| {
          println!("\tId: {}", _msg.get_id());
-         let v = _msg.get_value("AI64").unwrap().as_u8().unwrap();
+         let v = _msg.get_value("AI64").unwrap().as_bytes().unwrap();
          println!("\tData: {:?}", v);
         assert_message_contents_ok(&_msg);
     }, Some(count));
@@ -726,9 +726,9 @@ fn conversions() -> IOResult<()> {
             let n = msg.get_id().to_u32().unwrap() ;
             assert_message_contents_ok(&msg);
             //Read scalar as 1-element array
-            assert_eq!(msg.get_value("U32").unwrap().to_num_array::<u32>().unwrap(), vec![n.to_u32().unwrap(); 1]);
+            assert_eq!(msg.get_value("U32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); 1]);
             //Change array type
-            assert_eq!(msg.get_value("AU32").unwrap().to_num_array::<u64>().unwrap(), vec![n.to_u64().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.get_value("AU32").unwrap().to_au64().unwrap(), vec![n.to_u64().unwrap(); MESSAGE_ARRAY_SIZE]);
         }
         Err(e) => {println!("{}",e)}
     }

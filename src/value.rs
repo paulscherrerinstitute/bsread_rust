@@ -32,8 +32,90 @@ pub enum Value {
     AF64(Vec<f64>),
 }
 
+macro_rules! impl_as{
+    ($name_num:ident, $variant_num:ident, $name_slice:ident, $variant_slice:ident, $ty:ty) => {
+        pub fn $name_num(&self) -> Option<$ty> {
+            match self {
+                Value::$variant_num(v) => Some(*v),
+                _ => None,
+            }
+        }
+
+        pub fn $name_slice(&self) -> Option<&[$ty]> {
+            if let Value::$variant_slice(v) = self {
+                Some(v.as_slice())
+            } else {
+                None
+            }
+        }
+    };
+}
+
+
+macro_rules! impl_to {
+    ($name_num:ident, $name_array:ident, $target:ty) => {
+        pub fn $name_num(&self) -> Option<$target> {
+            match self {
+                Value::BOOL(data) => try_convert_bool(data),
+                Value::I8(data) => try_convert_num(data),
+                Value::U8(data) => try_convert_num(data),
+                Value::I16(data) => try_convert_num(data),
+                Value::U16(data) => try_convert_num(data),
+                Value::I32(data) => try_convert_num(data),
+                Value::U32(data) => try_convert_num(data),
+                Value::I64(data) => try_convert_num(data),
+                Value::U64(data) => try_convert_num(data),
+                Value::F32(data) => try_convert_num(data),
+                Value::F64(data) => try_convert_num(data),
+
+                /*
+                Value::BOOL(data) => num_traits::cast::<_, $target>(*data as u8),
+                Value::I8(data) => num_traits::cast::<_, $target>(*data),
+                Value::U8(data) => num_traits::cast::<_, $target>(*data),
+                Value::I16(data) => num_traits::cast::<_, $target>(*data),
+                Value::U16(data) => num_traits::cast::<_, $target>(*data),
+                Value::I32(data) => num_traits::cast::<_, $target>(*data),
+                Value::U32(data) => num_traits::cast::<_, $target>(*data),
+                Value::I64(data) => num_traits::cast::<_, $target>(*data),
+                Value::U64(data) => num_traits::cast::<_, $target>(*data),
+                Value::F32(data) => num_traits::cast::<_, $target>(*data),
+                Value::F64(data) => num_traits::cast::<_, $target>(*data),
+                */
+                _ => None,
+            }
+        }
+        pub fn $name_array(&self) -> Option<Vec<$target>> {
+            match self {
+                Value::BOOL(data) => try_convert_bool_arr::<$target>(&vec![*data;1]),
+                Value::I8(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::U8(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::I16(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::U16(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::I32(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::U32(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::I64(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::U64(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::F32(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::F64(data) => try_convert_num_arr::<_, $target>(&vec![*data;1]),
+                Value::ABOOL(data) => try_convert_bool_arr::<$target>(&data),
+                Value::AI8(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AU8(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AI16(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AU16(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AI32(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AU32(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AI64(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AU64(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AF32(data) => try_convert_num_arr::<_, $target>(&data),
+                Value::AF64(data) => try_convert_num_arr::<_, $target>(&data),
+                _ => None,
+            }
+        }
+    };
+}
 
 impl Value {
+    //Properties
     pub fn is_array(&self) -> bool {
         match self {
             Value::ASTR(_) => true,
@@ -114,85 +196,37 @@ impl Value {
         }
     }
 
-    pub fn to_num_array<U: num_traits::NumCast>(&self) -> Option<Vec<U>>
-    where
-        U: num_traits::NumCast,
+    impl_as!(as_u8, U8, as_au8, AU8, u8);
+    impl_as!(as_u16, U16, as_au16, AU16, u16);
+    impl_as!(as_u32, U32, as_au32, AU32, u32);
+    impl_as!(as_u64, U64, as_au64, AU64, u64);
+    impl_as!(as_i8, I8, as_ai8, AI8, i8);
+    impl_as!(as_i16, I16, as_ai16, AI16, i16);
+    impl_as!(as_i32, I32, as_ai32, AI32, i32);
+    impl_as!(as_i64, I64, as_ai64, AI64, i64);
+    impl_as!(as_f32, F32, as_af32, AF32,f32);
+    impl_as!(as_f64, F64, as_af64, AF64, f64);
+    impl_as!(as_bool, BOOL, as_abool, ABOOL, bool);
 
-    {
+    impl_to!(to_u8, to_au8, u8);
+    impl_to!(to_u16, to_au16, u16);
+    impl_to!(to_u32, to_au32, u32);
+    impl_to!(to_u64, to_au64, u64);
+    impl_to!(to_i8, to_ai8, i8);
+    impl_to!(to_i16, to_ai16, i16);
+    impl_to!(to_i32, to_ai32, i32);
+    impl_to!(to_i64, to_ai64, i64);
+    impl_to!(to_f32, to_af32, f32);
+    impl_to!(to_f64, to_af64, f64);
+
+    pub fn as_str(&self) -> Option<&str> {
         match self {
-            Value::BOOL(data) => try_convert_bool_arr::<U>(&vec![*data;1]),
-            Value::I8(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::U8(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::I16(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::U16(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::I32(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::U32(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::I64(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::U64(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::F32(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::F64(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
-            Value::ABOOL(data) => try_convert_bool_arr::<U>(&data),
-            Value::AI8(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AU8(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AI16(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AU16(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AI32(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AU32(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AI64(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AU64(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AF32(data) => try_convert_num_arr::<_, U>(&data),
-            Value::AF64(data) => try_convert_num_arr::<_, U>(&data),
-            _ => None, // Handle scalar values or non-array types as needed
+            Value::STR(v) => Some(v.as_str()), _ => None,
         }
     }
-
-    pub fn to_bool_array(&self) -> Option<Vec<bool>>
-    {
-        match self.to_num_array::<u64>() {
-            Some(aux) =>  Some(aux.iter()
-                                    .map(|&x| x != 0)
-                                    .collect()),
-            None => None
-        }
-    }
-
-    pub fn to_str_array(&self) -> Option<Vec<String>>
-    {
+    pub fn as_astr(&self) -> Option<&[String]> {
         match self {
-            Value::ASTR(data) => try_convert_str_arr::<_>(&data),
-            Value::ABOOL(data) => try_convert_str_arr::<_>(&data),
-            Value::AI8(data) => try_convert_str_arr::<_>(&data),
-            Value::AU8(data) => try_convert_str_arr::<_>(&data),
-            Value::AI16(data) => try_convert_str_arr::<_>(&data),
-            Value::AU16(data) => try_convert_str_arr::<_>(&data),
-            Value::AI32(data) => try_convert_str_arr::<_>(&data),
-            Value::AU32(data) => try_convert_str_arr::<_>(&data),
-            Value::AI64(data) => try_convert_str_arr::<_>(&data),
-            Value::AU64(data) => try_convert_str_arr::<_>(&data),
-            Value::AF32(data) => try_convert_str_arr::<_>(&data),
-            Value::AF64(data) => try_convert_str_arr::<_>(&data),
-            _ => None, // Handle scalar values or non-array types as needed
-        }
-    }
-
-    pub fn to_num<U: num_traits::NumCast>(&self) -> Option<U>
-    where
-        U: num_traits::NumCast,
-
-    {
-        match self {
-            Value::BOOL(data) => try_convert_bool(data),
-            Value::I8(data) => try_convert_num(data),
-            Value::U8(data) => try_convert_num(data),
-            Value::I16(data) => try_convert_num(data),
-            Value::U16(data) => try_convert_num(data),
-            Value::I32(data) => try_convert_num(data),
-            Value::U32(data) => try_convert_num(data),
-            Value::I64(data) => try_convert_num(data),
-            Value::U64(data) => try_convert_num(data),
-            Value::F32(data) => try_convert_num(data),
-            Value::F64(data) => try_convert_num(data),
-            _ => None, // Handle scalar values or non-array types as needed
+            Value::ASTR(v) => Some(v.as_slice()), _ => None,
         }
     }
 
@@ -244,6 +278,36 @@ impl Value {
             Value::AF64(data) => { format!("{:?}", data) }
         }
     }
+
+    pub fn to_abool(&self) -> Option<Vec<bool>>
+    {
+        match self.to_au64() {
+            Some(aux) =>  Some(aux.iter()
+                .map(|&x| x != 0)
+                .collect()),
+            None => None
+        }
+    }
+
+    pub fn to_astr(&self) -> Option<Vec<String>>
+    {
+        match self {
+            Value::ASTR(data) => try_convert_str_arr::<_>(&data),
+            Value::ABOOL(data) => try_convert_str_arr::<_>(&data),
+            Value::AI8(data) => try_convert_str_arr::<_>(&data),
+            Value::AU8(data) => try_convert_str_arr::<_>(&data),
+            Value::AI16(data) => try_convert_str_arr::<_>(&data),
+            Value::AU16(data) => try_convert_str_arr::<_>(&data),
+            Value::AI32(data) => try_convert_str_arr::<_>(&data),
+            Value::AU32(data) => try_convert_str_arr::<_>(&data),
+            Value::AI64(data) => try_convert_str_arr::<_>(&data),
+            Value::AU64(data) => try_convert_str_arr::<_>(&data),
+            Value::AF32(data) => try_convert_str_arr::<_>(&data),
+            Value::AF64(data) => try_convert_str_arr::<_>(&data),
+            _ => None, // Handle scalar values or non-array types as needed
+        }
+    }
+
     pub fn get_name(&self) -> &str
     {
         match self {
@@ -291,14 +355,11 @@ impl Value {
         }
     }
 
-    pub fn as_u8(&self) ->  Option<&Vec<u8>> {
-        if let Value::AU8(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+    //Byte array representation
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        self.as_au8()
     }
-    
+
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
             // Scalars
