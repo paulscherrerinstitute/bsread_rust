@@ -262,10 +262,10 @@ fn conversion() -> IOResult<()> {
     let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("AF32").unwrap();
-    println!("{:?}", v.as_str_array());
-    println!("{:?}", v.as_num_array::<i32>());
-    println!("{:?}", v.as_num_array::<f32>());
-    println!("{:?}", v.as_num_array::<f64>());
+    println!("{:?}", v.to_str_array());
+    println!("{:?}", v.to_num_array::<i32>());
+    println!("{:?}", v.to_num_array::<f32>());
+    println!("{:?}", v.to_num_array::<f64>());
     Ok(())
 }
 
@@ -278,11 +278,11 @@ fn booleans() -> IOResult<()> {
     let message = rec.receive()?;
     print_message(&message);
     let v = message.get_value("ABOOL").unwrap();
-    println!("{:?}", v.as_str_array());
-    println!("{:?}", v.as_num_array::<i32>());
+    println!("{:?}", v.to_str_array());
+    println!("{:?}", v.to_num_array::<i32>());
     let v = message.get_value("BOOL").unwrap();
-    println!("{:?}", v.as_str());
-    println!("{:?}", v.as_num::<i32>());
+    println!("{:?}", v.to_str());
+    println!("{:?}", v.to_num::<i32>());
     Ok(())
 }
 
@@ -295,7 +295,7 @@ fn buffered() -> IOResult<()> {
         match rec.wait(1000) {
             Ok(msg) => {
                 print_message(&msg);
-                assert_message_contents_ok(msg);
+                assert_message_contents_ok(&msg);
             }
             Err(e) => {println!("{}",e)}
         }
@@ -659,7 +659,7 @@ fn closure_interrupt() ->  IOResult<()> {
         if msg.get_id() > 15{
             env.bsread.interrupt();
         }
-        assert_message_contents_ok(msg);
+        assert_message_contents_ok(&msg);
     }, None)?;
     print_stats_rec(&rec);
     assert_rec(&rec, Some(10), None);
@@ -687,7 +687,7 @@ fn receiver_raw_sync() ->  IOResult<()> {
     for i in 1..MESSAGE_COUNT+1 {
         match rec.wait(1000) {
             Ok(msg) => {
-                assert_message_contents_ok(msg);
+                assert_message_contents_ok(&msg);
             }
             Err(e) => {println!("{}",e)}
         }
@@ -709,10 +709,30 @@ fn receiver_raw_async () ->  IOResult<()> {
          println!("\tId: {}", _msg.get_id());
          let v = _msg.get_value("AI64").unwrap().as_u8().unwrap();
          println!("\tData: {:?}", v);
-        assert_message_contents_ok(_msg);
+        assert_message_contents_ok(&_msg);
     }, Some(count));
     rec.stop()?;
     assert_rec(&rec, Some(count), None);
     Ok(())
 }
 
+#[test]
+fn conversions() -> IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]),  SocketType::SUB)?;
+    rec.start(1)?;
+    match rec.wait(1000) {
+        Ok(msg) => {
+            let n = msg.get_id().to_u32().unwrap() ;
+            assert_message_contents_ok(&msg);
+            //Read scalar as 1-element array
+            assert_eq!(msg.get_value("U32").unwrap().to_num_array::<u32>().unwrap(), vec![n.to_u32().unwrap(); 1]);
+            //Change array type
+            assert_eq!(msg.get_value("AU32").unwrap().to_num_array::<u64>().unwrap(), vec![n.to_u64().unwrap(); MESSAGE_ARRAY_SIZE]);
+        }
+        Err(e) => {println!("{}",e)}
+    }
+    rec.stop()?;
+    print_stats_rec(&rec);
+    Ok(())
+}

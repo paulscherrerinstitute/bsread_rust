@@ -114,12 +114,23 @@ impl Value {
         }
     }
 
-    pub fn as_num_array<U: num_traits::NumCast>(&self) -> Option<Vec<U>>
+    pub fn to_num_array<U: num_traits::NumCast>(&self) -> Option<Vec<U>>
     where
         U: num_traits::NumCast,
 
     {
         match self {
+            Value::BOOL(data) => try_convert_bool_arr::<U>(&vec![*data;1]),
+            Value::I8(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::U8(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::I16(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::U16(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::I32(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::U32(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::I64(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::U64(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::F32(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
+            Value::F64(data) => try_convert_num_arr::<_, U>(&vec![*data;1]),
             Value::ABOOL(data) => try_convert_bool_arr::<U>(&data),
             Value::AI8(data) => try_convert_num_arr::<_, U>(&data),
             Value::AU8(data) => try_convert_num_arr::<_, U>(&data),
@@ -135,9 +146,9 @@ impl Value {
         }
     }
 
-    pub fn as_bool_array(&self) -> Option<Vec<bool>>
+    pub fn to_bool_array(&self) -> Option<Vec<bool>>
     {
-        match self.as_num_array::<u64>() {
+        match self.to_num_array::<u64>() {
             Some(aux) =>  Some(aux.iter()
                                     .map(|&x| x != 0)
                                     .collect()),
@@ -145,7 +156,7 @@ impl Value {
         }
     }
 
-    pub fn as_str_array(&self) -> Option<Vec<String>>
+    pub fn to_str_array(&self) -> Option<Vec<String>>
     {
         match self {
             Value::ASTR(data) => try_convert_str_arr::<_>(&data),
@@ -164,7 +175,7 @@ impl Value {
         }
     }
 
-    pub fn as_num<U: num_traits::NumCast>(&self) -> Option<U>
+    pub fn to_num<U: num_traits::NumCast>(&self) -> Option<U>
     where
         U: num_traits::NumCast,
 
@@ -185,7 +196,7 @@ impl Value {
         }
     }
 
-    pub fn as_bool(&self) -> Option<bool>
+    pub fn to_bool(&self) -> Option<bool>
     {
         match self {
             Value::BOOL(data) => Some(*data),
@@ -204,7 +215,7 @@ impl Value {
         }
     }
 
-    pub fn as_str(&self) -> String
+    pub fn to_str(&self) -> String
     {
         match self {
             Value::STR(data) => { data.to_string() }

@@ -55,9 +55,9 @@ pub fn print_channel_data(channel_data: &Option<ChannelData>, prefix:&str, max_e
         Some(channel_data) => {
             let value = channel_data.get_value();
             if value.is_array() {
-                println!("{}{:?}", prefix, LimitedDebugVec { data: value.as_str_array().unwrap(), limit: max_elements });
+                println!("{}{:?}", prefix, LimitedDebugVec { data: value.to_str_array().unwrap(), limit: max_elements });
             } else {
-                println!("{}{}", prefix, channel_data.get_value().as_str());
+                println!("{}{}", prefix, channel_data.get_value().to_str());
             }
         }
         None => {
@@ -252,7 +252,7 @@ pub fn stop_senders(){
     }
 }
 
-pub fn assert_message_contents_ok(msg:Message){
+pub fn assert_message_contents_ok(msg:&Message){
     let n = msg.get_id().to_u32().unwrap() ;
     let array_size = MESSAGE_ARRAY_SIZE;
 
@@ -281,28 +281,28 @@ pub fn assert_message_contents_ok(msg:Message){
         assert_eq!(msg.get_value("AF64").unwrap().as_u8().unwrap(), &Value::AF64(vec![n.to_f64().unwrap(); array_size]).to_bytes());
         assert_eq!(msg.get_value("ABOOL").unwrap().as_u8().unwrap(), &Value::AU8(vec![(n % 2).to_u8().unwrap(); array_size]).to_bytes());
     } else {
-        assert_eq!(msg.get_value("U8").unwrap().as_num::<u8>().unwrap(),n.to_u8().unwrap());
-        assert_eq!(msg.get_value("U16").unwrap().as_num::<u16>().unwrap(),n.to_u16().unwrap());
-        assert_eq!(msg.get_value("U32").unwrap().as_num::<u32>().unwrap(),n.to_u32().unwrap());
-        assert_eq!(msg.get_value("U64").unwrap().as_num::<u64>().unwrap(),n.to_u64().unwrap());
-        assert_eq!(msg.get_value("I8").unwrap().as_num::<i8>().unwrap(),n.to_i8().unwrap());
-        assert_eq!(msg.get_value("I16").unwrap().as_num::<i16>().unwrap(),n.to_i16().unwrap());
-        assert_eq!(msg.get_value("I32").unwrap().as_num::<i32>().unwrap(),n.to_i32().unwrap());
-        assert_eq!(msg.get_value("I64").unwrap().as_num::<i64>().unwrap(),n.to_i64().unwrap());
-        assert_eq!(msg.get_value("F32").unwrap().as_num::<f32>().unwrap(),n.to_f32().unwrap());
-        assert_eq!(msg.get_value("F64").unwrap().as_num::<f64>().unwrap(),n.to_f64().unwrap());
-        assert_eq!(msg.get_value("BOOL").unwrap().as_bool().unwrap(),n.to_i64().unwrap()%2==1);
-        assert_eq!(msg.get_value("STR").unwrap().as_str(),n.to_string());
-        assert_eq!(msg.get_value("AU8").unwrap().as_num_array::<u8>().unwrap(), vec![n.to_u8().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU16").unwrap().as_num_array::<u16>().unwrap(), vec![n.to_u16().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU32").unwrap().as_num_array::<u32>().unwrap(), vec![n.to_u32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU64").unwrap().as_num_array::<u64>().unwrap(), vec![n.to_u64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI8").unwrap().as_num_array::<i8>().unwrap(), vec![n.to_i8().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI16").unwrap().as_num_array::<i16>().unwrap(), vec![n.to_i16().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI32").unwrap().as_num_array::<i32>().unwrap(), vec![n.to_i32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI64").unwrap().as_num_array::<i64>().unwrap(), vec![n.to_i64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AF32").unwrap().as_num_array::<f32>().unwrap(), vec![n.to_f32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AF64").unwrap().as_num_array::<f64>().unwrap(), vec![n.to_f64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("ABOOL").unwrap().as_bool_array().unwrap(), vec![n.to_i64().unwrap()%2==1; array_size]);
+        assert_eq!(msg.get_value("U8").unwrap().to_num::<u8>().unwrap(), n.to_u8().unwrap());
+        assert_eq!(msg.get_value("U16").unwrap().to_num::<u16>().unwrap(), n.to_u16().unwrap());
+        assert_eq!(msg.get_value("U32").unwrap().to_num::<u32>().unwrap(), n.to_u32().unwrap());
+        assert_eq!(msg.get_value("U64").unwrap().to_num::<u64>().unwrap(), n.to_u64().unwrap());
+        assert_eq!(msg.get_value("I8").unwrap().to_num::<i8>().unwrap(), n.to_i8().unwrap());
+        assert_eq!(msg.get_value("I16").unwrap().to_num::<i16>().unwrap(), n.to_i16().unwrap());
+        assert_eq!(msg.get_value("I32").unwrap().to_num::<i32>().unwrap(), n.to_i32().unwrap());
+        assert_eq!(msg.get_value("I64").unwrap().to_num::<i64>().unwrap(), n.to_i64().unwrap());
+        assert_eq!(msg.get_value("F32").unwrap().to_num::<f32>().unwrap(), n.to_f32().unwrap());
+        assert_eq!(msg.get_value("F64").unwrap().to_num::<f64>().unwrap(), n.to_f64().unwrap());
+        assert_eq!(msg.get_value("BOOL").unwrap().to_bool().unwrap(), n.to_i64().unwrap()%2==1);
+        assert_eq!(msg.get_value("STR").unwrap().to_str(), n.to_string());
+        assert_eq!(msg.get_value("AU8").unwrap().to_num_array::<u8>().unwrap(), vec![n.to_u8().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AU16").unwrap().to_num_array::<u16>().unwrap(), vec![n.to_u16().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AU32").unwrap().to_num_array::<u32>().unwrap(), vec![n.to_u32().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AU64").unwrap().to_num_array::<u64>().unwrap(), vec![n.to_u64().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AI8").unwrap().to_num_array::<i8>().unwrap(), vec![n.to_i8().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AI16").unwrap().to_num_array::<i16>().unwrap(), vec![n.to_i16().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AI32").unwrap().to_num_array::<i32>().unwrap(), vec![n.to_i32().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AI64").unwrap().to_num_array::<i64>().unwrap(), vec![n.to_i64().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AF32").unwrap().to_num_array::<f32>().unwrap(), vec![n.to_f32().unwrap(); array_size]);
+        assert_eq!(msg.get_value("AF64").unwrap().to_num_array::<f64>().unwrap(), vec![n.to_f64().unwrap(); array_size]);
+        assert_eq!(msg.get_value("ABOOL").unwrap().to_bool_array().unwrap(), vec![n.to_i64().unwrap()%2==1; array_size]);
     }
 }
