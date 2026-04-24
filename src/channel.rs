@@ -268,8 +268,16 @@ impl ChannelTrait for ChannelArray<String> {
     }
 }
 
+//Bsread does not support arrays with size=1
+pub fn is_array(shape:&Option<Vec<u32>>) -> bool{
+    match shape {
+        None => {false},
+        Some(s) => (s.len()>0) && (s[0]>1)
+    }
+}
+
 pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:String, raw:bool) -> IOResult<Box<dyn ChannelTrait>> {
-    let array = shape.clone().unwrap_or(vec![]).len() > 0;
+    let array = is_array(&shape);
     if raw && (typ.as_str()!="string") {
         if little_endian || (get_element_size(&typ)==1){
             Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_RAW,  WRITER_RAW )))

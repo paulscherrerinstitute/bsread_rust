@@ -25,7 +25,7 @@ const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_MAIN_HEADER: bool = false;
 const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
-const PRINT_DATA: bool = true;
+const PRINT_DATA: bool = false;
 
 pub fn print_message(message: &Message){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_MAIN_HEADER,

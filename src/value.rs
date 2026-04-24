@@ -135,6 +135,16 @@ impl Value {
         }
     }
 
+    pub fn as_bool_array(&self) -> Option<Vec<bool>>
+    {
+        match self.as_num_array::<u64>() {
+            Some(aux) =>  Some(aux.iter()
+                                    .map(|&x| x != 0)
+                                    .collect()),
+            None => None
+        }
+    }
+
     pub fn as_str_array(&self) -> Option<Vec<String>>
     {
         match self {
@@ -172,6 +182,25 @@ impl Value {
             Value::F32(data) => try_convert_num(data),
             Value::F64(data) => try_convert_num(data),
             _ => None, // Handle scalar values or non-array types as needed
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool>
+    {
+        match self {
+            Value::BOOL(data) => Some(*data),
+            Value::I8(data) => Some(*data!=0),
+            Value::U8(data) => Some(*data!=0),
+            Value::I16(data) => Some(*data!=0),
+            Value::U16(data) => Some(*data!=0),
+            Value::I32(data) => Some(*data!=0),
+            Value::U32(data) => Some(*data!=0),
+            Value::I64(data) => Some(*data!=0),
+            Value::U64(data) => Some(*data!=0),
+            Value::F32(data) => Some(*data != 0.0 && !data.is_nan()),
+            Value::F64(data) => Some(*data != 0.0 && !data.is_nan()),
+            Value::STR(data) => Some(!data.as_str().trim().is_empty()),
+            _ => None,
         }
     }
 
