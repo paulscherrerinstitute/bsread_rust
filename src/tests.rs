@@ -597,7 +597,7 @@ fn forwarder() ->  IOResult<()> {
     //Asynchronous
     rxtx.fork(|msg| {log::info!("RTX Msg {}", msg.get_id())}, Some(MESSAGE_COUNT));
     rxtx.join()?;
-    thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(200));
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
 
@@ -727,8 +727,17 @@ fn conversions() -> IOResult<()> {
             assert_message_contents_ok(&msg);
             //Read scalar as 1-element array
             assert_eq!(msg.get_value("U32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); 1]);
+            assert_eq!(msg.get_value("I64").unwrap().to_ai64().unwrap(), vec![n.to_i64().unwrap(); 1]);
+            assert_eq!(msg.get_value("F64").unwrap().to_af64().unwrap(), vec![n.to_f64().unwrap(); 1]);
             //Change array type
             assert_eq!(msg.get_value("AU32").unwrap().to_au64().unwrap(), vec![n.to_u64().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.get_value("AU32").unwrap().to_af32().unwrap(), vec![n.to_f32().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.get_value("AF64").unwrap().to_ai32().unwrap(), vec![n.to_i32().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.get_value("ABOOL").unwrap().to_ai32().unwrap(), vec![(n%2).to_i32().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.get_value("U32").unwrap().to_u64(), n.to_u64());
+            assert_eq!(msg.get_value("U32").unwrap().to_f32(), n.to_f32());
+            assert_eq!(msg.get_value("F64").unwrap().to_i32(), n.to_i32());
+            assert_eq!(msg.get_value("BOOL").unwrap().to_i32(),(n%2).to_i32());
         }
         Err(e) => {println!("{}",e)}
     }
