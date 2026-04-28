@@ -321,10 +321,10 @@ fn limited_hashmap() {
 }
 
 #[test]
-fn pool_auto() -> IOResult<()> {
+fn pool() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut pool = env.bsread.pool_auto(vec![SENDER_PUB, SENDER_COMPRESSED],  SocketType::SUB, 2)?;
-    pool.start_sync(on_message)?;
+    let mut pool = env.bsread.pool(vec![SENDER_PUB, SENDER_COMPRESSED],  SocketType::SUB, 2)?;
+    pool.start(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
@@ -333,10 +333,10 @@ fn pool_auto() -> IOResult<()> {
 }
 
 #[test]
-fn pool_manual() -> IOResult<()> {
+fn pool_grouped() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut pool = env.bsread.pool_manual(vec![vec![SENDER_PUB,], vec![SENDER_COMPRESSED]],  SocketType::SUB)?;
-    pool.start_sync(on_message)?;
+    let mut pool = env.bsread.pool_grouped(vec![vec![SENDER_PUB,], vec![SENDER_COMPRESSED]],  SocketType::SUB)?;
+    pool.start(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
@@ -347,7 +347,7 @@ fn pool_manual() -> IOResult<()> {
 #[test]
 fn pool_buffered() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut pool = env.bsread.pool_auto(vec![SENDER_PUB, SENDER_COMPRESSED],  SocketType::SUB, 2)?;
+    let mut pool = env.bsread.pool(vec![SENDER_PUB, SENDER_COMPRESSED],  SocketType::SUB, 2)?;
     pool.start_buffered(on_message,100)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -667,7 +667,7 @@ fn closure_interrupt() ->  IOResult<()> {
 }
 
 #[test]
-fn receiver_raw() ->  IOResult<()> {
+fn receiver_raw_sync() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUSH]),  SocketType::PULL)?;
     rec.set_raw(true);
@@ -678,7 +678,7 @@ fn receiver_raw() ->  IOResult<()> {
 }
 
 #[test]
-fn receiver_raw_sync() ->  IOResult<()> {
+fn receiver_raw_buffered() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let array_size = 100;
     let mut rec = env.bsread.receiver(Some(vec![SENDER_PUB]),  SocketType::SUB)?;

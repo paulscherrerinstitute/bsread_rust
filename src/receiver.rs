@@ -211,7 +211,7 @@ Receiver{
         message
     }
 
-    //Asynchronous API
+    //Synchronous Mode: blocking, callback in same thread
     pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
     where
         F: FnMut(Message),
@@ -269,6 +269,7 @@ Receiver{
         Ok(())
     }
 
+    //Asynchronous Mode: non-bloclong, callback in another thread
     pub fn fork<F>(& mut self, mut callback: F,  num_messages: Option<u32>)
         where
         F: FnMut(Message) + Send + 'static,
@@ -344,10 +345,7 @@ Receiver{
     }
 
 
-
-
-
-    //Synchronous API
+    //Buffered mode: non-blocking, messages buffered ibn another thread
     pub fn start(&mut self, buffer_size:usize) -> IOResult<()> {
         if self.fifo.is_some(){
             return Err(new_error(ErrorKind::AlreadyExists, "Receiver already started"));
@@ -367,7 +365,6 @@ Receiver{
     pub fn is_interrupted(&self) ->bool {
         self.interrupted.load(Ordering::Relaxed) || self.bsread.is_interrupted()
     }
-
 
     pub fn stop(&mut self) -> IOResult<()> {
         self.interrupt();

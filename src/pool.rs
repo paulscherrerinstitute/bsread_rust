@@ -17,7 +17,8 @@ pub struct Pool {
 
 impl
 Pool {
-    pub fn new_auto(bsread: Arc<Bsread>, endpoints: Vec<&str>, socket_type: SocketType, threads: usize) -> IOResult<Self> {
+    //Endpoints are automatically distributed to the threads
+    pub fn new(bsread: Arc<Bsread>, endpoints: Vec<&str>, socket_type: SocketType, threads: usize) -> IOResult<Self> {
         if threads<=0{
             return Err(new_error(ErrorKind::InvalidInput, "Invalid number of threads"));
         }
@@ -33,7 +34,8 @@ Pool {
         Ok(Self { socket_type, threads, bsread,  receivers})
     }
 
-    pub fn new_manual(bsread: Arc<Bsread>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
+    //Endpoints manually set grouped per thread
+    pub fn new_grouped(bsread: Arc<Bsread>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
         let threads = endpoints.len();
         if threads==0{
             return Err(new_error(ErrorKind::InvalidInput, "Invalid configuration"));
@@ -53,9 +55,8 @@ Pool {
     }
 
 
-
-
-    pub fn start_sync<F>(&mut self, callback: F) -> IOResult<()>
+    //Callback called in each receiver thread
+    pub fn start<F>(&mut self, callback: F) -> IOResult<()>
     where
         F: FnMut(Message) + Send + 'static,
     {
@@ -71,6 +72,7 @@ Pool {
         Ok(())
     }
 
+    //Callback called in a private thread for each receiver using a message buffer.
     pub fn start_buffered<F>(&mut self, mut callback: F, buffer_size:usize) -> IOResult<()>
     where
         F: FnMut(Message) + Send + 'static,

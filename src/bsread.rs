@@ -28,12 +28,12 @@ impl Bsread {
         Receiver::new(self.clone(), endpoint, socket_type)
     }
 
-    pub fn pool_auto(self: &Arc<Self>, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
-        Pool::new_auto(self.clone(), endpoints, socket_type, threads)
+    pub fn pool(self: &Arc<Self>, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
+        Pool::new(self.clone(), endpoints, socket_type, threads)
     }
 
-    pub fn pool_manual(self: &Arc<Self>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
-        Pool::new_manual(self.clone(), endpoints, socket_type)
+    pub fn pool_grouped(self: &Arc<Self>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
+        Pool::new_grouped(self.clone(), endpoints, socket_type)
     }
 
     pub fn sender(self: &Arc<Self>, socket_type: SocketType, port: u32, address:Option<String>, queue_size: Option<usize>,
