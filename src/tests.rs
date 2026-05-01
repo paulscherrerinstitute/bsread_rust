@@ -9,6 +9,7 @@ use crate::writer::WRITER_ABOOL;
 use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};
 use crate::receiver::Forwarder;
 use std::{cmp, thread};
+use std::any::Any;
 use std::io::{Cursor, Write};
 use std::ops::DerefMut;
 use std::time::Duration;
