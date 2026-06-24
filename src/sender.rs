@@ -38,13 +38,13 @@ Sender {
             bsread: Arc<Bsread>,
             socket_type: SocketType,
             transport: Transport,
-            queue_size: Option<usize>,
+            send_hwm: Option<usize>,
             block: Option<bool>,
             start_id: Option<u64>,
             header_compression: Option<String>,
         ) -> IOResult<Self> {
         let socket = bsread.get_context().socket(socket_type)?;
-        let queue_size = queue_size.unwrap_or(10);
+        let queue_size = send_hwm.unwrap_or(10);
         let block = block.unwrap_or(false);
         let start_id = start_id.unwrap_or(0);
         let header_compression = header_compression.unwrap_or("none".to_string());

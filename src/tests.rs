@@ -761,5 +761,18 @@ fn receiver_ipc() ->  IOResult<()> {
     Ok(())
 }
 
+#[test]
+fn receiver_options() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(  Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    rec.add_topic(String::from(""))?;
+    rec.set_linger(0)?;
+    rec.set_rcv_hwm(10000)?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+    Ok(())
+}
+
 
 

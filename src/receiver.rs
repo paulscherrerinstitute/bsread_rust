@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 struct TrackedSocket {
     socket: zmq::Socket,
     connections: Vec<String>,
+    topics: Vec<String>,
 }
 
 impl TrackedSocket {
@@ -23,7 +24,20 @@ impl TrackedSocket {
         Ok(Self {
             socket,
             connections: Vec::new(),
+            topics: Vec::new(),
         })
+    }
+
+    fn add_topic(&mut self, topic: String) {
+        self.topics.push(topic);
+    }
+
+    fn subscribe(&mut self, topic:&str, endpoint: &str) -> IOResult<()> {
+        if let Err(e) =  self.socket.set_subscribe(topic.as_bytes()) {
+            log::error!("Error subscribing topic {} in endpoint {}: {}", topic, endpoint, e);
+            return Err(e.into());
+        }
+        Ok(())
     }
 
     fn connect(&mut self, endpoint: &str) -> IOResult<()> {
@@ -35,9 +49,12 @@ impl TrackedSocket {
                 return Err(e.into());
             }
             if socket_type == SocketType::SUB {
-                if let Err(e) =  self.socket.set_subscribe(b"") {
-                    log::error!("Error subscribing {}: {}", endpoint, e);
-                    return Err(e.into());
+                if self.topics.is_empty() {
+                    self.subscribe("", endpoint).unwrap();
+                } else {
+                    for topic in &self.topics.clone() {
+                        self.subscribe(topic, endpoint).unwrap();
+                    }
                 }
             }
             self.connections.push(endpoint.to_string());
@@ -149,6 +166,32 @@ Receiver{
     pub fn to_string(& self,) -> String {
         format!("Receiver {}" , self.index)
     }
+
+    pub fn add_topic(&mut self, topic: String)-> IOResult<()> {
+        if self.socket_type == SocketType::PULL {
+            //return Err(new_error(ErrorKind::InvalidInput, "Topics only used in PUB sockets"));
+        }
+        self.socket.add_topic(topic);
+        Ok(())
+    }
+
+    pub fn set_rcv_hwm(&mut self, value: i32)-> IOResult<()> {
+        if let Err(e) =   self.socket.socket.set_rcvhwm(value) {
+            return Err(e.into());
+        }
+        Ok(())
+    }
+
+    /*
+        Set linger to 0 on  servers for fast shutdown
+     */
+    pub fn set_linger(&mut self,  value: i32)-> IOResult<()> {
+        if let Err(e) =    self.socket.socket.set_linger(value) {
+            return Err(e.into());
+        }
+        Ok(())
+    }
+
 
     pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
         self.socket.connect(endpoint)?;

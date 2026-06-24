@@ -12,7 +12,7 @@ pub fn get_ipc_feeds_folder() -> &'static str {"/tmp"}
 impl Transport {
     pub fn endpoint(&self) -> String {
         match self {
-            Transport::Tcp { host, port } => {
+            Transport::Tcp {port, host} => {
                 let host = host
                     .clone()
                     .unwrap_or_else(get_local_address);
