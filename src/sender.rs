@@ -3,10 +3,11 @@ use crate::message::*;
 use crate::utils::*;
 use crate::compression::*;
 use std::error::Error;
-use std::thread;
+use std::{fs, thread};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::io::Read;
+use std::path::Path;
 use env_logger::fmt::Timestamp;
 use zmq::SocketType;
 use serde_json::Value as JsonValue;
@@ -14,6 +15,40 @@ use std::sync::Arc;
 use serde_json::Map as JsonMap;
 use serde_json::Number as JsonNumber;
 
+#[derive(Clone, Debug)]
+pub enum Transport {
+    Tcp { port: u32, host: Option< &'static str> },
+    Ipc { name: &'static str },
+}
+
+//pub fn get_local_address() -> String { "127.0.0.1".to_string()}
+// pub fn get_local_address() -> &'static str {"*"}
+pub fn get_local_address() -> &'static str {"0.0.0.0"}
+
+pub fn get_ipc_feeds_folder() -> &'static str {"/tmp"}
+impl Transport {
+    pub fn endpoint(&self) -> String {
+        match self {
+            Transport::Tcp { host, port } => {
+                let host = host
+                    .clone()
+                    .unwrap_or_else(get_local_address);
+
+                if host.contains("://") {
+                    format!("{}:{}", host, port)
+                } else {
+                    format!("tcp://{}:{}", host, port)
+                }
+            },
+            Transport::Ipc { name } => {
+                let folder = get_ipc_feeds_folder();
+                //let path = Path::new(folder.as_str());
+                //fs::create_dir_all(path).expect("Failed to create ipc feeds folder");
+                format!("ipc://{}/bsread_icp_{}", folder, name)
+            },
+        }
+    }
+}
 
 pub struct Sender {
     socket: zmq::Socket,
@@ -22,28 +57,31 @@ pub struct Sender {
     data_header: HashMap<String, JsonValue>,
     data_header_buffer: Vec<u8>,
     bsread: Arc<Bsread>,
-    port: u32,
-    address:String,
+    transport: Transport,
     queue_size: usize,
-    block:bool,
-    pulse_id:u64,
-    header_compression:String,
-    started: bool
+    block: bool,
+    pulse_id: u64,
+    header_compression: String,
+    started: bool,
 }
 
 impl
 Sender {
-    pub fn new(bsread: Arc<Bsread>, socket_type: SocketType, port: u32,
-               address:Option<String>, queue_size: Option<usize>, block:Option<bool>,
-               start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Self> {
+        pub fn new(
+            bsread: Arc<Bsread>,
+            socket_type: SocketType,
+            transport: Transport,
+            queue_size: Option<usize>,
+            block: Option<bool>,
+            start_id: Option<u64>,
+            header_compression: Option<String>,
+        ) -> IOResult<Self> {
         let socket = bsread.get_context().socket(socket_type)?;
-        let address = address.unwrap_or("tcp://*".to_string());
         let queue_size = queue_size.unwrap_or(10);
         let block = block.unwrap_or(false);
         let start_id = start_id.unwrap_or(0);
         let header_compression = header_compression.unwrap_or("none".to_string());
 
-        let address = if address.starts_with("tcp://"){address } else { "tcp://".to_string() + address.as_str() };
         socket.set_sndhwm(queue_size as i32)?;
         let mut main_header = HashMap::new();
 
@@ -54,7 +92,7 @@ Sender {
         }
 
         Ok(Self { socket, socket_type, main_header:main_header, data_header: HashMap::new(), data_header_buffer: vec![],
-            bsread, port, address, queue_size, block,pulse_id:start_id, header_compression, started:false})
+            bsread, transport, queue_size, block,pulse_id:start_id, header_compression, started:false})
     }
 
     pub fn create_data_header(&mut self, channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<()> {
@@ -83,9 +121,9 @@ Sender {
     }
 
     pub fn start(&mut self) -> IOResult<()> {
-        let url = self.get_url();
-        log::info!("Binding endpoint: {}", url);
-        self.socket.bind(url.as_str())?;
+        let endpoint = self.endpoint();
+        log::info!("Binding endpoint: {}", endpoint);
+        self.socket.bind(endpoint.as_str())?;
         self.started = true;
         Ok(())
     }
@@ -93,11 +131,11 @@ Sender {
     pub fn stop(&mut self){
         if self.started{
             self.started = false;
-            let url = self.get_url();
-            log::info!("Unbinding endpoint: {}", url);
-            match self.socket.unbind(url.as_str()) {
+            let endpoint = self.endpoint();
+            log::info!("Unbinding endpoint: {}", endpoint);
+            match self.socket.unbind(endpoint.as_str()) {
                 Ok(_) => (),
-                Err(e) =>  log::warn!("Error unbinding {}: {}", url, e)
+                Err(e) =>  log::warn!("Error unbinding {}: {}", endpoint, e)
             };
         }
     }
@@ -188,8 +226,10 @@ Sender {
         self.started
     }
 
-    pub fn get_url(&self) -> String {
-        format!("{}:{}", self.address.as_str(), self.port)
+    pub fn endpoint(&self) -> String {
+        self.transport.endpoint()
     }
+
+    pub fn get_transport(&self) -> Transport {self.transport.clone()}
 
 }

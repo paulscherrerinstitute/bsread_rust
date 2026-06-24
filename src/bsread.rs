@@ -1,6 +1,6 @@
 use crate::IOResult;
 use crate::receiver::Receiver;
-use crate::sender::Sender;
+use crate::sender::{Sender, Transport};
 use crate::pool::Pool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,9 +36,9 @@ impl Bsread {
         Pool::new_grouped(self.clone(), endpoints, socket_type)
     }
 
-    pub fn sender(self: &Arc<Self>, socket_type: SocketType, port: u32, address:Option<String>, queue_size: Option<usize>,
+    pub fn sender(self: &Arc<Self>, socket_type: SocketType, transport: Transport, queue_size: Option<usize>,
                   block:Option<bool>, start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Sender> {
-        Sender::new(self.clone(), socket_type, port,address, queue_size, block, start_id, header_compression)
+        Sender::new(self.clone(), socket_type, transport, queue_size, block, start_id, header_compression)
     }
 
     pub fn interrupt(&self) {

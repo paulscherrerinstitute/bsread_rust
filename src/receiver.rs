@@ -1,7 +1,6 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
-use crate::debug::get_local_address;
 use std::{io, thread};
 use std::collections::HashMap;
 use std::error::Error;
@@ -11,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
+use crate::sender::Transport;
 
 struct TrackedSocket {
     socket: zmq::Socket,
@@ -204,7 +204,7 @@ Receiver{
         if let Some(sender) = self.forwarder_sender.as_mut() {
             match sender.forward(&message_parts) {
                 Ok(_) => (),
-                Err(e) => log::warn!("Error forwarding message to {}: {}", sender.get_url(), e),
+                Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
             }
         }
         let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw);
@@ -218,7 +218,7 @@ Receiver{
     {
         self.reset_counters();
         if let Some(forwarder) = self.forwarder.as_mut() {
-            let forwarder_sender =Sender::new(self.bsread.clone(), forwarder.socket_type, forwarder.port, forwarder.address.clone(), forwarder.queue_size, None, None, None);
+            let forwarder_sender =Sender::new(self.bsread.clone(), forwarder.socket_type, forwarder.transport.clone(), forwarder.queue_size, None, None, None);
             match forwarder_sender{
                 Ok(mut sender) => {
                     match sender.start(){
@@ -226,10 +226,10 @@ Receiver{
                             thread::sleep(Duration::from_millis(100));
                             self.forwarder_sender = Some(sender)
                         }
-                        Err(e) => {log::warn!("Error binding forwarder port {}: {}", forwarder.port, e)}
+                        Err(e) => {log::warn!("Error binding forwarder endpoint {}: {}", forwarder.transport.endpoint(), e)}
                     }
                 }
-                Err(e) => {log::warn!("Error creating forwarder port {}: {}", forwarder.port, e)}
+                Err(e) => {log::warn!("Error creating forwarder endpoint {}: {}", forwarder.transport.endpoint(), e)}
             }
         }
         self.connect_all()?;
@@ -498,13 +498,12 @@ impl Drop for Receiver {
 #[derive(Debug, Clone)]
 pub struct Forwarder {
     socket_type: SocketType,
-    port: u32,
-    address:Option<String>,
+    transport: Transport,
     queue_size: Option<usize>
 }
 
 impl Forwarder {
-    pub fn new(socket_type: SocketType, port: u32, address: Option<String>, queue_size: Option<usize>) -> Self {
-        Self { socket_type, port, address, queue_size }
+    pub fn new(socket_type: SocketType, transport: Transport, queue_size: Option<usize>) -> Self {
+        Self { socket_type, transport, queue_size }
     }
 }
