@@ -1,9 +1,10 @@
 use crate::*;
 use crate::compression::*;
 use crate::debug::*;
+use crate::transport::{Transport};
 #[cfg(feature = "dispatcher")]
 use crate::dispatcher::ChannelDescription;
-use crate::sender::{Sender, Transport, get_local_address};
+use crate::sender::{Sender};
 use crate::reader::READER_ABOOL;
 use crate::writer::WRITER_ABOOL;
 use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};

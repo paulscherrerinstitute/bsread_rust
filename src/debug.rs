@@ -1,10 +1,11 @@
 use crate::*;
 use crate::IOResult;
+use crate::transport::{Transport};
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
 use crate::message::{Message, ChannelData, ID_SIMULATED, TIMESTAMP_NOW};
 use crate::bsread::Bsread;
-use crate::sender::{Sender, Transport};
+use crate::sender::{Sender};
 use crate::value::Value;
 use indexmap::IndexMap;
 use std::ops::Sub;

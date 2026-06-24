@@ -1,6 +1,7 @@
 use crate::IOResult;
 use crate::receiver::Receiver;
-use crate::sender::{Sender, Transport};
+use crate::transport::{Transport};
+use crate::sender::{Sender};
 use crate::pool::Pool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

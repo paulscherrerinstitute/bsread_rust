@@ -1,6 +1,7 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
+use crate::transport::{Transport};
 use std::{io, thread};
 use std::collections::HashMap;
 use std::error::Error;
@@ -10,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
-use crate::sender::Transport;
 
 struct TrackedSocket {
     socket: zmq::Socket,
