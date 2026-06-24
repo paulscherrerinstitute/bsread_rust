@@ -292,11 +292,13 @@ impl Message {
         self.raw
     }
 
-    pub fn get_value(&self, channel_name: &str) -> Option<&Value> {
-        self.get_data().get(channel_name)
-            .and_then(|result| result.as_ref())
-            .map(|channel_data| channel_data.get_value())
+    pub fn get_channel_data(&self, channel_name: &str) -> Option<&ChannelData> {
+        self.get_data().get(channel_name)?.as_ref()
     }
+    pub fn get_value(&self, channel_name: &str) -> Option<&Value> {
+        self.get_channel_data(channel_name).map(ChannelData::get_value)
+    }
+
     fn clone_data_header_info(&self) -> Option<DataHeaderInfo> {
         let data_header = self.data_header.clone();
         //TODO: is there a better way to clone channels?
