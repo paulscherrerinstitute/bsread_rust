@@ -86,7 +86,7 @@ impl TestEnvironment {
             start_sender(TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None)?;
             start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()))?;
             start_sender(TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None)?;
-            start_sender(TXP_IPC, SocketType::PUSH, SENDER_INTERVAL, Some(false), None)?;
+            start_sender(TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None)?;
         }
         let bsread = Bsread::new()?;
         Ok(Self {bsread})
@@ -752,6 +752,7 @@ fn conversions() -> IOResult<()> {
     Ok(())
 }
 
+#[test]
 fn receiver_ipc() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB)?;
