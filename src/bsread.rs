@@ -37,7 +37,7 @@ impl Bsread {
         Pool::new_grouped(self.clone(), endpoints, socket_type)
     }
 
-    pub fn sender(self: &Arc<Self>, socket_type: SocketType, transport: Transport, queue_size: Option<usize>,
+    pub fn sender(self: &Arc<Self>, socket_type: SocketType, transport: Transport,
                   block:Option<bool>, start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Sender> {
         Sender::new(self.clone(), socket_type, transport, block, start_id, header_compression)
     }

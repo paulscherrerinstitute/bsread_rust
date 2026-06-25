@@ -560,16 +560,15 @@ fn logs() {
 fn sender_demo() ->  IOResult<()> {
     //Sender creation
     let bsread = Bsread::new().unwrap();
-    let mut sender = bsread.sender(SocketType::PUB, Transport::Tcp{port:10500, host:None}, None, None, None, None)?;
+    let mut sender = bsread.sender(SocketType::PUB, Transport::Tcp{port:10500, host:None}, None, None, None)?;
 
     //Definition of the channels
     let little_endian = true;
-    let array_size =100;
     let mut channels = Vec::new();
     //# Channels: uint64 scalar, float64 scalar and array of uint8
     channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string(), false)?);
     channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string(),false)?);
-    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, "bitshuffle_lz4".to_string(),false)?);
+    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![MESSAGE_ARRAY_SIZE as u32]), little_endian, "bitshuffle_lz4".to_string(), false)?);
 
     //Starts the sender, binding to the port
     sender.start()?;
@@ -580,7 +579,7 @@ fn sender_demo() ->  IOResult<()> {
         let mut data = Vec::new();
         data.push(Some(ChannelData::new(Value::U64(count as u64), TIMESTAMP_NOW)));
         data.push(Some(ChannelData::new(Value::F64(count as f64), TIMESTAMP_NOW)));
-        data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; array_size as usize] ), TIMESTAMP_NOW)));
+        data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; MESSAGE_ARRAY_SIZE ] ), TIMESTAMP_NOW)));
         let message = Message::new_from_channel_vec(ID_SIMULATED,TIMESTAMP_NOW, &channels, data)?;
         sender.send_message(&message ,false)?;
         print_message(&message);
@@ -624,7 +623,7 @@ fn forwarder() ->  IOResult<()> {
 fn forwarder_with_sender() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
-    let mut forwarder = env.bsread.sender(SocketType::PUB, Transport::Tcp{port:10700, host:None}, None, None, None, None)?;
+    let mut forwarder = env.bsread.sender(SocketType::PUB, Transport::Tcp{port:10700, host:None}, None, None, None)?;
     forwarder.start()?;
     rxtx.set_forwarder(forwarder);
     let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10700"]), SocketType::SUB)?;
@@ -686,7 +685,6 @@ fn receiver_raw_sync() ->  IOResult<()> {
 #[test]
 fn receiver_raw_buffered() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let array_size = 100;
     let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
     rec.set_raw(true);
     rec.start(100)?;
