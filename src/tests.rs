@@ -1,14 +1,14 @@
 use crate::*;
 use crate::compression::*;
 use crate::debug::*;
-use crate::transport::{Transport};
+use crate::sockets::*;
 #[cfg(feature = "dispatcher")]
 use crate::dispatcher::ChannelDescription;
 use crate::sender::{Sender};
 use crate::reader::READER_ABOOL;
 use crate::writer::WRITER_ABOOL;
 use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};
-use crate::receiver::Forwarder;
+use crate::receiver::ForwarderConfig;
 use std::{cmp, thread};
 use std::any::Any;
 use std::io::{Cursor, Write};
@@ -55,7 +55,7 @@ const MESSAGE_COUNT: u32 = 10;
 const TXP_PUB: Transport = Transport::Tcp {port:10300, host:None};
 const TXP_CMP: Transport= Transport::Tcp {port:10301, host:None};
 const TXP_PUSH: Transport = Transport::Tcp {port:10302, host:None};
-const TXP_IPC: Transport = Transport::Ipc {name:"test"};
+const TXP_IPC: Transport = Transport::Ipc {name:None};
 
 const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
 
@@ -457,7 +457,7 @@ fn serializer() ->  IOResult<()> {
 #[test]
 fn sender_pub() ->  IOResult<()> {
     let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(bsread,  SocketType::PUB, Transport::Tcp{port:10400, host:None}, None, None, None, None)?;
+    let mut sender = Sender::new(bsread,  SocketType::PUB, Transport::Tcp{port:10400, host:None}, None, None, None)?;
 
     let value = Value::U8(100);
     let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string(), false)?;
@@ -480,11 +480,11 @@ fn sender_pub() ->  IOResult<()> {
 
 #[test]
 fn sender_push() ->  IOResult<()> {
-    let queue_size = 5;
+    let sndhwm = 5;
     let block = false;
     let bsread = Bsread::new().unwrap();
-    let mut sender = Sender::new(bsread,  SocketType::PUSH, Transport::Tcp{port:10410, host:None}, Some(queue_size), Some(block), None, None)?;
-
+    let mut sender = Sender::new(bsread,  SocketType::PUSH, Transport::Tcp{port:10410, host:None}, Some(block), None, None)?;
+    sender.set_sndhwm(sndhwm);
     let value = Value::U8(100);
     let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string(), false)?;
     let channels = vec![ch];
@@ -596,7 +596,7 @@ fn sender_demo() ->  IOResult<()> {
 fn forwarder() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
-    rxtx.set_forwarder(Forwarder::new(SocketType::PUB, Transport::Tcp{port:10600, host:None}, None));
+    rxtx.set_forwarder_config(ForwarderConfig::new(SocketType::PUB, Transport::Tcp{port:10600, host:None}, None));
     let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10600"]), SocketType::SUB)?;
     rec.fork(on_message, None);
 
@@ -626,7 +626,7 @@ fn forwarder_with_sender() ->  IOResult<()> {
     let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
     let mut forwarder = env.bsread.sender(SocketType::PUB, Transport::Tcp{port:10700, host:None}, None, None, None, None)?;
     forwarder.start()?;
-    rxtx.set_forwarder_sender(forwarder);
+    rxtx.set_forwarder(forwarder);
     let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10700"]), SocketType::SUB)?;
     rec.fork(on_message, None);
     //Cannot fork rxrx because forwarder cannot be sent to other thread
@@ -766,9 +766,8 @@ fn receiver_ipc() ->  IOResult<()> {
 fn receiver_options() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(  Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
-    rec.add_topic(String::from(""))?;
     rec.set_linger(0)?;
-    rec.set_rcv_hwm(10000)?;
+    rec.set_rcvhwm(10000)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);

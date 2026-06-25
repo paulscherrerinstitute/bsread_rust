@@ -1,7 +1,7 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
-use crate::transport::{Transport};
+use crate::sockets::{SocketConfig, Transport};
 use std::{io, thread};
 use std::collections::HashMap;
 use std::error::Error;
@@ -139,8 +139,8 @@ pub struct Receiver {
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     stats: Arc<Mutex<Stats>>,
     index: u32,
-    forwarder: Option<Forwarder >,
-    forwarder_sender: Option<Sender>,
+    forwarder_config: Option<ForwarderConfig>,
+    forwarder: Option<Sender>,
     interrupted: Arc<AtomicBool>,
     mode: String,
     raw: bool
@@ -160,30 +160,12 @@ Receiver{
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
         let mode = "sync".to_string();
         Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
-                  forwarder:None, forwarder_sender:None,interrupted, mode , raw: false})
+                  forwarder_config:None, forwarder:None,interrupted, mode , raw: false})
     }
 
     pub fn to_string(& self,) -> String {
         format!("Receiver {}" , self.index)
     }
-
-    pub fn set_rcv_hwm(&mut self, value: i32)-> IOResult<()> {
-        if let Err(e) =   self.socket.socket.set_rcvhwm(value) {
-            return Err(e.into());
-        }
-        Ok(())
-    }
-
-    /*
-        Set linger to 0 on  servers for fast shutdown
-     */
-    pub fn set_linger(&mut self,  value: i32)-> IOResult<()> {
-        if let Err(e) =    self.socket.socket.set_linger(value) {
-            return Err(e.into());
-        }
-        Ok(())
-    }
-
 
     pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
         self.socket.connect(endpoint)?;
@@ -219,12 +201,16 @@ Receiver{
         }
     }
 
-    pub fn set_forwarder(&mut self, forwarder: Forwarder) {
-        self.forwarder = Some(forwarder);
+    pub fn forwarder(& self) -> &Option<Sender>{
+         &self.forwarder
     }
 
-    pub fn set_forwarder_sender(&mut self, forwarder_sender: sender::Sender) {
-        self.forwarder_sender = Some(forwarder_sender);
+    pub fn set_forwarder(&mut self, forwarder_sender: sender::Sender) {
+        self.forwarder = Some(forwarder_sender);
+    }
+
+    pub fn set_forwarder_config(&mut self, forwarder_config: ForwarderConfig) {
+        self.forwarder_config = Some(forwarder_config);
     }
 
     pub fn set_raw(&mut self, raw:bool) {
@@ -236,7 +222,7 @@ Receiver{
 
     pub fn receive(&mut self) -> IOResult<Message> {
         let message_parts = self.socket.socket.recv_multipart(0)?;
-        if let Some(sender) = self.forwarder_sender.as_mut() {
+        if let Some(sender) = self.forwarder.as_mut() {
             match sender.forward(&message_parts) {
                 Ok(_) => (),
                 Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
@@ -252,19 +238,24 @@ Receiver{
         F: FnMut(Message),
     {
         self.reset_counters();
-        if let Some(forwarder) = self.forwarder.as_mut() {
-            let forwarder_sender =Sender::new(self.bsread.clone(), forwarder.socket_type, forwarder.transport.clone(), forwarder.queue_size, None, None, None);
-            match forwarder_sender{
+        if let Some(cfg) = self.forwarder_config.as_mut() {
+            match Sender::new(self.bsread.clone(), cfg.socket_type, cfg.transport.clone(), None, None, None,) {
                 Ok(mut sender) => {
-                    match sender.start(){
-                        Ok(_) => {
-                            thread::sleep(Duration::from_millis(100));
-                            self.forwarder_sender = Some(sender)
+                    if let Err(e) = sender.start() {
+                        log::warn!("Error binding forwarder endpoint {}: {}",cfg.transport.endpoint(), e);
+                    } else {
+                        if let Some(hwm) = cfg.sndhwm {
+                            if let Err(e) = sender.set_sndhwm(hwm) {
+                                log::warn!("Error setting forwarder sndhwm to {}: {}", hwm, e);
+                            }
                         }
-                        Err(e) => {log::warn!("Error binding forwarder endpoint {}: {}", forwarder.transport.endpoint(), e)}
+                        thread::sleep(Duration::from_millis(100));
+                        self.forwarder = Some(sender);
                     }
                 }
-                Err(e) => {log::warn!("Error creating forwarder endpoint {}: {}", forwarder.transport.endpoint(), e)}
+                Err(e) => {
+                    log::warn!("Error creating forwarder endpoint {}: {}",cfg.transport.endpoint(),e);
+                }
             }
         }
         self.connect_all()?;
@@ -295,12 +286,7 @@ Receiver{
                 break;
             }
         }
-        //Only handle lifecycle of forwarder created with set_forwarder
-        if let Some(forwarder) = self.forwarder.as_mut() {
-            if let Some(sender) = self.forwarder_sender.as_mut() {
-                sender.stop();
-            }
-        }
+        self.stop_forwarder();
         Ok(())
     }
 
@@ -310,9 +296,9 @@ Receiver{
         F: FnMut(Message) + Send + 'static,
         {
 
-        fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType,callback: Arc<Mutex<F>>, num_messages: Option<u32>,
-                          producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>, forwarder:Option<Forwarder>,
-                          interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool) -> IOResult<()>
+        fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: Arc<Mutex<F>>, num_messages: Option<u32>,
+                             producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>, forwarder_config:Option<ForwarderConfig>,
+                             interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool) -> IOResult<()>
             where
                 F: FnMut(Message) + Send + 'static,
             {
@@ -321,7 +307,7 @@ Receiver{
             receiver.fifo = producer_fifo;
             receiver.stats = producer_stats;
             receiver.interrupted = interrupted_self;
-            receiver.forwarder = forwarder;
+            receiver.forwarder_config = forwarder_config;
             receiver.raw = raw;
             let mut callback = callback.lock().unwrap();
             receiver.listen(&mut callback.deref_mut(), num_messages)
@@ -330,7 +316,7 @@ Receiver{
         let socket_type = self.socket_type.clone();
         let interrupted_context = Arc::clone(self.bsread.get_interrupted());
         let interrupted_self = Arc::clone(&self.interrupted);
-        let forwarder = self.forwarder.clone();
+        let forwarder_config = self.forwarder_config.clone();
 
         let producer_fifo = match &self.fifo {
             None => { None }
@@ -346,7 +332,7 @@ Receiver{
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, shared_callback, num_messages, producer_fifo, producer_stats, forwarder, interrupted_context, interrupted_self, raw).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, shared_callback, num_messages, producer_fifo, producer_stats, forwarder_config, interrupted_context, interrupted_self, raw).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error
@@ -438,17 +424,13 @@ Receiver{
         self.index
     }
 
-    pub fn get_mode(&self) -> &str {
+    pub fn mode(&self) -> &str {
         self.mode.as_str()
-    }
-    pub fn get_socket_type(&self) -> SocketType {
-        self.socket_type
     }
 
     pub fn get_endpoints(&self) ->  & Option<Vec<String>> {
         &self.endpoints
     }
-
 
     pub fn connections(&self) -> usize {
         match &self.endpoints{
@@ -490,7 +472,34 @@ Receiver{
     pub fn set_header_buffer_size(&mut self, size:usize) {
         self.header_buffer = LimitedHashMap::new(size);
     }
+
+    pub fn stop_forwarder(&mut self) -> IOResult<()> {
+        //Only handle lifecycle of forwarder created with forward_config
+        if let Some(forwarder_config) = self.forwarder_config.as_mut() {
+            if let Some(sender) = self.forwarder.as_mut() {
+                sender.stop()
+            }
+        }
+        Ok(())
+    }
 }
+
+impl SocketConfig for Receiver {
+    fn transport(&self) -> Transport {
+        if self.socket.has_any_connection() {
+            Transport::from_endpoint(self.socket.connections[0].as_str()).unwrap()
+        } else {
+            Transport::Tcp { port: 0, host: None }
+        }
+    }
+    fn socket_type(&self) -> SocketType {
+        self.socket_type
+    }
+    fn socket(&self) -> &zmq::Socket {
+        &self.socket.socket
+    }
+}
+
 
 fn error_kind_from_str(s: &str) -> ErrorKind {
     let str = s.replace(" ", "").to_lowercase();
@@ -517,28 +526,23 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
     }
 }
 
+
 impl Drop for Receiver {
     fn drop(&mut self) {
-        if let Some(sender) = self.forwarder_sender.as_mut() {
-            if sender.is_started() {
-                sender.stop();
-            }
-        }
+        self.stop_forwarder();
     }
 }
 
 
-
-
 #[derive(Debug, Clone)]
-pub struct Forwarder {
+pub struct ForwarderConfig {
     socket_type: SocketType,
     transport: Transport,
-    queue_size: Option<usize>
+    sndhwm: Option<i32>
 }
 
-impl Forwarder {
-    pub fn new(socket_type: SocketType, transport: Transport, queue_size: Option<usize>) -> Self {
-        Self { socket_type, transport, queue_size }
+impl ForwarderConfig {
+    pub fn new(socket_type: SocketType, transport: Transport, sndhwm: Option<i32>) -> Self {
+        Self { socket_type, transport, sndhwm }
     }
 }

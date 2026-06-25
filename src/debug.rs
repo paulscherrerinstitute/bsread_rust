@@ -1,6 +1,6 @@
 use crate::*;
 use crate::IOResult;
-use crate::transport::{Transport};
+use crate::sockets::*;
 use crate::receiver::{Receiver};
 use crate::pool::{Pool};
 use crate::message::{Message, ChannelData, ID_SIMULATED, TIMESTAMP_NOW};
@@ -134,8 +134,8 @@ pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_h
 }
 
 pub fn print_stats_rec(rec: &Receiver) -> () {
-    let mode = rec.get_mode();
-    let socket_type = rec.get_socket_type();
+    let mode = rec.mode();
+    let socket_type = rec.socket_type();
     println!("Receiver {}  {:?} [{}] stats:", rec.index(), socket_type, mode);
     println!("\tConnections: {}", rec.connections());
     println!("\tAvailable: {}", rec.available());
@@ -199,7 +199,7 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
 pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
     fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
         let bsread = Bsread::new()?;
-        let mut sender = Sender::new(bsread, socket_type, transport, None, block, None, None)?;
+        let mut sender = Sender::new(bsread, socket_type, transport, block, None, None)?;
         sender.set_linger(0)?;
         sender.set_keepalive(30,10,3)?;
         sender.set_heartbeat(5000,15000,20000)?;
@@ -212,10 +212,10 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(_) => {}
-                            Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.get_last_id(), sender.get_transport().endpoint(), socket_type, e)}
+                            Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.get_last_id(), sender.transport().endpoint(), socket_type, e)}
                         }
                     }
-                    Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.get_transport().endpoint(), socket_type, e)}
+                    Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.transport().endpoint(), socket_type, e)}
                 }
                 count = count+1;
                 start_time = Instant::now();

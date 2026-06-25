@@ -1,6 +1,6 @@
 use crate::IOResult;
 use crate::receiver::Receiver;
-use crate::transport::{Transport};
+use crate::sockets::{Transport};
 use crate::sender::{Sender};
 use crate::pool::Pool;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ impl Bsread {
 
     pub fn sender(self: &Arc<Self>, socket_type: SocketType, transport: Transport, queue_size: Option<usize>,
                   block:Option<bool>, start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Sender> {
-        Sender::new(self.clone(), socket_type, transport, queue_size, block, start_id, header_compression)
+        Sender::new(self.clone(), socket_type, transport, block, start_id, header_compression)
     }
 
     pub fn interrupt(&self) {

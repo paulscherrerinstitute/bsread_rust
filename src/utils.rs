@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex};
 use md5::{Md5, Digest};
 use std::time::{SystemTime, UNIX_EPOCH};
-
+use std::env;
 
 #[derive(Debug)]
 /// Ordered HashMap with a maximum size
@@ -139,4 +139,12 @@ pub fn get_hash(bytes: &[u8]) -> String{
 pub fn get_cur_timestamp() -> (u64, u64){
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
     ( now.as_secs(),  now.subsec_nanos() as u64)
+}
+
+pub fn app_name() -> Option<String> {
+    env::current_exe()
+        .ok()?
+        .file_name()?
+        .to_str()
+        .map(|s| s.to_string())
 }
