@@ -115,19 +115,9 @@ pub trait SocketConfig {
     }
 
     fn set_heartbeat(&self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
-        match self.transport() {
-            Transport::Tcp { .. } => {
-                self.socket().set_heartbeat_ivl(ivl)?;
-                self.socket().set_heartbeat_timeout(timeout)?;
-                self.socket().set_heartbeat_ttl(ttl)?;
-            }
-            Transport::Ipc { .. } => {
-                log::info!(
-                    "Ignoring heartbeat on IPC endpoint {}",
-                    self.transport().endpoint()
-                );
-            }
-        }
+        self.socket().set_heartbeat_ivl(ivl)?;
+        self.socket().set_heartbeat_timeout(timeout)?;
+        self.socket().set_heartbeat_ttl(ttl)?;
         Ok(())
     }
 }
