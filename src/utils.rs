@@ -117,18 +117,18 @@ impl<K> FifoQueue<K> {
     }
 
     /// Retrieves the total count of dropped messages.
-    pub  fn get_dropped_count(&self) -> u32 {
+    pub  fn dropped_count(&self) -> u32 {
         *self.dropped_count.lock().unwrap()
     }
 
     /// Retrieves the count of available messages.
-    pub fn get_available_count(&self) -> usize {
+    pub fn available_count(&self) -> usize {
         self.queue.lock().unwrap().len()
     }
 }
 
 
-pub fn get_hash(bytes: &[u8]) -> String{
+pub fn hash_md5(bytes: &[u8]) -> String{
     let mut hasher = Md5::new();
     hasher.update(bytes);
     let result = hasher.finalize();
@@ -136,7 +136,7 @@ pub fn get_hash(bytes: &[u8]) -> String{
     hash_hex
 }
 
-pub fn get_cur_timestamp() -> (u64, u64){
+pub fn current_timestamp() -> (u64, u64){
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
     ( now.as_secs(),  now.subsec_nanos() as u64)
 }

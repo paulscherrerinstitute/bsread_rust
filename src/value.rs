@@ -136,7 +136,7 @@ impl Value {
     pub fn is_scalar(&self) -> bool {
         !self.is_array()
     }
-    pub fn get_element_size(&self) -> u32 {
+    pub fn element_size(&self) -> u32 {
         match self {
             Value::STR(_) | Value::ASTR(_) => { 1 }
             Value::BOOL(_) | Value::ABOOL(_) => { 4 }
@@ -178,7 +178,7 @@ impl Value {
             _ => false, // Non-array types return None
         }
     }
-    pub fn get_size(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
             Value::ASTR(data) => data.len(),
             Value::ABOOL(data) => data.len(),
@@ -308,7 +308,7 @@ impl Value {
         }
     }
 
-    pub fn get_name(&self) -> &str
+    pub fn name(&self) -> &str
     {
         match self {
             Value::STR(_) => {"STR"}
@@ -338,7 +338,7 @@ impl Value {
         }
     }
 
-    pub fn get_type(&self) -> &str {
+    pub fn kind(&self) -> &str {
         match self {
             Value::STR(_) | Value::ASTR(_) => { "string" }
             Value::BOOL(_) | Value::ABOOL(_) => { "bool" }

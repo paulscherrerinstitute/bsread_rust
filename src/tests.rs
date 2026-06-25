@@ -93,7 +93,7 @@ impl TestEnvironment {
     }
 
     pub fn on_message(&self, msg: &Message){
-        println!("Received {} [{}]", msg.get_id(), thread::current().name().unwrap_or("Unnamed Thread").to_string())
+        println!("Received {} [{}]", msg.id(), thread::current().name().unwrap_or("Unnamed Thread").to_string())
     }
 }
 
@@ -267,7 +267,7 @@ fn conversion() -> IOResult<()> {
     rec.connect(TXP_PUB.endpoint().as_str())?;
     let message = rec.receive()?;
     print_message(&message);
-    let v = message.get_value("AF32").unwrap();
+    let v = message.channel_value("AF32").unwrap();
     println!("{:?}", v.to_astr());
     println!("{:?}", v.to_ai32());
     println!("{:?}", v.to_af32());
@@ -283,10 +283,10 @@ fn booleans() -> IOResult<()> {
     rec.connect(TXP_PUB.endpoint().as_str())?;
     let message = rec.receive()?;
     print_message(&message);
-    let v = message.get_value("ABOOL").unwrap();
+    let v = message.channel_value("ABOOL").unwrap();
     println!("{:?}", v.to_astr());
     println!("{:?}", v.to_ai32());
-    let v = message.get_value("BOOL").unwrap();
+    let v = message.channel_value("BOOL").unwrap();
     println!("{:?}", v.to_str());
     println!("{:?}", v.to_i32());
     Ok(())
@@ -442,8 +442,8 @@ fn serializer() ->  IOResult<()> {
     let values = create_test_values(100, 100);
     for value in values {
         for little_endian in  vec!(true, false) {
-            let shape= if value.is_array() {Some(vec![value.get_size()as u32])} else {None};
-            let ch = channel::new(value.get_type().to_string(), value.get_type().to_string(), shape, little_endian, "none".to_string(), false)?;
+            let shape= if value.is_array() {Some(vec![value.size()as u32])} else {None};
+            let ch = channel::new(value.kind().to_string(), value.kind().to_string(), shape, little_endian, "none".to_string(), false)?;
             let mut cursor = Cursor::new(&mut buf);
             ch.write(&mut cursor, &value)?;
             let mut cursor = Cursor::new(&buf);
@@ -460,7 +460,7 @@ fn sender_pub() ->  IOResult<()> {
     let mut sender = Sender::new(bsread,  SocketType::PUB, Transport::Tcp{port:10400, host:None}, None, None, None)?;
 
     let value = Value::U8(100);
-    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string(), false)?;
+    let ch = channel::new(value.name().to_string(), value.kind().to_string(), None, true, "none".to_string(), false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
@@ -469,8 +469,8 @@ fn sender_pub() ->  IOResult<()> {
     sender.create_data_header(&channels)?;
     for i in 0.. MESSAGE_COUNT {
         match sender.send(ID_SIMULATED, TIMESTAMP_NOW, &channels, &data) {
-            Ok(_) => {println!("Sent ID {}", sender.get_last_id());}
-            Err(e) => {println!("Failed ID {}: {}", sender.get_last_id(), e)}
+            Ok(_) => {println!("Sent ID {}", sender.last_pulse_id());}
+            Err(e) => {println!("Failed ID {}: {}", sender.last_pulse_id(), e)}
         }
         thread::sleep(Duration::from_millis(SENDER_INTERVAL));
     }
@@ -486,7 +486,7 @@ fn sender_push() ->  IOResult<()> {
     let mut sender = Sender::new(bsread,  SocketType::PUSH, Transport::Tcp{port:10410, host:None}, Some(block), None, None)?;
     sender.set_sndhwm(sndhwm);
     let value = Value::U8(100);
-    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string(), false)?;
+    let ch = channel::new(value.name().to_string(), value.kind().to_string(), None, true, "none".to_string(), false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
@@ -497,8 +497,8 @@ fn sender_push() ->  IOResult<()> {
 
     for i in 0.. MESSAGE_COUNT+1 {
         match sender.send(ID_SIMULATED, TIMESTAMP_NOW, &channels, &data) {
-            Ok(_) => {println!("Sent ID {}", sender.get_last_id());}
-            Err(e) => {println!("Failed ID {}: {}", sender.get_last_id(), e)}
+            Ok(_) => {println!("Sent ID {}", sender.last_pulse_id());}
+            Err(e) => {println!("Failed ID {}: {}", sender.last_pulse_id(), e)}
         }
         thread::sleep(Duration::from_millis(SENDER_INTERVAL));
     }
@@ -600,7 +600,7 @@ fn forwarder() ->  IOResult<()> {
     rec.fork(on_message, None);
 
     //Asynchronous
-    rxtx.fork(|msg| {log::info!("RTX Msg {}", msg.get_id())}, Some(MESSAGE_COUNT));
+    rxtx.fork(|msg| {log::info!("RTX Msg {}", msg.id())}, Some(MESSAGE_COUNT));
     rxtx.join()?;
     thread::sleep(Duration::from_millis(200));
     print_stats_rec(&rec);
@@ -608,7 +608,7 @@ fn forwarder() ->  IOResult<()> {
 
     rec.reset_counters();
     //Synchronous
-    rxtx.listen(|msg| {log::info!("RTX Msg {}", msg.get_id())}, Some(MESSAGE_COUNT))?;
+    rxtx.listen(|msg| {log::info!("RTX Msg {}", msg.id())}, Some(MESSAGE_COUNT))?;
     thread::sleep(Duration::from_millis(100));
     print_stats_rec(&rec);
     //Would fail because header change = 0
@@ -661,7 +661,7 @@ fn closure_interrupt() ->  IOResult<()> {
 
     rec.listen(|msg| {
         env.on_message(&msg);
-        if msg.get_id() > 15{
+        if msg.id() > 15{
             env.bsread.interrupt();
         }
         assert_message_contents_ok(&msg);
@@ -710,8 +710,8 @@ fn receiver_raw_async () ->  IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
     rec.set_raw(raw);
     rec.listen(|_msg| {
-         println!("\tId: {}", _msg.get_id());
-         let v = _msg.get_value("AI64").unwrap().as_bytes().unwrap();
+         println!("\tId: {}", _msg.id());
+         let v = _msg.channel_value("AI64").unwrap().as_bytes().unwrap();
          println!("\tData: {:?}", v);
         assert_message_contents_ok(&_msg);
     }, Some(count));
@@ -727,21 +727,21 @@ fn conversions() -> IOResult<()> {
     rec.start(1)?;
     match rec.wait(1000) {
         Ok(msg) => {
-            let n = msg.get_id().to_u32().unwrap() ;
+            let n = msg.id().to_u32().unwrap() ;
             assert_message_contents_ok(&msg);
             //Read scalar as 1-element array
-            assert_eq!(msg.get_value("U32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); 1]);
-            assert_eq!(msg.get_value("I64").unwrap().to_ai64().unwrap(), vec![n.to_i64().unwrap(); 1]);
-            assert_eq!(msg.get_value("F64").unwrap().to_af64().unwrap(), vec![n.to_f64().unwrap(); 1]);
+            assert_eq!(msg.channel_value("U32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); 1]);
+            assert_eq!(msg.channel_value("I64").unwrap().to_ai64().unwrap(), vec![n.to_i64().unwrap(); 1]);
+            assert_eq!(msg.channel_value("F64").unwrap().to_af64().unwrap(), vec![n.to_f64().unwrap(); 1]);
             //Change array type
-            assert_eq!(msg.get_value("AU32").unwrap().to_au64().unwrap(), vec![n.to_u64().unwrap(); MESSAGE_ARRAY_SIZE]);
-            assert_eq!(msg.get_value("AU32").unwrap().to_af32().unwrap(), vec![n.to_f32().unwrap(); MESSAGE_ARRAY_SIZE]);
-            assert_eq!(msg.get_value("AF64").unwrap().to_ai32().unwrap(), vec![n.to_i32().unwrap(); MESSAGE_ARRAY_SIZE]);
-            assert_eq!(msg.get_value("ABOOL").unwrap().to_ai32().unwrap(), vec![(n%2).to_i32().unwrap(); MESSAGE_ARRAY_SIZE]);
-            assert_eq!(msg.get_value("U32").unwrap().to_u64(), n.to_u64());
-            assert_eq!(msg.get_value("U32").unwrap().to_f32(), n.to_f32());
-            assert_eq!(msg.get_value("F64").unwrap().to_i32(), n.to_i32());
-            assert_eq!(msg.get_value("BOOL").unwrap().to_i32(),(n%2).to_i32());
+            assert_eq!(msg.channel_value("AU32").unwrap().to_au64().unwrap(), vec![n.to_u64().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.channel_value("AU32").unwrap().to_af32().unwrap(), vec![n.to_f32().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.channel_value("AF64").unwrap().to_ai32().unwrap(), vec![n.to_i32().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.channel_value("ABOOL").unwrap().to_ai32().unwrap(), vec![(n%2).to_i32().unwrap(); MESSAGE_ARRAY_SIZE]);
+            assert_eq!(msg.channel_value("U32").unwrap().to_u64(), n.to_u64());
+            assert_eq!(msg.channel_value("U32").unwrap().to_f32(), n.to_f32());
+            assert_eq!(msg.channel_value("F64").unwrap().to_i32(), n.to_i32());
+            assert_eq!(msg.channel_value("BOOL").unwrap().to_i32(), (n%2).to_i32());
         }
         Err(e) => {println!("{}",e)}
     }

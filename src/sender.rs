@@ -40,7 +40,7 @@ impl Sender {
             start_id: Option<u64>,
             header_compression: Option<String>,
         ) -> IOResult<Self> {
-        let socket = bsread.get_context().socket(socket_type)?;
+        let socket = bsread.context().socket(socket_type)?;
         let block = block.unwrap_or(false);
         let start_id = start_id.unwrap_or(0);
         let header_compression = header_compression.unwrap_or("none".to_string());
@@ -73,13 +73,13 @@ impl Sender {
             }
             &_ => { data_header_json.as_bytes() }
         };
-        let hash = get_hash(blob);
+        let hash = hash_md5(blob);
         self.main_header.insert("hash".to_string(),  JsonValue::String(hash));
         self.data_header_buffer = (*blob).to_vec();
         Ok(())
     }
 
-    pub fn get_last_id(& self) -> u64{
+    pub fn last_pulse_id(& self) -> u64{
         self.pulse_id
     }
 
@@ -154,13 +154,13 @@ impl Sender {
     pub fn send_message(&mut self,  message: &Message, create_data_header:bool) -> IOResult<()> {
         let empty_data_header = self.data_header_buffer.len() == 0;
         if create_data_header || empty_data_header {
-            self.create_data_header(message.get_channels())?;
+            self.create_data_header(message.channels())?;
         }
-        let id = message.get_id();
-        let timestamp = message.get_timestamp();
-        let channel_data = message.get_data();
+        let id = message.id();
+        let timestamp = message.timestamp();
+        let channel_data = message.data();
         let ordered_values: Vec<Option<&ChannelData>> = channel_data.values().map(|result| result.as_ref()).collect();
-        self.send(id, timestamp, message.get_channels(), &ordered_values)
+        self.send(id, timestamp, message.channels(), &ordered_values)
     }
 
     pub fn update_main_header(& mut self, id:u64, timestamp: (u64,u64)) {
@@ -175,7 +175,7 @@ impl Sender {
         self.main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(id)));
 
         let tm =  if timestamp == TIMESTAMP_NOW {
-            get_cur_timestamp()
+            current_timestamp()
         } else {
             timestamp
         };

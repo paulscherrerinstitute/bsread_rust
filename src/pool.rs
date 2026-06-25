@@ -81,9 +81,9 @@ Pool {
         for receiver in & mut self.receivers {
             let callback_clone = Arc::clone(&shared_callback);
             let thread_name = format!("Pool {}", receiver.to_string());
-            let interrupted = Arc::clone(self.bsread.get_interrupted());
+            let interrupted = Arc::clone(self.bsread.interrupted());
             receiver.start(buffer_size)?;
-            let fifo = receiver.get_fifo().unwrap();
+            let fifo = receiver.fifo().unwrap();
 
             thread::Builder::new()
                 .name(thread_name.to_string())
@@ -118,7 +118,7 @@ Pool {
         Ok(())
     }
 
-    pub fn get_socket_type(&self) -> SocketType {
+    pub fn socket_type(&self) -> SocketType {
         self.socket_type
     }
 

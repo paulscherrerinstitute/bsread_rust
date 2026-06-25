@@ -50,11 +50,11 @@ impl<T: std::fmt::Debug> std::fmt::Debug for LimitedDebugVec<T>  {
 pub fn print_channel_data(channel_data: &Option<ChannelData>, prefix:&str, max_elements: usize) {
     match &channel_data {
         Some(channel_data) => {
-            let value = channel_data.get_value();
+            let value = channel_data.value();
             if value.is_array() {
                 println!("{}{:?}", prefix, LimitedDebugVec { data: value.to_astr().unwrap(), limit: max_elements });
             } else {
-                println!("{}{}", prefix, channel_data.get_value().to_str());
+                println!("{}{}", prefix, channel_data.value().to_str());
             }
         }
         None => {
@@ -77,22 +77,22 @@ pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_h
     println!("{}", "-".repeat(110));
     let current_thread = thread::current(); // Keep the thread alive
     let thread_name = current_thread.name().unwrap_or("Unnamed Thread");
-    let ts = message.get_timestamp();
+    let ts = message.timestamp();
     unsafe {
-        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{} {} [{}]", *MESSAGE_COUNTER.lock().unwrap(), message.get_id(),
-                 ts.0, ts.1, message.get_hash(),  if message.header_changed() {"*"} else {" "}, thread_name);
+        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{} {} [{}]", *MESSAGE_COUNTER.lock().unwrap(), message.id(),
+                 ts.0, ts.1, message.hash(), if message.header_changed() {"*"} else {" "}, thread_name);
     }
     increment_counter();
 
     if main_header {
         println!("Main Header:");
-        for (key, value) in message.get_main_header() {
+        for (key, value) in message.main_header() {
             println!("\t{}: {}", key, value);
         }
     }
     if data_header{
         println!("Data Header:");
-        for (key, value) in  message.get_data_header() {
+        for (key, value) in  message.data_header() {
             match value {
                 JsonValue::Object(map) => {
                     println!("\t{}", key);
@@ -113,21 +113,21 @@ pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_h
     if meta {
         let mut channel_names = Vec::new();
         println!("Channel Metadata:");
-        for channel in message.get_channels() {
-            let config = channel.get_config();
-            let shape : Vec<u32> = config.get_shape().unwrap_or(Vec::new());
-            println!("\t{} {} {:?} {} {}", config.get_name(), config.get_type(), shape, config.get_elements(), config.get_compression());
-            channel_names.push(config.get_name());
+        for channel in message.channels() {
+            let config = channel.config();
+            let shape : Vec<u32> = config.shape().unwrap_or(Vec::new());
+            println!("\t{} {} {:?} {} {}", config.name(), config.kind(), shape, config.elements(), config.compression());
+            channel_names.push(config.name());
         }
     }
     if data{
         println!("Channel Data:");
-        let channels = message.get_channels();
-        let data = message.get_data();
+        let channels = message.channels();
+        let data = message.data();
         let mut index = 0;
         for (key, value) in data {
-            let config = channels[index].get_config();
-            print_channel_data(value, format!("\t{} <{}>: ", key, config.get_type()).as_str(), max_size);
+            let config = channels[index].config();
+            print_channel_data(value, format!("\t{} <{}>: ", key, config.kind()).as_str(), max_size);
             index = index + 1;
         }
     }
@@ -187,10 +187,10 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
     let values = create_test_values(v, s);
     for value in values {
-        let shape = if value.is_array() { Some(vec![value.get_size() as u32]) } else { None };
-        let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), shape, little_endian, comp.clone(), false)?;
+        let shape = if value.is_array() { Some(vec![value.size() as u32]) } else { None };
+        let ch = channel::new(value.name().to_string(), value.kind().to_string(), shape, little_endian, comp.clone(), false)?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
-        data.insert(ch.get_config().get_name().clone(),ch_data );
+        data.insert(ch.config().name().clone(), ch_data );
         channels.push(ch);
     }
     Message::new_from_channel_map(ID_SIMULATED,TIMESTAMP_NOW, channels, data)
@@ -212,7 +212,7 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(_) => {}
-                            Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.get_last_id(), sender.transport().endpoint(), socket_type, e)}
+                            Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)}
                         }
                     }
                     Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.transport().endpoint(), socket_type, e)}
@@ -254,80 +254,80 @@ pub fn stop_senders(){
 }
 
 pub fn assert_message_contents_ok(msg:&Message){
-    let n = msg.get_id().to_u32().unwrap() ;
+    let n = msg.id().to_u32().unwrap() ;
     let array_size = MESSAGE_ARRAY_SIZE;
 
     if msg.is_raw() {
-        assert_eq!(msg.get_value("U8").unwrap().as_bytes().unwrap(), &Value::U8(n.to_u8().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("U16").unwrap().as_bytes().unwrap(), &Value::U16(n.to_u16().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("U32").unwrap().as_bytes().unwrap(), &Value::U32(n).to_bytes());
-        assert_eq!(msg.get_value("U64").unwrap().as_bytes().unwrap(), &Value::U64(n.to_u64().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("I8").unwrap().as_bytes().unwrap(), &Value::U8(n.to_u8().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("I16").unwrap().as_bytes().unwrap(), &Value::I16(n.to_i16().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("I32").unwrap().as_bytes().unwrap(), &Value::I32(n.to_i32().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("I64").unwrap().as_bytes().unwrap(), &Value::I64(n.to_i64().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("F32").unwrap().as_bytes().unwrap(), &Value::F32(n.to_f32().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("F64").unwrap().as_bytes().unwrap(), &Value::F64(n.to_f64().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("BOOL").unwrap().as_bytes().unwrap(), &Value::U8((n % 2).to_u8().unwrap()).to_bytes());
-        assert_eq!(msg.get_value("STR").unwrap().as_bytes().unwrap(), &Value::STR(n.to_string()).to_bytes());
-        assert_eq!(msg.get_value("AU8").unwrap().as_bytes().unwrap(), &Value::AU8(vec![n.to_u8().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AU16").unwrap().as_bytes().unwrap(), &Value::AU16(vec![n.to_u16().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AU32").unwrap().as_bytes().unwrap(), &Value::AU32(vec![n; array_size]).to_bytes());
-        assert_eq!(msg.get_value("AI64").unwrap().as_bytes().unwrap(), &Value::AU64(vec![n.to_u64().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AI8").unwrap().as_bytes().unwrap(), &Value::AI8(vec![n.to_i8().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AI16").unwrap().as_bytes().unwrap(), &Value::AI16(vec![n.to_i16().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AI32").unwrap().as_bytes().unwrap(), &Value::AI32(vec![n.to_i32().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AI64").unwrap().as_bytes().unwrap(), &Value::AI64(vec![n.to_i64().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AF32").unwrap().as_bytes().unwrap(), &Value::AF32(vec![n.to_f32().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("AF64").unwrap().as_bytes().unwrap(), &Value::AF64(vec![n.to_f64().unwrap(); array_size]).to_bytes());
-        assert_eq!(msg.get_value("ABOOL").unwrap().as_bytes().unwrap(), &Value::AU8(vec![(n % 2).to_u8().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("U8").unwrap().as_bytes().unwrap(), &Value::U8(n.to_u8().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("U16").unwrap().as_bytes().unwrap(), &Value::U16(n.to_u16().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("U32").unwrap().as_bytes().unwrap(), &Value::U32(n).to_bytes());
+        assert_eq!(msg.channel_value("U64").unwrap().as_bytes().unwrap(), &Value::U64(n.to_u64().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("I8").unwrap().as_bytes().unwrap(), &Value::U8(n.to_u8().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("I16").unwrap().as_bytes().unwrap(), &Value::I16(n.to_i16().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("I32").unwrap().as_bytes().unwrap(), &Value::I32(n.to_i32().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("I64").unwrap().as_bytes().unwrap(), &Value::I64(n.to_i64().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("F32").unwrap().as_bytes().unwrap(), &Value::F32(n.to_f32().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("F64").unwrap().as_bytes().unwrap(), &Value::F64(n.to_f64().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("BOOL").unwrap().as_bytes().unwrap(), &Value::U8((n % 2).to_u8().unwrap()).to_bytes());
+        assert_eq!(msg.channel_value("STR").unwrap().as_bytes().unwrap(), &Value::STR(n.to_string()).to_bytes());
+        assert_eq!(msg.channel_value("AU8").unwrap().as_bytes().unwrap(), &Value::AU8(vec![n.to_u8().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AU16").unwrap().as_bytes().unwrap(), &Value::AU16(vec![n.to_u16().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AU32").unwrap().as_bytes().unwrap(), &Value::AU32(vec![n; array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AI64").unwrap().as_bytes().unwrap(), &Value::AU64(vec![n.to_u64().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AI8").unwrap().as_bytes().unwrap(), &Value::AI8(vec![n.to_i8().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AI16").unwrap().as_bytes().unwrap(), &Value::AI16(vec![n.to_i16().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AI32").unwrap().as_bytes().unwrap(), &Value::AI32(vec![n.to_i32().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AI64").unwrap().as_bytes().unwrap(), &Value::AI64(vec![n.to_i64().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AF32").unwrap().as_bytes().unwrap(), &Value::AF32(vec![n.to_f32().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("AF64").unwrap().as_bytes().unwrap(), &Value::AF64(vec![n.to_f64().unwrap(); array_size]).to_bytes());
+        assert_eq!(msg.channel_value("ABOOL").unwrap().as_bytes().unwrap(), &Value::AU8(vec![(n % 2).to_u8().unwrap(); array_size]).to_bytes());
     } else {
-        assert_eq!(msg.get_value("U8").unwrap().as_u8().unwrap(), n.to_u8().unwrap());
-        assert_eq!(msg.get_value("U16").unwrap().as_u16().unwrap(), n.to_u16().unwrap());
-        assert_eq!(msg.get_value("U32").unwrap().as_u32().unwrap(), n.to_u32().unwrap());
-        assert_eq!(msg.get_value("U64").unwrap().as_u64().unwrap(), n.to_u64().unwrap());
-        assert_eq!(msg.get_value("I8").unwrap().as_i8().unwrap(), n.to_i8().unwrap());
-        assert_eq!(msg.get_value("I16").unwrap().as_i16().unwrap(), n.to_i16().unwrap());
-        assert_eq!(msg.get_value("I32").unwrap().as_i32().unwrap(), n.to_i32().unwrap());
-        assert_eq!(msg.get_value("I64").unwrap().as_i64().unwrap(), n.to_i64().unwrap());
-        assert_eq!(msg.get_value("F32").unwrap().as_f32().unwrap(), n.to_f32().unwrap());
-        assert_eq!(msg.get_value("F64").unwrap().as_f64().unwrap(), n.to_f64().unwrap());
-        assert_eq!(msg.get_value("BOOL").unwrap().as_bool().unwrap(), n.to_i64().unwrap()%2==1);
-        assert_eq!(msg.get_value("STR").unwrap().as_str().unwrap(), n.to_string());
-        assert_eq!(msg.get_value("AU8").unwrap().as_au8().unwrap(), vec![n.to_u8().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU16").unwrap().as_au16().unwrap(), vec![n.to_u16().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU32").unwrap().as_au32().unwrap(), vec![n.to_u32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU64").unwrap().as_au64().unwrap(), vec![n.to_u64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI8").unwrap().as_ai8().unwrap(), vec![n.to_i8().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI16").unwrap().as_ai16().unwrap(), vec![n.to_i16().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI32").unwrap().as_ai32().unwrap(), vec![n.to_i32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI64").unwrap().as_ai64().unwrap(), vec![n.to_i64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AF32").unwrap().as_af32().unwrap(), vec![n.to_f32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AF64").unwrap().as_af64().unwrap(), vec![n.to_f64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("ABOOL").unwrap().as_abool().unwrap(), vec![n.to_i64().unwrap()%2==1; array_size]);
+        assert_eq!(msg.channel_value("U8").unwrap().as_u8().unwrap(), n.to_u8().unwrap());
+        assert_eq!(msg.channel_value("U16").unwrap().as_u16().unwrap(), n.to_u16().unwrap());
+        assert_eq!(msg.channel_value("U32").unwrap().as_u32().unwrap(), n.to_u32().unwrap());
+        assert_eq!(msg.channel_value("U64").unwrap().as_u64().unwrap(), n.to_u64().unwrap());
+        assert_eq!(msg.channel_value("I8").unwrap().as_i8().unwrap(), n.to_i8().unwrap());
+        assert_eq!(msg.channel_value("I16").unwrap().as_i16().unwrap(), n.to_i16().unwrap());
+        assert_eq!(msg.channel_value("I32").unwrap().as_i32().unwrap(), n.to_i32().unwrap());
+        assert_eq!(msg.channel_value("I64").unwrap().as_i64().unwrap(), n.to_i64().unwrap());
+        assert_eq!(msg.channel_value("F32").unwrap().as_f32().unwrap(), n.to_f32().unwrap());
+        assert_eq!(msg.channel_value("F64").unwrap().as_f64().unwrap(), n.to_f64().unwrap());
+        assert_eq!(msg.channel_value("BOOL").unwrap().as_bool().unwrap(), n.to_i64().unwrap()%2==1);
+        assert_eq!(msg.channel_value("STR").unwrap().as_str().unwrap(), n.to_string());
+        assert_eq!(msg.channel_value("AU8").unwrap().as_au8().unwrap(), vec![n.to_u8().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AU16").unwrap().as_au16().unwrap(), vec![n.to_u16().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AU32").unwrap().as_au32().unwrap(), vec![n.to_u32().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AU64").unwrap().as_au64().unwrap(), vec![n.to_u64().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI8").unwrap().as_ai8().unwrap(), vec![n.to_i8().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI16").unwrap().as_ai16().unwrap(), vec![n.to_i16().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI32").unwrap().as_ai32().unwrap(), vec![n.to_i32().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI64").unwrap().as_ai64().unwrap(), vec![n.to_i64().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AF32").unwrap().as_af32().unwrap(), vec![n.to_f32().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AF64").unwrap().as_af64().unwrap(), vec![n.to_f64().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("ABOOL").unwrap().as_abool().unwrap(), vec![n.to_i64().unwrap()%2==1; array_size]);
 
-        assert_eq!(msg.get_value("U8").unwrap().to_u8().unwrap(), n.to_u8().unwrap());
-        assert_eq!(msg.get_value("U16").unwrap().to_u16().unwrap(), n.to_u16().unwrap());
-        assert_eq!(msg.get_value("U32").unwrap().to_u32().unwrap(), n.to_u32().unwrap());
-        assert_eq!(msg.get_value("U64").unwrap().to_u64().unwrap(), n.to_u64().unwrap());
-        assert_eq!(msg.get_value("I8").unwrap().to_i8().unwrap(), n.to_i8().unwrap());
-        assert_eq!(msg.get_value("I16").unwrap().to_i16().unwrap(), n.to_i16().unwrap());
-        assert_eq!(msg.get_value("I32").unwrap().to_i32().unwrap(), n.to_i32().unwrap());
-        assert_eq!(msg.get_value("I64").unwrap().to_i64().unwrap(), n.to_i64().unwrap());
-        assert_eq!(msg.get_value("F32").unwrap().to_f32().unwrap(), n.to_f32().unwrap());
-        assert_eq!(msg.get_value("F64").unwrap().to_f64().unwrap(), n.to_f64().unwrap());
-        assert_eq!(msg.get_value("BOOL").unwrap().to_bool().unwrap(), n.to_i64().unwrap()%2==1);
-        assert_eq!(msg.get_value("STR").unwrap().to_str(), n.to_string());
-        assert_eq!(msg.get_value("AU8").unwrap().to_au8().unwrap(), vec![n.to_u8().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU16").unwrap().to_au16().unwrap(), vec![n.to_u16().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AU64").unwrap().to_au64().unwrap(), vec![n.to_u64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI8").unwrap().to_ai8().unwrap(), vec![n.to_i8().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI16").unwrap().to_ai16().unwrap(), vec![n.to_i16().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI32").unwrap().to_ai32().unwrap(), vec![n.to_i32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AI64").unwrap().to_ai64().unwrap(), vec![n.to_i64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AF32").unwrap().to_af32().unwrap(), vec![n.to_f32().unwrap(); array_size]);
-        assert_eq!(msg.get_value("AF64").unwrap().to_af64().unwrap(), vec![n.to_f64().unwrap(); array_size]);
-        assert_eq!(msg.get_value("ABOOL").unwrap().to_abool().unwrap(), vec![n.to_i64().unwrap()%2==1; array_size]);
+        assert_eq!(msg.channel_value("U8").unwrap().to_u8().unwrap(), n.to_u8().unwrap());
+        assert_eq!(msg.channel_value("U16").unwrap().to_u16().unwrap(), n.to_u16().unwrap());
+        assert_eq!(msg.channel_value("U32").unwrap().to_u32().unwrap(), n.to_u32().unwrap());
+        assert_eq!(msg.channel_value("U64").unwrap().to_u64().unwrap(), n.to_u64().unwrap());
+        assert_eq!(msg.channel_value("I8").unwrap().to_i8().unwrap(), n.to_i8().unwrap());
+        assert_eq!(msg.channel_value("I16").unwrap().to_i16().unwrap(), n.to_i16().unwrap());
+        assert_eq!(msg.channel_value("I32").unwrap().to_i32().unwrap(), n.to_i32().unwrap());
+        assert_eq!(msg.channel_value("I64").unwrap().to_i64().unwrap(), n.to_i64().unwrap());
+        assert_eq!(msg.channel_value("F32").unwrap().to_f32().unwrap(), n.to_f32().unwrap());
+        assert_eq!(msg.channel_value("F64").unwrap().to_f64().unwrap(), n.to_f64().unwrap());
+        assert_eq!(msg.channel_value("BOOL").unwrap().to_bool().unwrap(), n.to_i64().unwrap()%2==1);
+        assert_eq!(msg.channel_value("STR").unwrap().to_str(), n.to_string());
+        assert_eq!(msg.channel_value("AU8").unwrap().to_au8().unwrap(), vec![n.to_u8().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AU16").unwrap().to_au16().unwrap(), vec![n.to_u16().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AU32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AU64").unwrap().to_au64().unwrap(), vec![n.to_u64().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI8").unwrap().to_ai8().unwrap(), vec![n.to_i8().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI16").unwrap().to_ai16().unwrap(), vec![n.to_i16().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI32").unwrap().to_ai32().unwrap(), vec![n.to_i32().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AI64").unwrap().to_ai64().unwrap(), vec![n.to_i64().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AF32").unwrap().to_af32().unwrap(), vec![n.to_f32().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("AF64").unwrap().to_af64().unwrap(), vec![n.to_f64().unwrap(); array_size]);
+        assert_eq!(msg.channel_value("ABOOL").unwrap().to_abool().unwrap(), vec![n.to_i64().unwrap()%2==1; array_size]);
     }
 }

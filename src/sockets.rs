@@ -9,16 +9,16 @@ pub enum Transport {
 }
 pub const IPC_FILE_PREFIX:&str = "/bsread_icp_";
 
-//pub fn get_local_address() -> String { "127.0.0.1".to_string()}
-// pub fn get_local_address() -> &'static str {"*"}
-pub fn get_local_address() -> &'static str {"0.0.0.0"}
+//pub fn local_address() -> String { "127.0.0.1".to_string()}
+// pub fn local_address() -> &'static str {"*"}
+pub fn local_address() -> &'static str {"0.0.0.0"}
 
-pub fn get_ipc_feeds_folder() -> &'static str {"/tmp"}
+pub fn ipc_feeds_folder() -> &'static str {"/tmp"}
 impl Transport {
     pub fn endpoint(&self) -> String {
         match self {
             Transport::Tcp {port, host} => {
-                let host = host.clone().unwrap_or(get_local_address().to_string());
+                let host = host.clone().unwrap_or(local_address().to_string());
                 if host.contains("://") {
                     format!("{}:{}", host, port)
                 } else {
@@ -26,7 +26,7 @@ impl Transport {
                 }
             },
             Transport::Ipc { name } => {
-                let folder = get_ipc_feeds_folder();
+                let folder = ipc_feeds_folder();
                 let suffix = match name{
                     None => {
                         match app_name(){
@@ -53,7 +53,7 @@ impl Transport {
                 .parse::<u32>()
                 .map_err(|_| format!("Invalid TCP port: {port_str}"))?;
 
-            let host = if host == get_local_address() {
+            let host = if host == local_address() {
                 None
             } else {
                 Some(host.to_string())
@@ -95,7 +95,7 @@ pub trait SocketConfig {
         }
         Ok(())
     }
-    
+
     fn set_keepalive(&self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
         match self.transport() {
             Transport::Tcp { .. } => {

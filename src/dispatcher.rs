@@ -47,7 +47,7 @@ pub struct DispatcherStream {
 }
 
 impl DispatcherStream{
-    pub fn get_endpoint(&self) -> &str {
+    pub fn endpoint(&self) -> &str {
         self.endpoint.as_str()
     }
 }

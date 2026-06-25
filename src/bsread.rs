@@ -50,12 +50,12 @@ impl Bsread {
         self.interrupted.load(Ordering::Relaxed)
     }
 
-    pub fn get_context(&self) -> &Context {
+    pub fn context(&self) -> &Context {
         &self.context
     }
 
 
-    pub fn get_interrupted(&self) -> &Arc<AtomicBool> {
+    pub fn interrupted(&self) -> &Arc<AtomicBool> {
         &self.interrupted
     }
 }

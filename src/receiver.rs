@@ -96,7 +96,7 @@ impl Drop for TrackedSocket {
 }
 
 static RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
-fn get_index() -> u32{
+fn index() -> u32{
     unsafe {
         let mut counter = RECEIVER_INDEX.lock().unwrap();
         *counter += 1;
@@ -154,9 +154,9 @@ Receiver{
     }
 
     pub fn new_with_interrupted(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType, interrupted: Arc<AtomicBool>) -> IOResult<Self> {
-        let socket = TrackedSocket::new(&bsread.get_context(), socket_type)?;
+        let socket = TrackedSocket::new(&bsread.context(), socket_type)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
-        let index =  get_index();
+        let index =  index();
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
         let mode = "sync".to_string();
         Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
@@ -314,7 +314,7 @@ Receiver{
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
-        let interrupted_context = Arc::clone(self.bsread.get_interrupted());
+        let interrupted_context = Arc::clone(self.bsread.interrupted());
         let interrupted_self = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
 
@@ -414,7 +414,7 @@ Receiver{
         Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
-    pub fn get_fifo(&self) -> Option<Arc<FifoQueue<Message>>> {
+    pub fn fifo(&self) -> Option<Arc<FifoQueue<Message>>> {
         match &self.fifo{
             None => {None}
             Some(fifo) => {Some(fifo.clone())}
@@ -428,7 +428,7 @@ Receiver{
         self.mode.as_str()
     }
 
-    pub fn get_endpoints(&self) ->  & Option<Vec<String>> {
+    pub fn endpoints(&self) ->  & Option<Vec<String>> {
         &self.endpoints
     }
 
@@ -440,7 +440,7 @@ Receiver{
     }
     pub fn available(&self) -> u32 {
         if let Some(fifo) = &self.fifo {
-            fifo.get_available_count() as u32
+            fifo.available_count() as u32
         } else {
             0
         }
@@ -448,7 +448,7 @@ Receiver{
 
     pub fn dropped(&self) -> u32 {
         if let Some(fifo) = &self.fifo {
-            fifo.get_dropped_count()
+            fifo.dropped_count()
         } else {
             0
         }
