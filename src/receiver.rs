@@ -167,14 +167,6 @@ Receiver{
         format!("Receiver {}" , self.index)
     }
 
-    pub fn add_topic(&mut self, topic: String)-> IOResult<()> {
-        if self.socket_type == SocketType::PULL {
-            //return Err(new_error(ErrorKind::InvalidInput, "Topics only used in PUB sockets"));
-        }
-        self.socket.add_topic(topic);
-        Ok(())
-    }
-
     pub fn set_rcv_hwm(&mut self, value: i32)-> IOResult<()> {
         if let Err(e) =   self.socket.socket.set_rcvhwm(value) {
             return Err(e.into());

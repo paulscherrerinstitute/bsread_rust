@@ -62,6 +62,41 @@ Sender {
             bsread, transport, queue_size, block,pulse_id:start_id, header_compression, started:false})
     }
 
+    pub fn set_linger(&mut self,  value: i32)-> IOResult<()> {
+        self.socket.set_linger(value)?;
+        Ok(())
+    }
+
+    pub fn set_keepalive(&self, idle:i32, intvl:i32, cnt:i32) -> IOResult<()> {
+        match self.transport {
+            transport::Transport::Tcp { .. } =>{
+                self.socket.set_tcp_keepalive(1)?;
+                self.socket.set_tcp_keepalive_idle(idle)?;   // start checking after intvl s
+                self.socket.set_tcp_keepalive_intvl(intvl)?;  // probe every  intvl s
+                self.socket.set_tcp_keepalive_cnt(cnt)?;     // fail after cnt attempts
+            }
+            transport::Transport::Ipc { .. } => {
+                log::info!("Ignoring keepalive on IPC endpoint {}", self.transport.endpoint());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_heartbeat(&self, ivl:i32, intvl:i32, cnt:i32) -> IOResult<()> {
+        match self.transport {
+            transport::Transport::Tcp { .. } =>{
+                self.socket.set_heartbeat_ivl(ivl)?;      // send heartbeat every ivl ms
+                self.socket.set_heartbeat_timeout(intvl)?; // disconnect peer after intvl ms
+                self.socket.set_heartbeat_ttl(cnt)?;     // advertised TTL in cnt
+            }
+            transport::Transport::Ipc { .. } => {
+                log::info!("Ignoring heartbeat on IPC endpoint {}", self.transport.endpoint());
+            }
+        }
+        Ok(())
+    }
+
+
     pub fn create_data_header(&mut self, channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<()> {
         self.data_header = create_data_header(channels)?;
         // Convert the HashMap to a BTreeMap to enforce key order

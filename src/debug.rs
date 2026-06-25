@@ -198,8 +198,11 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
 
 pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
     fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
-        let bsread = Bsread::new().unwrap();
+        let bsread = Bsread::new()?;
         let mut sender = Sender::new(bsread, socket_type, transport, None, block, None, None)?;
+        sender.set_linger(0)?;
+        sender.set_keepalive(30,10,3)?;
+        sender.set_heartbeat(5000,15000,20000)?;
         sender.start()?;
         let mut count = 0;
         let mut start_time = Instant::now().sub( Duration::from_secs(1));
