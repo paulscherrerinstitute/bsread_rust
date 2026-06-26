@@ -83,10 +83,10 @@ impl TestEnvironment {
         if !STARTED_SERVERS.load(Ordering::SeqCst) {
             STARTED_SERVERS.store(true, Ordering::SeqCst);
             println!("Starting senders...");
-            start_sender(TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None)?;
-            start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()))?;
-            start_sender(TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None)?;
-            start_sender(TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None)?;
+            start_sender(TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None)?;
+            start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()), None)?;
+            start_sender(TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None)?;
+            start_sender(TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None)?;
         }
         let bsread = Bsread::new()?;
         Ok(Self {bsread})
@@ -769,6 +769,47 @@ fn receiver_options() ->  IOResult<()> {
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
+    Ok(())
+}
+
+
+#[test]
+fn receiver_monitoring() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let TXP: Transport = Transport::Tcp {port:10350, host:None};
+    let endpoint = TXP.endpoint();
+    let server_lifetime = 2000;
+    start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime))?; //Server will stop in 2s
+    let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB)?;
+    let event_receiver = rec.enable_monitoring()?;
+    rec.connect(endpoint.as_str())?;
+
+    //Waiting for connected state using events
+    while(true){
+        let ev = event_receiver.recv_timeout(Duration::from_millis(server_lifetime)).unwrap();
+        if ev.endpoint() == endpoint{
+            println!("Received event: {:?}" , ev.state());
+            if ev.state() == EndpointState::Connected{
+                break;
+            }
+        }
+    }
+    let message = rec.receive()?;
+    print_message(&message);
+
+    //Checking endpoint state
+    let es = rec.endpoint_state(&endpoint);
+    //Map with all states
+    let ess = rec.endpoint_states();
+    assert_eq!(es, ess.get(&endpoint).copied());
+    assert_eq!(es, Some(EndpointState::Connected));
+    println!("Endpoint {} state : {:?}", &endpoint, es);
+    print_stats_rec(&rec);
+
+    thread::sleep(Duration::from_millis(server_lifetime));
+    let es = rec.endpoint_state(&endpoint);
+    println!("Endpoint {} state : {:?}", &endpoint, es);
+    assert_ne!(es, Some(EndpointState::Connected));
     Ok(())
 }
 

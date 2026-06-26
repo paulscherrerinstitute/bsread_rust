@@ -1,7 +1,7 @@
 use crate::*;
 use crate::message::*;
 use crate::utils::*;
-use crate::sockets::{SocketConfig, Transport};
+use crate::sockets::*;
 use std::{io, thread};
 use std::collections::HashMap;
 use std::error::Error;
@@ -11,89 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
-struct TrackedSocket {
-    socket: zmq::Socket,
-    connections: Vec<String>,
-    topics: Vec<String>,
-}
-
-impl TrackedSocket {
-    fn new(context: &Context, socket_type: zmq::SocketType) -> IOResult<TrackedSocket> {
-        let socket = context.socket(socket_type)?;
-        Ok(Self {
-            socket,
-            connections: Vec::new(),
-            topics: Vec::new(),
-        })
-    }
-
-    fn add_topic(&mut self, topic: String) {
-        self.topics.push(topic);
-    }
-
-    fn subscribe(&mut self, topic:&str, endpoint: &str) -> IOResult<()> {
-        if let Err(e) =  self.socket.set_subscribe(topic.as_bytes()) {
-            log::error!("Error subscribing topic {} in endpoint {}: {}", topic, endpoint, e);
-            return Err(e.into());
-        }
-        Ok(())
-    }
-
-    fn connect(&mut self, endpoint: &str) -> IOResult<()> {
-        if !self.has_connected_to(endpoint) {
-            let socket_type = self.socket.get_socket_type()?;
-            log::info!("Connecting to endpoint {}  socket type:{:?}", endpoint, socket_type);
-            if let Err(e) = self.socket.connect(endpoint) {
-                log::error!("Error connecting to endpoint {}: {}", endpoint, e);
-                return Err(e.into());
-            }
-            if socket_type == SocketType::SUB {
-                if self.topics.is_empty() {
-                    self.subscribe("", endpoint).unwrap();
-                } else {
-                    for topic in &self.topics.clone() {
-                        self.subscribe(topic, endpoint).unwrap();
-                    }
-                }
-            }
-            self.connections.push(endpoint.to_string());
-        }
-        Ok(())
-    }
-
-    fn has_connected_to(&self, endpoint: &str) -> bool {
-        self.connections.contains(&endpoint.to_string())
-    }
-
-    fn has_any_connection(&self) -> bool {
-        !self.connections.is_empty()
-    }
-
-    fn disconnect(&mut self, endpoint: &str){
-        if self.has_connected_to(endpoint) {
-            //self.connections.retain(|x| x != endpoint);
-            log::info!("Disonnecting endpoint {}", endpoint);
-            if let Err(e) =  self.socket.disconnect(endpoint) {
-                log::error!("Error disonnecting endpoint {}: {}", endpoint, e);
-            }
-        }
-    }
-
-    fn disconnect_all(&mut self) {
-        for endpoint in self.connections.clone(){
-            self.disconnect(endpoint.as_str());
-        }
-    }
-}
-
-impl Drop for TrackedSocket {
-    fn drop(&mut self) {
-        if self.has_any_connection(){
-            self.disconnect_all();
-        }
-    }
-}
 
 static RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
 fn index() -> u32{
@@ -154,9 +73,9 @@ Receiver{
     }
 
     pub fn new_with_interrupted(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType, interrupted: Arc<AtomicBool>) -> IOResult<Self> {
-        let socket = TrackedSocket::new(&bsread.context(), socket_type)?;
-        let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let index =  index();
+        let socket = TrackedSocket::new(&bsread.context(), socket_type, index)?;
+        let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
         let mode = "sync".to_string();
         Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
@@ -221,7 +140,7 @@ Receiver{
     }
 
     pub fn receive(&mut self) -> IOResult<Message> {
-        let message_parts = self.socket.socket.recv_multipart(0)?;
+        let message_parts = self.socket.receive()?;
         if let Some(sender) = self.forwarder.as_mut() {
             match sender.forward(&message_parts) {
                 Ok(_) => (),
@@ -434,7 +353,7 @@ Receiver{
 
     pub fn connections(&self) -> usize {
         match &self.endpoints{
-            None => {self.socket.connections.len()}
+            None => {self.socket.num_connection()}
             Some(e) => {e.len()}
         }
     }
@@ -482,12 +401,22 @@ Receiver{
         }
         Ok(())
     }
+    pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
+        self.socket.enable_monitoring(self.bsread.context())
+    }
+
+    pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
+        self.socket.endpoint_state(endpoint)
+    }
+    pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
+        self.socket.endpoint_states()
+    }
 }
 
 impl SocketConfig for Receiver {
     fn transport(&self) -> Transport {
         if self.socket.has_any_connection() {
-            Transport::from_endpoint(self.socket.connections[0].as_str()).unwrap()
+            Transport::from_endpoint(self.socket.connection(0).unwrap().as_str()).unwrap()
         } else {
             Transport::Tcp { port: 0, host: None }
         }
@@ -496,7 +425,7 @@ impl SocketConfig for Receiver {
         self.socket_type
     }
     fn socket(&self) -> &zmq::Socket {
-        &self.socket.socket
+        &self.socket.socket()
     }
 }
 

@@ -177,7 +177,6 @@ pub fn create_test_values(value: u64, size:usize) -> Vec<Value>{
 lazy_static! {
     static ref SENDER_INTERRUPTED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
-
 }
 
 fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Message>{
@@ -196,8 +195,8 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     Message::new_from_channel_map(ID_SIMULATED,TIMESTAMP_NOW, channels, data)
 }
 
-pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>) -> IOResult<()> {
-    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>)  -> IOResult<()>{
+pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>, timeout:Option<u64>) -> IOResult<()> {
+    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>, timeout:Option<u64>)  -> IOResult<()>{
         let bsread = Bsread::new()?;
         let mut sender = Sender::new(bsread, socket_type, transport, block, None, None)?;
         sender.set_linger(0)?;
@@ -205,9 +204,16 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
         sender.set_heartbeat(5000,15000,20000)?;
         sender.start()?;
         let mut count = 0;
-        let mut start_time = Instant::now().sub( Duration::from_secs(1));
+        let mut start_time = Instant::now();
+        let mut msg_timestamp = Instant::now().sub( Duration::from_secs(1));
         while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
-            if start_time.elapsed() >= Duration::from_millis(interval_ms){
+            if let Some(to) = timeout {
+                if start_time.elapsed() >= Duration::from_millis(to){
+                    log::warn!("Sender timeout: {}", sender.endpoint() );
+                    break;
+                }
+            }
+            if msg_timestamp.elapsed() >= Duration::from_millis(interval_ms){
                 match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone()){
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
@@ -218,7 +224,7 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                     Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.transport().endpoint(), socket_type, e)}
                 }
                 count = count+1;
-                start_time = Instant::now();
+                msg_timestamp = Instant::now();
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -230,7 +236,7 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            match create_sender(transport, socket_type, interval_ms, block, compression){
+            match create_sender(transport, socket_type, interval_ms, block, compression, timeout){
                 Ok(_) => {}
                 Err(e) => {log::warn!("Error creating Sender [endpoint={}, socketType={:?}]: {:?}", endpoint, socket_type, e)}
             }

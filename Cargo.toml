@@ -30,6 +30,8 @@ reqwest = { version = "0.13.2", optional = true, default-features = false, featu
 rand = "0.10.0"
 md-5 = "0.10"
 lazy_static = "1.4"
+crossbeam-channel = "0.5.15"
+uuid = { version = "1.23.4", features = ["v4"] }
 
 [features]
 default = []
