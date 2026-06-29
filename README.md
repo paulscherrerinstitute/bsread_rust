@@ -175,9 +175,9 @@ a compressed array, implemented using the Message struct and using Sender::send_
     let array_size =100;
     let mut channels = Vec::new();
     //# Channels: uint64 scalar, float64 scalar and array of uint8
-    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string())?);
-    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string())?);
-    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, "bitshuffle_lz4".to_string())?);
+    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, Compression::None, false)?);
+    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, Compression::None, false)?);
+    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![array_size]), little_endian, Compression::BitshuffleLz4, false)?);
 
     //Starts the sender, binding to the port
     sender.start()?;
@@ -205,7 +205,7 @@ This simpler pattern doesn't create Message structs and uses Sender::send() inst
     let mut sender = Sender::new(&bsread,  SocketType::PUB, 10400, Some(get_local_address()), None, None, None, None)?;
 
     let value = Value::U8(100);
-    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, "none".to_string())?;
+    let ch = channel::new(value.get_name().to_string(), value.get_type().to_string(), None, true, Compression::None, false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
