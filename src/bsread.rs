@@ -1,4 +1,4 @@
-use crate::IOResult;
+use crate::{Compression, IOError, IOResult};
 use crate::receiver::Receiver;
 use crate::sockets::{Transport};
 use crate::sender::{Sender};
@@ -38,7 +38,7 @@ impl Bsread {
     }
 
     pub fn sender(self: &Arc<Self>, socket_type: SocketType, transport: Transport,
-                  block:Option<bool>, start_id:Option<u64>, header_compression:Option<String>) -> IOResult<Sender> {
+                  block:Option<bool>, start_id:Option<u64>, header_compression:Option<Compression>) -> IOResult<Sender> {
         Sender::new(self.clone(), socket_type, transport, block, start_id, header_compression)
     }
 

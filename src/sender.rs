@@ -27,7 +27,7 @@ pub struct Sender {
     transport: Transport,
     block: bool,
     pulse_id: u64,
-    header_compression: String,
+    header_compression: Compression,
     started: bool,
 }
 
@@ -38,18 +38,18 @@ impl Sender {
             transport: Transport,
             block: Option<bool>,
             start_id: Option<u64>,
-            header_compression: Option<String>,
+            header_compression: Option<Compression>,
         ) -> IOResult<Self> {
         let socket = bsread.context().socket(socket_type)?;
         let block = block.unwrap_or(false);
         let start_id = start_id.unwrap_or(0);
-        let header_compression = header_compression.unwrap_or("none".to_string());
+        let header_compression = header_compression.unwrap_or(Compression::None);
 
         let mut main_header = HashMap::new();
 
         //Initialize main header
-        main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
-        if header_compression != "none" {
+        main_header.insert("htype".to_string(), JsonValue::String(HTYPE.to_string()));
+        if header_compression != Compression::None {
             main_header.insert("dh_compression".to_string(), JsonValue::String(header_compression.to_string()));
         }
         let mut _self = Self { socket, socket_type, main_header:main_header, data_header: HashMap::new(), data_header_buffer: vec![],
@@ -64,14 +64,14 @@ impl Sender {
         let ordered_data_header: BTreeMap<_, _> = self.data_header.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let data_header_json = serde_json::to_string(&ordered_data_header)?;
 
-        let blob = match self.header_compression.as_str() {
-            "bitshuffle_lz4" => {
+        let blob = match self.header_compression {
+            Compression::BitshuffleLz4 => {
                 &compress_bitshuffle_lz4(data_header_json.as_bytes(), 1)?
             }
-            "lz4" => {
+            Compression::Lz4 => {
                 &compress_lz4(data_header_json.as_bytes(), false)?
             }
-            &_ => { data_header_json.as_bytes() }
+            Compression::None => { data_header_json.as_bytes() }
         };
         let hash = hash_md5(blob);
         self.main_header.insert("hash".to_string(),  JsonValue::String(hash));

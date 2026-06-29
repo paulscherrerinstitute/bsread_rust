@@ -15,7 +15,7 @@ pub struct ChannelConfig {
     elements: usize,
     element_size: usize,
     little_endian: bool,
-    compression: String,
+    compression: Compression,
     raw: bool,
 }
 
@@ -42,7 +42,7 @@ impl ChannelConfig {
     pub fn is_little_endian(&self) -> bool {
         self.little_endian
     }
-    pub fn compression(&self) -> String {
+    pub fn compression(&self) -> Compression {
         self.compression.clone()
     }
     pub fn is_raw(&self) -> bool {
@@ -58,8 +58,8 @@ impl ChannelConfig {
         metadata.insert("shape".to_string(),shape_json);
         metadata.insert("type".to_string(), JsonValue::String(self.kind()));
         metadata.insert("encoding".to_string(), JsonValue::String((if self.is_little_endian(){"little"} else {"big"}).to_string()));
-        if self.compression() != "none" {
-            metadata.insert("compression".to_string(), JsonValue::String(self.compression()));
+        if self.compression() != Compression::None {
+            metadata.insert("compression".to_string(), JsonValue::String(self.compression().to_string()));
         }
         metadata
     }
@@ -112,7 +112,7 @@ fn element_size(typ: &str) -> usize {
     }
 }
 impl<T: Default + Clone> ChannelScalar<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String,
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
                reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>, writer: fn(&mut Cursor<&mut Vec<u8>>, &T) -> IOResult<()>) -> Self {
         let elements = elements(&shape);
         let element_size = element_size(&typ);
@@ -123,7 +123,7 @@ impl<T: Default + Clone> ChannelScalar<T> {
 
 
 impl<T: Default + Clone> ChannelArray<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String,
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
                reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,  writer: fn(&mut Cursor<&mut Vec<u8>>, &[T]) -> IOResult<()>) -> Self {
         let elements = elements(&shape);
         let element_size = element_size(&typ);
@@ -133,7 +133,7 @@ impl<T: Default + Clone> ChannelArray<T> {
 }
 
 impl ChannelRaw {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: String,
+    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
                reader: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()>, writer: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()>) -> Self {
         let elements = elements(&shape);
         let element_size = element_size(&typ);
@@ -142,7 +142,7 @@ impl ChannelRaw {
     }
 }
 
-static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), kind: String::new(), shape: None, elements: 0, element_size: 0, little_endian: false, compression: String::new(), raw: false};
+static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), kind: String::new(), shape: None, elements: 0, element_size: 0, little_endian: false, compression: Compression::None, raw: false};
 pub trait ChannelTrait: Send {
     fn config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
@@ -277,7 +277,7 @@ pub fn is_array(shape:&Option<Vec<u32>>) -> bool{
     }
 }
 
-pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:String, raw:bool) -> IOResult<Box<dyn ChannelTrait>> {
+pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:Compression, raw:bool) -> IOResult<Box<dyn ChannelTrait>> {
     let array = is_array(&shape);
     if raw && (typ.as_str()!="string") {
         if little_endian || (element_size(&typ)==1){

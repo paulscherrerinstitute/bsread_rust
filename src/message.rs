@@ -56,10 +56,9 @@ fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResu
     let little_endian = if encoding == ">" || encoding.to_lowercase()=="big" { false } else { true };
 
     //"none" or "bitshuffle_lz4"
-    let compression = channel_data.get("compression")
+    let compression = Compression::from_str(channel_data.get("compression")
         .and_then(|v| v.as_str())
-        .unwrap_or("none")
-        .to_string();
+        .unwrap_or("none"))?;     
 
     channel::new(name, typ, shape, little_endian, compression, raw)
 }
@@ -118,14 +117,14 @@ fn parse_channel_data(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTra
         global_timestamp.clone()
     };
 
-    let data = match channel.config().compression().as_str() {
-        "bitshuffle_lz4" => {
+    let data = match channel.config().compression() {
+        Compression::BitshuffleLz4 => {
             &decompress_bitshuffle_lz4(v, channel.config().element_size())?
         }
-        "lz4" => {
+        Compression::Lz4 => {
             &decompress_lz4(v, channel.config().is_little_endian())?
         }
-        &_ => { v }
+        Compression::None => { v }
     };
     // Create a Cursor to read from the vector
     if raw {
@@ -144,14 +143,14 @@ pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & Channe
     let mut buf = vec![0u8; size];
     let mut cursor = Cursor::new(&mut buf);
     channel.write(& mut cursor, &value)?;
-    let data = match channel.config().compression().as_str() {
-        "bitshuffle_lz4" => {
+    let data = match channel.config().compression() {
+        Compression::BitshuffleLz4 => {
             compress_bitshuffle_lz4(&buf, channel.config().element_size())?
         }
-        "lz4" => {
+        Compression::Lz4 => {
             compress_lz4(&buf, channel.config().is_little_endian())?
         }
-        &_ => { buf }
+        Compression::None => { buf }
     };
     let mut tm = vec![0u8; 16];
     let mut cursor = Cursor::new(&mut tm);
@@ -171,7 +170,7 @@ pub struct Message {
     id: u64,
     hash: String,
     htype: String,
-    dh_compression: String,
+    dh_compression: Compression,
     timestamp: (u64, u64),
     header_changed: Option<bool>,
     raw: bool,
@@ -182,15 +181,46 @@ pub struct DataHeaderInfo {
     pub channels: Vec<Box<dyn ChannelTrait>>,
 }
 
-fn hash(main_header: &HashMap<String, JsonValue>) -> String {
-    main_header.get("hash").unwrap().as_str().unwrap().to_string()
+fn id(main_header: &HashMap<String, JsonValue>) -> IOResult<u64> {
+    let v = main_header.get("pulse_id").ok_or_else(|| {
+            new_error(ErrorKind::InvalidInput, "Missing 'pulse_id'")
+        })?;
+
+    match v.as_i64() {
+        Some(id) if id >= 0 => Ok(id as u64),
+        Some(_) => Err(new_error(ErrorKind::InvalidInput,"'pulse_id' cannot be negative",)),
+        None => Err(new_error(ErrorKind::InvalidInput,"'pulse_id' is not a valid integer",)),
+    }
 }
 
-fn dh_compression(main_header: &HashMap<String, JsonValue>) -> String {
+fn hash(main_header: &HashMap<String, JsonValue>) -> IOResult<String> {
+    main_header.get("hash").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else( ||
+        new_error(ErrorKind::InvalidInput,"Invalid format: 'hash' missing or not a string")
+    )
+}
+fn htype(main_header: &HashMap<String, JsonValue>) -> IOResult<String> {
+    let h = main_header.get("htype").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else( ||
+        new_error(ErrorKind::InvalidInput,"Invalid format: 'htype' missing or not a string")
+    )?;
+    if h != HTYPE {
+        return Err(new_error(ErrorKind::InvalidInput,"Invalid field: 'htype'"));
+    }
+    Ok(h)
+}
+
+fn dh_compression(main_header: &HashMap<String, JsonValue>) -> IOResult<Compression> {
     match main_header.get("dh_compression") {
-        None => { "none" }
-        Some(v) => { v.as_str().unwrap() }
-    }.to_string()
+        None => Ok(Compression::None),
+        Some(v) => {
+            let s = v.as_str().ok_or_else(|| {
+                new_error(
+                    ErrorKind::InvalidInput,
+                    "Invalid format: 'dh_compression' is not a string",
+                )
+            })?;
+            Compression::from_str(s)
+        }
+    }
 }
 
 fn timestamp(main_header: &HashMap<String, JsonValue>) -> (u64, u64) {
@@ -212,17 +242,17 @@ impl Message {
            data: IndexMap<String, Option<ChannelData>>,
            header_changed: Option<bool>,
            raw: bool) -> IOResult<Self> {
-        let hash = hash(&main_header);
-        let dh_compression = dh_compression(&main_header);
-        let id = main_header.get("pulse_id").unwrap().as_u64().unwrap();
-        let htype = main_header.get("htype").unwrap().as_str().unwrap().to_string();
+        let hash = hash(&main_header)?;
+        let id = id(&main_header)?;
+        let htype =htype(&main_header)?;
+        let dh_compression = dh_compression(&main_header)?;
         let timestamp = timestamp(&main_header);
 
         Ok(Self { main_header, data_header, channels, data, id, hash, htype, dh_compression, timestamp, header_changed, raw })
     }
     pub fn new_from_channel_map(id:u64, timestamp: (u64, u64),  channels: Vec<Box<dyn ChannelTrait>>, channel_data:IndexMap<String, Option<ChannelData>>) -> IOResult<Self> {
         let mut main_header: HashMap<String, JsonValue> = HashMap::new();
-        main_header.insert("htype".to_string(), JsonValue::String("bsr_m-1.1".to_string()));
+        main_header.insert("htype".to_string(), JsonValue::String(HTYPE.to_string()));
         main_header.insert("pulse_id".to_string(),  JsonValue::Number(JsonNumber::from(id)));
         let mut global_timestamp = JsonMap::new();
         global_timestamp.insert("sec".to_string(), JsonValue::Number(timestamp.0.into()));
@@ -280,7 +310,7 @@ impl Message {
         self.htype.clone()
     }
 
-    pub fn dh_compression(&self) -> String {
+    pub fn dh_compression(&self) -> Compression {
         self.dh_compression.clone()
     }
 
@@ -342,7 +372,8 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         return Err(new_error(ErrorKind::InvalidData, "Invalid message format"));
     }
     let main_header = decode_json(&message_parts[0])?;
-    let hash = hash(&main_header);
+    let id = id(&main_header)?;
+    let hash = hash(&main_header)?;
     let global_timestamp = timestamp(&main_header);
 
     // Determine whether to reuse or reparse data
@@ -352,16 +383,16 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     } else {
         *counter_header_changes = *counter_header_changes +1;
         let blob = &message_parts[1];
-        let compression = dh_compression(&main_header);
+        let compression = dh_compression(&main_header)?;
 
-        let json = match compression.as_str() {
-            "bitshuffle_lz4" => {
+        let json = match compression {
+            Compression::BitshuffleLz4 => {
                 &decompress_bitshuffle_lz4(blob, 1)?
             }
-            "lz4" => {
+            Compression::Lz4 => {
                 &decompress_lz4(blob, false)?
             }
-            &_ => { &blob }
+            Compression::None => { &blob }
         };
         let data_header = decode_json(json)?;
         let channels = parse_channels(&data_header, raw).unwrap();

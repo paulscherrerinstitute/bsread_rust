@@ -13,6 +13,7 @@ use std::{cmp, thread};
 use std::any::Any;
 use std::io::{Cursor, Write};
 use std::ops::DerefMut;
+use std::str::FromStr;
 use std::string::ToString;
 use std::time::Duration;
 use indexmap::IndexMap;
@@ -84,7 +85,7 @@ impl TestEnvironment {
             STARTED_SERVERS.store(true, Ordering::SeqCst);
             println!("Starting senders...");
             start_sender(TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None)?;
-            start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some("bitshuffle_lz4".to_string()), None)?;
+            start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None)?;
             start_sender(TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None)?;
             start_sender(TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None)?;
         }
@@ -443,7 +444,7 @@ fn serializer() ->  IOResult<()> {
     for value in values {
         for little_endian in  vec!(true, false) {
             let shape= if value.is_array() {Some(vec![value.size()as u32])} else {None};
-            let ch = channel::new(value.kind().to_string(), value.kind().to_string(), shape, little_endian, "none".to_string(), false)?;
+            let ch = channel::new(value.kind().to_string(), value.kind().to_string(), shape, little_endian, Compression::None, false)?;
             let mut cursor = Cursor::new(&mut buf);
             ch.write(&mut cursor, &value)?;
             let mut cursor = Cursor::new(&buf);
@@ -460,7 +461,7 @@ fn sender_pub() ->  IOResult<()> {
     let mut sender = Sender::new(bsread,  SocketType::PUB, Transport::Tcp{port:10400, host:None}, None, None, None)?;
 
     let value = Value::U8(100);
-    let ch = channel::new(value.name().to_string(), value.kind().to_string(), None, true, "none".to_string(), false)?;
+    let ch = channel::new(value.name().to_string(), value.kind().to_string(), None, true, Compression::None, false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
@@ -486,7 +487,7 @@ fn sender_push() ->  IOResult<()> {
     let mut sender = Sender::new(bsread,  SocketType::PUSH, Transport::Tcp{port:10410, host:None}, Some(block), None, None)?;
     sender.set_sndhwm(sndhwm);
     let value = Value::U8(100);
-    let ch = channel::new(value.name().to_string(), value.kind().to_string(), None, true, "none".to_string(), false)?;
+    let ch = channel::new(value.name().to_string(), value.kind().to_string(), None, true, Compression::None, false)?;
     let channels = vec![ch];
     let channel_data = ChannelData::new(value,TIMESTAMP_NOW);
     let data = vec![Some(&channel_data)];
@@ -566,9 +567,9 @@ fn sender_demo() ->  IOResult<()> {
     let little_endian = true;
     let mut channels = Vec::new();
     //# Channels: uint64 scalar, float64 scalar and array of uint8
-    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, "none".to_string(), false)?);
-    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, "none".to_string(),false)?);
-    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![MESSAGE_ARRAY_SIZE as u32]), little_endian, "bitshuffle_lz4".to_string(), false)?);
+    channels.push(channel::new("Channel1".to_string(), "uint64".to_string() ,None, little_endian, Compression::None, false)?);
+    channels.push(channel::new("Channel2".to_string(), "float64".to_string(), None, little_endian, Compression::None,false)?);
+    channels.push(channel::new("Channel3".to_string(), "uint8".to_string(), Some(vec![MESSAGE_ARRAY_SIZE as u32]), little_endian, Compression::BitshuffleLz4, false)?);
 
     //Starts the sender, binding to the port
     sender.start()?;
@@ -813,5 +814,14 @@ fn receiver_monitoring() ->  IOResult<()> {
     Ok(())
 }
 
+
+#[test]
+fn compression_enum() ->  IOResult<()> {
+    let comp = Compression::from_str("none")?;
+    assert_eq!(comp, Compression::None);
+    let comp = Compression::None.to_string();
+    assert_eq!(comp, "none");
+    Ok(())
+}
 
 

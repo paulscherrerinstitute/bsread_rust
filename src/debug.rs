@@ -179,8 +179,8 @@ lazy_static! {
     static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
 }
 
-fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Message>{
-    let comp = compression.unwrap_or("none".to_string());
+fn create_message(v:u64, s:usize, compression:Option<Compression>) -> IOResult<Message>{
+    let comp = compression.unwrap_or(Compression::None);
     let little_endian = true;
     let mut channels = Vec::new();
     let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
@@ -195,8 +195,8 @@ fn create_message(v:u64, s:usize, compression:Option<String>) -> IOResult<Messag
     Message::new_from_channel_map(ID_SIMULATED,TIMESTAMP_NOW, channels, data)
 }
 
-pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>, timeout:Option<u64>) -> IOResult<()> {
-    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<String>, timeout:Option<u64>)  -> IOResult<()>{
+pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>) -> IOResult<()> {
+    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>)  -> IOResult<()>{
         let bsread = Bsread::new()?;
         let mut sender = Sender::new(bsread, socket_type, transport, block, None, None)?;
         sender.set_linger(0)?;
