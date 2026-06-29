@@ -106,10 +106,10 @@ impl Sender {
 
     pub fn send(&mut self,  id:u64, timestamp: (u64,u64), channels: &Vec<Box<dyn ChannelTrait>>, channel_data: &Vec<Option<&ChannelData>>) -> IOResult<()> {
         if channel_data.len() ==0 {
-            return Err(new_error(ErrorKind::InvalidInput, "Empty channel data list"));
+            return Err(IOError::new(ErrorKind::InvalidInput, "Empty channel data list"));
         }
         if channel_data.len() != channels.len(){
-            return Err(new_error(ErrorKind::InvalidInput, "Invalid size of channel data list"));
+            return Err(IOError::new(ErrorKind::InvalidInput, "Invalid size of channel data list"));
         }
 
         self.update_main_header(id, timestamp);

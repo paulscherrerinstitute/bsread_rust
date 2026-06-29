@@ -148,11 +148,11 @@ pub trait ChannelTrait: Send {
         &EMPTY_CONFIG
     }
     fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
-        Err(new_error(ErrorKind::Unsupported, "Unsupported channel type"))
+        Err(IOError::new(ErrorKind::Unsupported, "Unsupported channel type"))
     }
 
     fn write(&self, _: &mut Cursor<&mut Vec<u8>>, _:&Value) -> IOResult<()> {
-        Err(new_error(ErrorKind::Unsupported, "Unsupported channel type"))
+        Err(IOError::new(ErrorKind::Unsupported, "Unsupported channel type"))
     }
 
 }
@@ -196,7 +196,7 @@ macro_rules! impl_channel_scalar_trait {
                     (self.writer)(cursor, data)?;
                     Ok(())
                 } else {
-                    Err(new_error(ErrorKind::InvalidInput, "Channel write with invalid variant"))
+                    Err(IOError::new(ErrorKind::InvalidInput, "Channel write with invalid variant"))
                 }
             }
 
@@ -225,7 +225,7 @@ macro_rules! impl_channel_array_trait {
                     (self.writer)(cursor, data)?;
                     Ok(())
                 } else {
-                    Err(new_error(ErrorKind::InvalidInput, "Channel write with invalid variant"))
+                    Err(IOError::new(ErrorKind::InvalidInput, "Channel write with invalid variant"))
                 }
             }
 
@@ -265,7 +265,7 @@ impl_channel_array_trait!(f64, AF64);
 
 impl ChannelTrait for ChannelArray<String> {
     fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
-        Err(new_error(ErrorKind::Unsupported, "String array not supported"))
+        Err(IOError::new(ErrorKind::Unsupported, "String array not supported"))
     }
 }
 
@@ -287,7 +287,7 @@ pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool,
                 2 =>  Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_BRAW16,  WRITER_BRAW16 ))),
                 4 => Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_BRAW32,  WRITER_BRAW32 ))),
                 8 => Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_BRAW64,  WRITER_BRAW64 ))),
-                _ => Err(new_error(ErrorKind::Unsupported, "Unsupported data type"))
+                _ => Err(IOError::new(ErrorKind::Unsupported, "Unsupported data type"))
             }
 
         }
@@ -307,7 +307,7 @@ pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool,
                 "uint64" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU64 } else { READER_ABU64 }, if little_endian { WRITER_AU64 } else { WRITER_ABU64 }))),
                 "float32" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AF32 } else { READER_ABF32 }, if little_endian { WRITER_AF32 } else { WRITER_ABF32 }))),
                 "float64" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AF64 } else { READER_ABF64 }, if little_endian { WRITER_AF64 } else { WRITER_ABF64 }))),
-                _ => Err(new_error(ErrorKind::Unsupported, "Unsupported data type"))
+                _ => Err(IOError::new(ErrorKind::Unsupported, "Unsupported data type"))
             }
         } else {
             match typ.as_str() {
@@ -323,7 +323,7 @@ pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool,
                 "uint64" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U64 } else { READER_BU64 }, if little_endian { WRITER_U64 } else { WRITER_BU64 }))),
                 "float32" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_F32 } else { READER_BF32 }, if little_endian { WRITER_F32 } else { WRITER_BF32 }))),
                 "float64" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_F64 } else { READER_BF64 }, if little_endian { WRITER_F64 } else { WRITER_BF64 }))),
-                _ => Err(new_error(ErrorKind::Unsupported, "Unsupported data type"))
+                _ => Err(IOError::new(ErrorKind::Unsupported, "Unsupported data type"))
             }
         }
     }

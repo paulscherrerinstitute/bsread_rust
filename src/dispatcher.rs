@@ -97,17 +97,17 @@ pub fn request_stream(channels: Vec<ChannelDescription>, stream_type: Option<Str
         .headers(headers)
         .json(&config)
         .send()
-        .map_err(|e: ReqwestError|new_error(ErrorKind::ConnectionRefused, e.to_string().as_str()))?;
+        .map_err(|e: ReqwestError|IOError::new(ErrorKind::ConnectionRefused, e.to_string().as_str()))?;
 
     if !response.status().is_success() {
         let error_msg = match response.text(){
             Ok(msg) => { format!("Unable to request stream {:?}: {}", config, msg)}
             Err(err) => {format!("Error requesting stream {:?}: {}", config, err.to_string())}
         };
-        return Err( new_error (ErrorKind::Other, error_msg.as_str()));
+        return Err( IOError::new (ErrorKind::Other, error_msg.as_str()));
     }
 
-    let json: serde_json::Value = response.json().map_err(|e: ReqwestError|new_error(ErrorKind::InvalidData, e.to_string().as_str()))?;
+    let json: serde_json::Value = response.json().map_err(|e: ReqwestError|IOError::new(ErrorKind::InvalidData, e.to_string().as_str()))?;
     let endpoint = json["stream"].as_str().unwrap().to_string();
     log::info!("Created stream : {}", endpoint);
     Ok(DispatcherStream{endpoint})

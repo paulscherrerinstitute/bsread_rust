@@ -51,11 +51,6 @@ impl Display for Compression {
     }
 }
 
-
-fn new_error(kind: ErrorKind, desc: &str) -> IOError {
-    IOError::new(kind, desc)
-}
-
 //Result<(), Box<dyn std::error::Error>>
 #[cfg(test)]
 mod tests;

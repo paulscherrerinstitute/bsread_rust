@@ -272,13 +272,13 @@ Receiver{
                     log::error!("Listener thread error: {:?}", e);
                     // Handle thread panic and convert to a std::io::Error
                     let error_message = format!("Thread error: {:?}", e);
-                    new_error(ErrorKind::Other, error_message.as_str())
+                    IOError::new(ErrorKind::Other, error_message.as_str())
                 })?
                 .map_err(|e| {
                     let desc = e.to_string();
                     let parts: Vec<&str> = desc.split('|').collect();
                     log::error!("Listener thread join error: {:?}", parts);
-                    new_error(error_kind_from_str(parts[0]), parts[1])
+                    IOError::new(error_kind_from_str(parts[0]), parts[1])
                 })?;
         }
         Ok(())
@@ -288,7 +288,7 @@ Receiver{
     //Buffered mode: non-blocking, messages buffered ibn another thread
     pub fn start(&mut self, buffer_size:usize) -> IOResult<()> {
         if self.fifo.is_some(){
-            return Err(new_error(ErrorKind::AlreadyExists, "Receiver already started"));
+            return Err(IOError::new(ErrorKind::AlreadyExists, "Receiver already started"));
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
 
@@ -330,7 +330,7 @@ Receiver{
             thread::sleep(Duration::from_millis(10));
         }
 
-        Err(new_error(ErrorKind::TimedOut, "Timout waiting for message"))
+        Err(IOError::new(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
     pub fn fifo(&self) -> Option<Arc<FifoQueue<Message>>> {

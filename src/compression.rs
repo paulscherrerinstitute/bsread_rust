@@ -100,7 +100,7 @@ fn  bshuf_trans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, S
 pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_untrans_bit_elem(&compressed_data, element_size) {
         Ok(out) => {Ok(out)}
-        Err(e) => {Err(new_error(ErrorKind::InvalidInput, e.as_str()))}
+        Err(e) => {Err(IOError::new(ErrorKind::InvalidInput, e.as_str()))}
     }
 }
 
@@ -119,7 +119,7 @@ pub fn decompress_lz4(compressed_data: &[u8], little_endian:bool) -> IOResult<Ve
 pub fn compress_bitshuffle_lz4(data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_trans_bit_elem(data, element_size){
         Ok(out) => {Ok(out)}
-        Err(e) => {Err(new_error(ErrorKind::InvalidInput, e.as_str()))}
+        Err(e) => {Err(IOError::new(ErrorKind::InvalidInput, e.as_str()))}
     }
 }
 

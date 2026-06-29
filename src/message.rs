@@ -40,7 +40,7 @@ fn convert_shape_val_to_vec(opt_val: Option<&JsonValue>) -> Option<Vec<u32>> {
 fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResult<Box<dyn ChannelTrait>> {
     let name = channel_data.get("name")
         .and_then(|v| v.as_str())
-        .ok_or(new_error(ErrorKind::InvalidInput,"Invalid format: 'name' missing or not a string"))?
+        .ok_or(IOError::new(ErrorKind::InvalidInput,"Invalid format: 'name' missing or not a string"))?
         .to_string();
 
     let typ = channel_data.get("type")
@@ -58,7 +58,7 @@ fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResu
     //"none" or "bitshuffle_lz4"
     let compression = Compression::from_str(channel_data.get("compression")
         .and_then(|v| v.as_str())
-        .unwrap_or("none"))?;     
+        .unwrap_or("none"))?;
 
     channel::new(name, typ, shape, little_endian, compression, raw)
 }
@@ -68,7 +68,7 @@ fn parse_channels(data_header: &HashMap<String, JsonValue>, raw: bool) -> IOResu
     let items = data_header
         .get("channels")
         .and_then(|v| v.as_array())
-        .ok_or(new_error(ErrorKind::InvalidInput,"Invalid format: 'channels' missing or not an array"))?;
+        .ok_or(IOError::new(ErrorKind::InvalidInput,"Invalid format: 'channels' missing or not an array"))?;
 
     // Initialize the resulting HashMap
     //let mut channels = HashMap::new();
@@ -78,7 +78,7 @@ fn parse_channels(data_header: &HashMap<String, JsonValue>, raw: bool) -> IOResu
     for item in items {
         // Ensure each item is a map with string keys and string values
         let channel_data = item.as_object().
-            ok_or(new_error(ErrorKind::InvalidInput,"Invalid format: is not an object"))?;
+            ok_or(IOError::new(ErrorKind::InvalidInput,"Invalid format: is not an object"))?;
         let channel = parse_channel(channel_data, raw).unwrap();
         //channels.insert(name, channel);
         channels.push(channel);
@@ -106,7 +106,7 @@ impl ChannelData {
 
 fn parse_channel_data(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>, raw:bool) -> IOResult<ChannelData> {
     //if t.len() != 16 {
-    //    return Err(new_error(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
+    //    return Err(IOError::new(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
     //}
     let timestamp = if (t.len() == 16){
         let mut cursor = Cursor::new(t);
@@ -183,27 +183,27 @@ pub struct DataHeaderInfo {
 
 fn id(main_header: &HashMap<String, JsonValue>) -> IOResult<u64> {
     let v = main_header.get("pulse_id").ok_or_else(|| {
-            new_error(ErrorKind::InvalidInput, "Missing 'pulse_id'")
+            IOError::new(ErrorKind::InvalidInput, "Missing 'pulse_id'")
         })?;
 
     match v.as_i64() {
         Some(id) if id >= 0 => Ok(id as u64),
-        Some(_) => Err(new_error(ErrorKind::InvalidInput,"'pulse_id' cannot be negative",)),
-        None => Err(new_error(ErrorKind::InvalidInput,"'pulse_id' is not a valid integer",)),
+        Some(_) => Err(IOError::new(ErrorKind::InvalidInput,"'pulse_id' cannot be negative",)),
+        None => Err(IOError::new(ErrorKind::InvalidInput,"'pulse_id' is not a valid integer",)),
     }
 }
 
 fn hash(main_header: &HashMap<String, JsonValue>) -> IOResult<String> {
     main_header.get("hash").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else( ||
-        new_error(ErrorKind::InvalidInput,"Invalid format: 'hash' missing or not a string")
+        IOError::new(ErrorKind::InvalidInput,"Invalid format: 'hash' missing or not a string")
     )
 }
 fn htype(main_header: &HashMap<String, JsonValue>) -> IOResult<String> {
     let h = main_header.get("htype").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else( ||
-        new_error(ErrorKind::InvalidInput,"Invalid format: 'htype' missing or not a string")
+        IOError::new(ErrorKind::InvalidInput,"Invalid format: 'htype' missing or not a string")
     )?;
     if h != HTYPE {
-        return Err(new_error(ErrorKind::InvalidInput,"Invalid field: 'htype'"));
+        return Err(IOError::new(ErrorKind::InvalidInput,"Invalid field: 'htype'"));
     }
     Ok(h)
 }
@@ -213,7 +213,7 @@ fn dh_compression(main_header: &HashMap<String, JsonValue>) -> IOResult<Compress
         None => Ok(Compression::None),
         Some(v) => {
             let s = v.as_str().ok_or_else(|| {
-                new_error(
+                IOError::new(
                     ErrorKind::InvalidInput,
                     "Invalid format: 'dh_compression' is not a string",
                 )
@@ -369,7 +369,7 @@ pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<Has
 pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32, raw:bool) -> IOResult<Message> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
-        return Err(new_error(ErrorKind::InvalidData, "Invalid message format"));
+        return Err(IOError::new(ErrorKind::InvalidData, "Invalid message format"));
     }
     let main_header = decode_json(&message_parts[0])?;
     let id = id(&main_header)?;
@@ -400,7 +400,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     };
 
     if message_parts.len() - 2 != channels.len() * 2 {
-        return Err(new_error(ErrorKind::InvalidData, "Invalid number of messages"));
+        return Err(IOError::new(ErrorKind::InvalidData, "Invalid number of messages"));
     }
     for i in 0..channels.len() {
         let channel = &channels[i];

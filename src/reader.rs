@@ -38,7 +38,7 @@ pub const READER_STRING: fn(&mut Cursor<&Vec<u8>>) -> IOResult<String> = |cursor
     if let Some(pos) = buffer.iter().position(|&b| b == 0) {
         buffer.truncate(pos);
     }
-    String::from_utf8(buffer).map_err(|e| new_error(ErrorKind::InvalidData, e.to_string().as_str()))
+    String::from_utf8(buffer).map_err(|e| IOError::new(ErrorKind::InvalidData, e.to_string().as_str()))
 };
 
 pub const READER_AI8: fn(&mut Cursor<&Vec<u8>>, &mut [i8]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [i8]| { cursor.read_i8_into(arr) };
