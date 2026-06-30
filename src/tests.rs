@@ -181,8 +181,9 @@ fn multi() -> IOResult<()> {
 fn dynamic() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
-    rec.connect(TXP_PUB.endpoint().as_str())?;
-    rec.connect(TXP_CMP.endpoint().as_str())?;
+    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.add_endpoint(TXP_CMP.endpoint().as_str());
+    rec.connect()?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, Some(2));
@@ -193,7 +194,8 @@ fn dynamic() ->  IOResult<()> {
 fn manual() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
-    rec.connect(TXP_PUB.endpoint().as_str())?;
+    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.connect()?;
     let message = rec.receive()?;
     print_message(&message);
     print_stats_rec(&rec);
@@ -265,7 +267,8 @@ fn bitshuffle() -> IOResult<()> {
 fn conversion() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
-    rec.connect(TXP_PUB.endpoint().as_str())?;
+    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.connect()?;
     let message = rec.receive()?;
     print_message(&message);
     let v = message.channel_value("AF32").unwrap();
@@ -281,7 +284,8 @@ fn conversion() -> IOResult<()> {
 fn booleans() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None,  SocketType::SUB)?;
-    rec.connect(TXP_PUB.endpoint().as_str())?;
+    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.connect()?;
     let message = rec.receive()?;
     print_message(&message);
     let v = message.channel_value("ABOOL").unwrap();
@@ -603,7 +607,7 @@ fn forwarder() ->  IOResult<()> {
     //Asynchronous
     rxtx.fork(|msg| {log::info!("RTX Msg {}", msg.id())}, Some(MESSAGE_COUNT));
     rxtx.join()?;
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(500));
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
 
@@ -783,7 +787,8 @@ fn receiver_monitoring() ->  IOResult<()> {
     start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime))?; //Server will stop in 2s
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB)?;
     let event_receiver = rec.enable_monitoring()?;
-    rec.connect(endpoint.as_str())?;
+    rec.add_endpoint(endpoint.as_str());
+    rec.connect()?;
 
     //Waiting for connected state using events
     while(true){

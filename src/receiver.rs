@@ -62,62 +62,73 @@ pub struct Receiver {
     forwarder: Option<Sender>,
     interrupted: Arc<AtomicBool>,
     mode: String,
-    raw: bool
+    raw: bool,
+    mult: bool
 }
 
 impl
 Receiver{
-    pub fn new(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
-        let interrupted = Arc::new(AtomicBool::new(false));
-        Receiver::new_with_interrupted(bsread, endpoint, socket_type, interrupted)
-    }
-
-    pub fn new_with_interrupted(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType, interrupted: Arc<AtomicBool>) -> IOResult<Self> {
+    fn new(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType, mult:bool) -> IOResult<Self> {
         let index =  index();
         let socket = TrackedSocket::new(&bsread.context(), socket_type, index)?;
         let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
         let mode = "sync".to_string();
+        let  interrupted = Arc::new(AtomicBool::new(false));
+
         Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
-                  forwarder_config:None, forwarder:None,interrupted, mode , raw: false})
+            forwarder_config:None, forwarder:None,interrupted, mode , raw: false, mult})
+    }
+
+    pub fn new_mult(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
+        Receiver::new(bsread, endpoint, socket_type, true)
+    }
+
+    pub fn new_single(bsread: Arc<Bsread>, endpoint: &str, socket_type: SocketType) -> IOResult<Self> {
+        Receiver::new(bsread, Some(vec![endpoint]), socket_type, false)
     }
 
     pub fn to_string(& self,) -> String {
         format!("Receiver {}" , self.index)
     }
 
-    pub fn connect(&mut self, endpoint: &str) -> IOResult<()> {
+    pub fn connect(&mut self) -> IOResult<()> {
+        if let Some(endpoints) = self.endpoints.clone() { // Clone to avoid immutable borrow
+            for endpoint in endpoints {
+                //TODO: Should break if one of the endpoints fail?
+                self.connect_endpoint(&endpoint)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn disconnect(&mut self)  {
+        self.socket.disconnect_all();
+    }
+
+    pub fn add_endpoint(&mut self, endpoint: &str)  -> IOResult<()> {
+        if !self.mult {
+            return Err(IOError::new(ErrorKind::InvalidInput, "Cannot add endpoint to receiver"));
+        }
+        match &mut self.endpoints {
+            Some(vec) => {
+                vec.push(endpoint.to_string());
+            }
+            None => {
+                self.endpoints = Some(vec![endpoint.to_string()]);
+            }
+        }
+        Ok(())
+    }
+
+
+    fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
         self.socket.connect(endpoint)?;
         Ok(())
     }
 
-    pub fn connect_all(&mut self) -> IOResult<()> {
-        if let Some(endpoints) = self.endpoints.clone() { // Clone to avoid immutable borrow
-            for endpoint in endpoints {
-                //TODO: Should break if one of the endpoints fail?
-                self.connect(&endpoint)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn disconnect(&mut self, endpoint: &str)  {
+    fn disconnect_endpoint(&mut self, endpoint: &str)  {
         self.socket.disconnect(endpoint);
-    }
-
-    pub fn disconnect_all(&mut self)  {
-        self.socket.disconnect_all();
-    }
-
-    pub fn add_endpoint(&mut self, endpoint: String) {
-        match &mut self.endpoints {
-            Some(vec) => {
-                vec.push(endpoint);
-            }
-            None => {
-                self.endpoints = Some(vec![endpoint]);
-            }
-        }
     }
 
     pub fn forwarder(& self) -> &Option<Sender>{
@@ -177,7 +188,7 @@ Receiver{
                 }
             }
         }
-        self.connect_all()?;
+        self.connect()?;
         if self.header_buffer.is_void(){
             self.set_header_buffer_size(self.connections());
         }
@@ -194,7 +205,7 @@ Receiver{
                 }
                 Err(e) => {
                     //TODO: error callback?
-                    log::error!("Socket Listen Error: {}", e);
+                    log::trace!("Receiver Error: {}", e);
                     self.stats.lock().unwrap().increase_errors();
                 }
             }

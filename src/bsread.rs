@@ -25,9 +25,15 @@ impl Bsread {
         Ok(Arc::new(Self { context,interrupted }))
     }
 
-    pub fn receiver(self: &Arc<Self>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
-        Receiver::new(self.clone(), endpoint, socket_type)
+    pub fn receiver_single(self: &Arc<Self>, endpoint: &str, socket_type: SocketType) -> IOResult<Receiver> {
+        Receiver::new_single(self.clone(), endpoint, socket_type)
     }
+
+    pub fn receiver(self: &Arc<Self>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
+        Receiver::new_mult(self.clone(), endpoint, socket_type)
+    }
+
+
 
     pub fn pool(self: &Arc<Self>, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
         Pool::new(self.clone(), endpoints, socket_type, threads)

@@ -22,10 +22,10 @@ Pool {
         if threads<=0{
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid number of threads"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new_mult(bsread.clone(), None, socket_type).unwrap()).collect();
         let mut index = 0;
         for endpoint in endpoints{
-            receivers[index].add_endpoint(endpoint.to_string());
+            receivers[index].add_endpoint(endpoint);
             index += 1;
             if index >= threads {
                 index = 0;
@@ -40,11 +40,11 @@ Pool {
         if threads==0{
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid configuration"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new_mult(bsread.clone(), None, socket_type).unwrap()).collect();
         let mut index = 0;
         for group in endpoints {
             for endpoint  in group {
-                receivers[index].add_endpoint(endpoint.to_string());
+                receivers[index].add_endpoint(endpoint);
             }
             index += 1;
             if index >= threads {
