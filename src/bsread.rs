@@ -1,5 +1,5 @@
 use crate::{Compression, IOError, IOResult};
-use crate::receiver::Receiver;
+use crate::receiver::{ConnectionMode, Receiver};
 use crate::sockets::{Transport};
 use crate::sender::{Sender};
 use crate::pool::Pool;
@@ -25,22 +25,17 @@ impl Bsread {
         Ok(Arc::new(Self { context,interrupted }))
     }
 
-    pub fn receiver_single(self: &Arc<Self>, endpoint: &str, socket_type: SocketType) -> IOResult<Receiver> {
-        Receiver::new_single(self.clone(), endpoint, socket_type)
-    }
-
-    pub fn receiver(self: &Arc<Self>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Receiver> {
-        Receiver::new_mult(self.clone(), endpoint, socket_type)
+    pub fn receiver(self: &Arc<Self>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode ) -> IOResult<Receiver> {
+        Receiver::new(self.clone(), endpoints, socket_type, connection_mode)
     }
 
 
-
-    pub fn pool(self: &Arc<Self>, endpoints: Vec<&str>, socket_type: SocketType, threads:usize) -> IOResult<Pool> {
-        Pool::new(self.clone(), endpoints, socket_type, threads)
+    pub fn pool(self: &Arc<Self>, endpoints: Vec<&str>, socket_type: SocketType, connection_mode: ConnectionMode, threads:usize) -> IOResult<Pool> {
+        Pool::new(self.clone(), endpoints, socket_type, threads, connection_mode)
     }
 
-    pub fn pool_grouped(self: &Arc<Self>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Pool> {
-        Pool::new_grouped(self.clone(), endpoints, socket_type)
+    pub fn pool_grouped(self: &Arc<Self>, endpoints: Vec<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Pool> {
+        Pool::new_grouped(self.clone(), endpoints, socket_type, connection_mode)
     }
 
     pub fn sender(self: &Arc<Self>, socket_type: SocketType, transport: Transport,

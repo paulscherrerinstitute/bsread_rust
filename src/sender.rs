@@ -201,8 +201,9 @@ impl SocketConfig for Sender {
     fn socket_type(&self) -> SocketType {
         self.socket_type
     }
-    fn socket(&self) -> &zmq::Socket {
-        &self.socket
+    fn sockets(&self) -> Vec<&zmq::Socket>{
+        vec![&self.socket]
     }
+
 }
 

@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 use crate::*;
-use crate::receiver::Receiver;
+use crate::receiver::{ConnectionMode, Receiver};
 use crate::bsread::Bsread;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
@@ -18,11 +18,11 @@ pub struct Pool {
 impl
 Pool {
     //Endpoints are automatically distributed to the threads
-    pub fn new(bsread: Arc<Bsread>, endpoints: Vec<&str>, socket_type: SocketType, threads: usize) -> IOResult<Self> {
+    pub fn new(bsread: Arc<Bsread>, endpoints: Vec<&str>, socket_type: SocketType, threads: usize, connection_mode: ConnectionMode) -> IOResult<Self> {
         if threads<=0{
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid number of threads"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new_mult(bsread.clone(), None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type, connection_mode.clone()).unwrap()).collect();
         let mut index = 0;
         for endpoint in endpoints{
             receivers[index].add_endpoint(endpoint);
@@ -35,12 +35,12 @@ Pool {
     }
 
     //Endpoints manually set grouped per thread
-    pub fn new_grouped(bsread: Arc<Bsread>, endpoints: Vec<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
+    pub fn new_grouped(bsread: Arc<Bsread>, endpoints: Vec<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
         let threads = endpoints.len();
         if threads==0{
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid configuration"));
         }
-        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new_mult(bsread.clone(), None, socket_type).unwrap()).collect();
+        let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type, connection_mode.clone()).unwrap()).collect();
         let mut index = 0;
         for group in endpoints {
             for endpoint  in group {

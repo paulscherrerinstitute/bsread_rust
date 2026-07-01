@@ -8,7 +8,7 @@ use crate::sender::{Sender};
 use crate::reader::READER_ABOOL;
 use crate::writer::WRITER_ABOOL;
 use crate::message::{ID_SIMULATED, TIMESTAMP_NOW};
-use crate::receiver::ForwarderConfig;
+use crate::receiver::{ConnectionMode, ForwarderConfig};
 use std::{cmp, thread};
 use std::any::Any;
 use std::io::{Cursor, Write};
@@ -59,6 +59,7 @@ const TXP_PUSH: Transport = Transport::Tcp {port:10302, host:None};
 const TXP_IPC: Transport = Transport::Ipc {name:None};
 
 const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
+const CONNECTION_MODE: ConnectionMode = ConnectionMode::Dedicated;
 
 
 lazy_static! {
@@ -147,7 +148,7 @@ fn url_tst() ->  IOResult<()> {
 #[test]
 fn receiver_sub() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -158,7 +159,7 @@ fn receiver_sub() ->  IOResult<()> {
 #[test]
 fn receiver_pull() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]),  SocketType::PULL)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]),  SocketType::PULL, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -168,7 +169,7 @@ fn receiver_pull() ->  IOResult<()> {
 #[test]
 fn multi() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     //rec.set_header_buffer_size(0);
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
@@ -180,7 +181,7 @@ fn multi() -> IOResult<()> {
 #[test]
 fn dynamic() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.add_endpoint(TXP_CMP.endpoint().as_str());
     rec.connect()?;
@@ -193,7 +194,7 @@ fn dynamic() ->  IOResult<()> {
 #[test]
 fn manual() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.connect()?;
     let message = rec.receive()?;
@@ -206,7 +207,7 @@ fn manual() -> IOResult<()> {
 #[test]
 fn threaded() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()], ), SocketType::SUB, CONNECTION_MODE)?;
     rec.fork(on_message, Some(MESSAGE_COUNT));
     rec.join()?;
     print_stats_rec(&rec);
@@ -218,7 +219,7 @@ fn threaded() -> IOResult<()> {
 #[test]
 fn interrupting() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(500));
     rec.stop()?;
@@ -232,7 +233,7 @@ fn interrupting() ->  IOResult<()> {
 #[test]
 fn joining() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.fork(on_message, None);
     thread::sleep(Duration::from_millis(500));
     env.bsread.interrupt();
@@ -247,7 +248,7 @@ fn joining() ->  IOResult<()> {
 #[test]
 fn compressed() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_CMP.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_CMP.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -266,7 +267,7 @@ fn bitshuffle() -> IOResult<()> {
 #[test]
 fn conversion() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(None, SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.connect()?;
     let message = rec.receive()?;
@@ -283,7 +284,7 @@ fn conversion() -> IOResult<()> {
 #[test]
 fn booleans() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(None,  SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(None,  SocketType::SUB, CONNECTION_MODE)?;
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.connect()?;
     let message = rec.receive()?;
@@ -300,7 +301,7 @@ fn booleans() -> IOResult<()> {
 #[test]
 fn buffered() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(100)?;
     for _ in 0..MESSAGE_COUNT {
         match rec.wait(1000) {
@@ -334,7 +335,7 @@ fn limited_hashmap() {
 #[test]
 fn pool() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, 2)?;
+    let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
     pool.start(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -346,7 +347,7 @@ fn pool() -> IOResult<()> {
 #[test]
 fn pool_grouped() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut pool = env.bsread.pool_grouped(vec![vec![&TXP_PUB.endpoint(),], vec![&TXP_CMP.endpoint()]], SocketType::SUB)?;
+    let mut pool = env.bsread.pool_grouped(vec![vec![&TXP_PUB.endpoint(),], vec![&TXP_CMP.endpoint()]], SocketType::SUB, CONNECTION_MODE)?;
     pool.start(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -358,7 +359,7 @@ fn pool_grouped() -> IOResult<()> {
 #[test]
 fn pool_buffered() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, 2)?;
+    let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
     pool.start_buffered(on_message,100)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
@@ -515,7 +516,7 @@ fn sender_push() ->  IOResult<()> {
 #[test]
 fn sender_receiver_pub() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -525,7 +526,7 @@ fn sender_receiver_pub() ->  IOResult<()> {
 #[test]
 fn sender_receiver_push() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]), SocketType::PULL)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]), SocketType::PULL, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     Ok(())
@@ -534,7 +535,7 @@ fn sender_receiver_push() ->  IOResult<()> {
 #[test]
 fn sender_receiver_compressed() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_CMP.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_CMP.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -544,7 +545,7 @@ fn sender_receiver_compressed() ->  IOResult<()> {
 #[test]
 fn sender_receiver_raw() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]), SocketType::PULL)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]), SocketType::PULL, CONNECTION_MODE)?;
     rec.listen(on_message, Some(1))?;
     print_stats_rec(&rec);
     Ok(())
@@ -599,9 +600,9 @@ fn sender_demo() ->  IOResult<()> {
 #[test]
 fn forwarder() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rxtx.set_forwarder_config(ForwarderConfig::new(SocketType::PUB, Transport::Tcp{port:10600, host:None}, None));
-    let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10600"]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10600"]), SocketType::SUB, CONNECTION_MODE)?;
     rec.fork(on_message, None);
 
     //Asynchronous
@@ -627,11 +628,11 @@ fn forwarder() ->  IOResult<()> {
 //#[ignore]
 fn forwarder_with_sender() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rxtx = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     let mut forwarder = env.bsread.sender(SocketType::PUB, Transport::Tcp{port:10700, host:None}, None, None, None)?;
     forwarder.start()?;
     rxtx.set_forwarder(forwarder);
-    let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10700"]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec!["tcp://127.0.0.1:10700"]), SocketType::SUB, CONNECTION_MODE)?;
     rec.fork(on_message, None);
     //Cannot fork rxrx because forwarder cannot be sent to other thread
     rxtx.listen(|_msg| {}, Some(MESSAGE_COUNT))?;
@@ -646,7 +647,7 @@ fn forwarder_with_sender() ->  IOResult<()> {
 #[test]
 fn closure() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.listen(|msg| {env.on_message(&msg);}, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -662,7 +663,7 @@ fn closure() ->  IOResult<()> {
 #[test]
 fn closure_interrupt() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
 
     rec.listen(|msg| {
         env.on_message(&msg);
@@ -679,7 +680,7 @@ fn closure_interrupt() ->  IOResult<()> {
 #[test]
 fn receiver_raw_sync() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]), SocketType::PULL)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUSH.endpoint()]), SocketType::PULL, CONNECTION_MODE)?;
     rec.set_raw(true);
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
@@ -690,7 +691,7 @@ fn receiver_raw_sync() ->  IOResult<()> {
 #[test]
 fn receiver_raw_buffered() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.set_raw(true);
     rec.start(100)?;
     for i in 1..MESSAGE_COUNT+1 {
@@ -712,7 +713,7 @@ fn receiver_raw_async () ->  IOResult<()> {
     let count =10;
     let raw =true;
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.set_raw(raw);
     rec.listen(|_msg| {
          println!("\tId: {}", _msg.id());
@@ -728,7 +729,7 @@ fn receiver_raw_async () ->  IOResult<()> {
 #[test]
 fn conversions() -> IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(1)?;
     match rec.wait(1000) {
         Ok(msg) => {
@@ -758,7 +759,7 @@ fn conversions() -> IOResult<()> {
 #[test]
 fn receiver_ipc() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -768,7 +769,7 @@ fn receiver_ipc() ->  IOResult<()> {
 #[test]
 fn receiver_options() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(  Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(  Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.set_linger(0)?;
     rec.set_rcvhwm(10000)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
@@ -785,7 +786,7 @@ fn receiver_monitoring() ->  IOResult<()> {
     let endpoint = TXP.endpoint();
     let server_lifetime = 2000;
     start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime))?; //Server will stop in 2s
-    let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB)?;
+    let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     let event_receiver = rec.enable_monitoring()?;
     rec.add_endpoint(endpoint.as_str());
     rec.connect()?;

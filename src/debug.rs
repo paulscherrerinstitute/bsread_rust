@@ -134,9 +134,11 @@ pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_h
 }
 
 pub fn print_stats_rec(rec: &Receiver) -> () {
-    let mode = rec.mode();
+    let connection_mode = rec.connection_mode();
+    let delivery_mode = rec.delivery_mode();
     let socket_type = rec.socket_type();
-    println!("Receiver {}  {:?} [{}] stats:", rec.index(), socket_type, mode);
+    println!("Receiver {} ({:?}, {:?}, {:?}):", rec.index(), socket_type, connection_mode, delivery_mode);
+    println!("\tMode: {}", rec.connections());
     println!("\tConnections: {}", rec.connections());
     println!("\tAvailable: {}", rec.available());
     println!("\tDropped: {}", rec.dropped());

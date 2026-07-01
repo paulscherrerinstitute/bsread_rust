@@ -48,8 +48,29 @@ impl Stats{
 
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryMode {
+    Callback,
+    Buffered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionMode {
+    Shared,     //Single receive socked
+    Dedicated,  //One socket per endpoint
+}
+
+
+enum ConnectionSockets {
+    Shared {
+        socket: TrackedSocket,
+    },
+    Dedicated {
+        sockets: HashMap<String, TrackedSocket>,
+    },
+}
 pub struct Receiver {
-    socket: TrackedSocket,
+    sockets: ConnectionSockets,
     endpoints: Option<Vec<String>>,
     socket_type: SocketType,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
@@ -61,31 +82,33 @@ pub struct Receiver {
     forwarder_config: Option<ForwarderConfig>,
     forwarder: Option<Sender>,
     interrupted: Arc<AtomicBool>,
-    mode: String,
+    delivery_mode: DeliveryMode,
     raw: bool,
-    mult: bool
+    connection_mode: ConnectionMode,
+    tx:crossbeam_channel::Sender<EndpointEvent>,
+    rx:crossbeam_channel::Receiver<EndpointEvent>,
 }
 
 impl
 Receiver{
-    fn new(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType, mult:bool) -> IOResult<Self> {
+    pub fn new(bsread: Arc<Bsread>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
         let index =  index();
-        let socket = TrackedSocket::new(&bsread.context(), socket_type, index)?;
-        let endpoints = endpoint.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
+        let mut sockets:ConnectionSockets = match connection_mode{
+            ConnectionMode::Shared => {
+                ConnectionSockets::Shared {socket: TrackedSocket::new(&bsread.context(), socket_type, index)?}
+            }
+            ConnectionMode::Dedicated => {
+                ConnectionSockets::Dedicated {sockets: HashMap::new()}
+            }
+        };
+        let endpoints = endpoints.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
-        let mode = "sync".to_string();
+        let delivery_mode = DeliveryMode::Callback;
         let  interrupted = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = crossbeam_channel::unbounded();
 
-        Ok(Self { socket, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
-            forwarder_config:None, forwarder:None,interrupted, mode , raw: false, mult})
-    }
-
-    pub fn new_mult(bsread: Arc<Bsread>, endpoint: Option<Vec<&str>>, socket_type: SocketType) -> IOResult<Self> {
-        Receiver::new(bsread, endpoint, socket_type, true)
-    }
-
-    pub fn new_single(bsread: Arc<Bsread>, endpoint: &str, socket_type: SocketType) -> IOResult<Self> {
-        Receiver::new(bsread, Some(vec![endpoint]), socket_type, false)
+        Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
+            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false, connection_mode, tx, rx})
     }
 
     pub fn to_string(& self,) -> String {
@@ -103,32 +126,64 @@ Receiver{
     }
 
     pub fn disconnect(&mut self)  {
-        self.socket.disconnect_all();
+        for socket in  self.sockets(){
+            socket.disconnect();
+        }
     }
 
-    pub fn add_endpoint(&mut self, endpoint: &str)  -> IOResult<()> {
-        if !self.mult {
-            return Err(IOError::new(ErrorKind::InvalidInput, "Cannot add endpoint to receiver"));
-        }
+    pub fn add_endpoint(&mut self, endpoint: &str) {
         match &mut self.endpoints {
             Some(vec) => {
-                vec.push(endpoint.to_string());
+                let ep = endpoint.to_string();
+                if !vec.contains(&ep) {
+                    vec.push(ep);
+                }
             }
             None => {
                 self.endpoints = Some(vec![endpoint.to_string()]);
             }
         }
-        Ok(())
     }
 
 
-    fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
-        self.socket.connect(endpoint)?;
+    pub fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
+        self.add_endpoint(endpoint);
+        let context = self.bsread.context();
+        let socket_type = self.socket_type();
+        let index = self.index;
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                socket.connect(endpoint)?
+            }
+            ConnectionSockets::Dedicated { sockets} => {
+                match sockets.get(endpoint){
+                    None => {
+                        let mut socket = TrackedSocket::new(context, socket_type, index)?;
+                        socket.connect(endpoint)?;
+                        sockets.insert(endpoint.to_string(), socket);
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
         Ok(())
     }
 
-    fn disconnect_endpoint(&mut self, endpoint: &str)  {
-        self.socket.disconnect(endpoint);
+    pub fn disconnect_endpoint(&mut self, endpoint: &str)  {
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                socket.disconnect_endpoint(endpoint);
+            }
+            ConnectionSockets::Dedicated { sockets} => {
+                match sockets.get_mut(endpoint){
+                    None => {}
+                    Some(socket) => {
+                        socket.disconnect();
+                        sockets.remove(endpoint);
+                    }
+                }
+            }
+        }
     }
 
     pub fn forwarder(& self) -> &Option<Sender>{
@@ -150,8 +205,7 @@ Receiver{
         self.raw
     }
 
-    pub fn receive(&mut self) -> IOResult<Message> {
-        let message_parts = self.socket.receive()?;
+    fn process(&mut self, endpoint: Option<String>, message_parts:Vec<Vec<u8>>) -> IOResult<Message> {
         if let Some(sender) = self.forwarder.as_mut() {
             match sender.forward(&message_parts) {
                 Ok(_) => (),
@@ -161,6 +215,42 @@ Receiver{
         let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw);
         message
     }
+
+    pub fn receive(&mut self) -> IOResult<Message> {
+        let (endpoint, message_parts)  =  match &self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                (None, socket.receive()?)
+            }
+
+            ConnectionSockets::Dedicated { sockets } => {
+                let mut items: Vec<_> = sockets
+                    .values()
+                    .map(|socket| socket.socket().as_poll_item(zmq::POLLIN))
+                    .collect();
+
+                zmq::poll(&mut items, -1)?;
+
+                for (item, socket) in items.iter().zip(sockets.values()) {
+                    if item.is_readable() {
+                        let endpoint = socket.endpoint(0);
+                        let msg = socket.receive()?;
+                        match endpoint {
+                            None => {
+                                return Err(IOError::new(ErrorKind::Other,"Dedicated socket with noendpoint ",));
+                            }
+                            Some(_) => {
+                                return self.process(endpoint, msg);
+                            }
+                        }
+                    }
+                }
+                return Err(IOError::new(ErrorKind::Other,"poll() returned but no socket was readable",));
+            }
+        };
+
+        self.process(endpoint, message_parts)
+    }
+
 
     //Synchronous Mode: blocking, callback in same thread
     pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
@@ -226,14 +316,16 @@ Receiver{
         F: FnMut(Message) + Send + 'static,
         {
 
-        fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType, callback: Arc<Mutex<F>>, num_messages: Option<u32>,
-                             producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>, forwarder_config:Option<ForwarderConfig>,
+        fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType, connection_mode:ConnectionMode,
+                             callback: Arc<Mutex<F>>, num_messages: Option<u32>,
+                             producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,
+                             forwarder_config:Option<ForwarderConfig>,
                              interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool) -> IOResult<()>
             where
                 F: FnMut(Message) + Send + 'static,
             {
             let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
-            let mut receiver = bsread.receiver(endpoint, socket_type)?;
+            let mut receiver = bsread.receiver(endpoint, socket_type, connection_mode)?;
             receiver.fifo = producer_fifo;
             receiver.stats = producer_stats;
             receiver.interrupted = interrupted_self;
@@ -244,6 +336,7 @@ Receiver{
         }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
+        let connection_mode = self.connection_mode.clone();
         let interrupted_context = Arc::clone(self.bsread.interrupted());
         let interrupted_self = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
@@ -262,7 +355,7 @@ Receiver{
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, shared_callback, num_messages, producer_fifo, producer_stats, forwarder_config, interrupted_context, interrupted_self, raw).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, connection_mode, shared_callback, num_messages, producer_fifo, producer_stats, forwarder_config, interrupted_context, interrupted_self, raw).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error
@@ -271,7 +364,7 @@ Receiver{
              })
             .expect("Failed to spawn thread");
         self.handle = Some(handle);
-        self.mode = "async".to_string();
+        self.delivery_mode = DeliveryMode::Callback;
     }
 
     pub fn join(& mut self) -> io::Result<()> {
@@ -305,7 +398,7 @@ Receiver{
 
         fn callback(_: Message) -> () {}
         self.fork(callback, None);
-        self.mode = "buffered".to_string();
+        self.delivery_mode = DeliveryMode::Buffered;
         Ok(())
     }
 
@@ -354,8 +447,12 @@ Receiver{
         self.index
     }
 
-    pub fn mode(&self) -> &str {
-        self.mode.as_str()
+    pub fn delivery_mode(&self) -> DeliveryMode {
+        self.delivery_mode.clone()
+    }
+
+    pub fn connection_mode(&self) -> ConnectionMode {
+        self.connection_mode.clone()
     }
 
     pub fn endpoints(&self) ->  & Option<Vec<String>> {
@@ -364,7 +461,7 @@ Receiver{
 
     pub fn connections(&self) -> usize {
         match &self.endpoints{
-            None => {self.socket.num_connection()}
+            None => {0}
             Some(e) => {e.len()}
         }
     }
@@ -413,30 +510,109 @@ Receiver{
         Ok(())
     }
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
-        self.socket.enable_monitoring(self.bsread.context())
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                //socket.enable_monitoring(self.bsread.context())
+                socket.enable_monitoring(self.bsread.context(),self.tx.clone(), None)?;
+            }
+            ConnectionSockets::Dedicated { sockets } => {
+                    for (endpoint, socket) in sockets.iter_mut() {
+                        //socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
+                        socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
+                    }
+            }
+        }
+        Ok(self.rx.clone())
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        self.socket.endpoint_state(endpoint)
+        match &self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                socket.endpoint_state(endpoint)
+            }
+            ConnectionSockets::Dedicated { sockets } => {
+                sockets.get(endpoint).and_then(|s| s.endpoint_state(endpoint))
+            }
+        }
     }
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
-        self.socket.endpoint_states()
+        match &self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                socket.endpoint_states()
+            }
+            ConnectionSockets::Dedicated { sockets } => {
+                let mut out = HashMap::new();
+                for socket in sockets.values() {
+                    for (endpoint, state) in socket.endpoint_states() {
+                        out.insert(endpoint, state);
+                    }
+                }
+                out
+            }
+        }
+
     }
+
+    pub fn socket(& mut self, endpoint: &str) -> Option<&mut TrackedSocket>{
+        match &mut  self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                Some(socket)
+            }
+            ConnectionSockets::Dedicated { sockets} => {
+                sockets.get_mut(endpoint)
+            }
+        }
+    }
+    fn ref_socket(& self) -> Option <&TrackedSocket>{
+        match &self.sockets {
+            ConnectionSockets::Shared { socket } => {Some(socket)}
+            ConnectionSockets::Dedicated{sockets} => {
+                if (sockets.is_empty()){
+                     return None;
+                }
+                sockets.values().next()
+            }
+        }
+    }
+
+    pub fn sockets(&mut self) -> Vec<&mut TrackedSocket> {
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                vec![socket]
+            }
+            ConnectionSockets::Dedicated { sockets } => {
+                sockets.values_mut().collect()
+            }
+        }
+    }
+
 }
 
 impl SocketConfig for Receiver {
     fn transport(&self) -> Transport {
-        if self.socket.has_any_connection() {
-            Transport::from_endpoint(self.socket.connection(0).unwrap().as_str()).unwrap()
-        } else {
-            Transport::Tcp { port: 0, host: None }
+        if let  Some(socket)  = self.ref_socket() {
+            if let  Some(transport)  = socket.transport() {
+                return transport
+            }
         }
+        Transport::Tcp { port: 0, host: None}
     }
     fn socket_type(&self) -> SocketType {
         self.socket_type
     }
-    fn socket(&self) -> &zmq::Socket {
-        &self.socket.socket()
+    fn sockets(&self) -> Vec<&zmq::Socket> {
+        match &self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                vec![socket.socket()]
+            }
+            ConnectionSockets::Dedicated { sockets } => {
+                sockets
+                    .values()
+                    .map(|socket| socket.socket())
+                    .collect()
+            }
+        }
+
     }
 }
 
