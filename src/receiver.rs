@@ -225,7 +225,6 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 (None, socket.receive()?)
             }
-
             ConnectionSockets::Individual { sockets } => {
                 let mut items: Vec<_> = sockets
                     .values()
@@ -233,22 +232,20 @@ Receiver{
                     .collect();
 
                 zmq::poll(&mut items, -1)?;
+                let mut result = None;
 
                 for (item, socket) in items.iter().zip(sockets.values()) {
                     if item.is_readable() {
-                        let endpoint = socket.endpoint(0);
-                        let msg = socket.receive()?;
-                        match endpoint {
-                            None => {
-                                return Err(IOError::new(ErrorKind::Other,"Dedicated socket with noendpoint ",));
-                            }
-                            Some(_) => {
-                                return self.process(endpoint, msg);
-                            }
-                        }
-                    }
+                        let endpoint = socket.endpoint(0).ok_or_else(|| {
+                            IOError::new(ErrorKind::Other,"Individual socket with no endpoint",)
+                        })?;
+                        let message_parts = socket.receive()?;
+                        result = Some((Some(endpoint), message_parts));
+                        break;                    }
                 }
-                return Err(IOError::new(ErrorKind::Other,"poll() returned but no socket was readable",));
+                result.ok_or_else(|| {
+                    IOError::new(ErrorKind::Other,"poll() returned but no socket was readable",)
+                })?
             }
         };
 
