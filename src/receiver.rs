@@ -57,7 +57,7 @@ pub enum DeliveryMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionMode {
     Shared,     //Single receive socked
-    Dedicated,  //One socket per endpoint
+    Individual,  //One socket per endpoint
 }
 
 
@@ -65,7 +65,7 @@ enum ConnectionSockets {
     Shared {
         socket: TrackedSocket,
     },
-    Dedicated {
+    Individual {
         sockets: HashMap<String, TrackedSocket>,
     },
 }
@@ -84,6 +84,7 @@ pub struct Receiver {
     interrupted: Arc<AtomicBool>,
     delivery_mode: DeliveryMode,
     raw: bool,
+    monitoring: bool,
     connection_mode: ConnectionMode,
     tx:crossbeam_channel::Sender<EndpointEvent>,
     rx:crossbeam_channel::Receiver<EndpointEvent>,
@@ -97,8 +98,8 @@ Receiver{
             ConnectionMode::Shared => {
                 ConnectionSockets::Shared {socket: TrackedSocket::new(&bsread.context(), socket_type, index)?}
             }
-            ConnectionMode::Dedicated => {
-                ConnectionSockets::Dedicated {sockets: HashMap::new()}
+            ConnectionMode::Individual => {
+                ConnectionSockets::Individual {sockets: HashMap::new()}
             }
         };
         let endpoints = endpoints.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
@@ -108,7 +109,7 @@ Receiver{
         let (tx, rx) = crossbeam_channel::unbounded();
 
         Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
-            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false, connection_mode, tx, rx})
+            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,monitoring:false, connection_mode, tx, rx})
     }
 
     pub fn to_string(& self,) -> String {
@@ -155,11 +156,14 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 socket.connect(endpoint)?
             }
-            ConnectionSockets::Dedicated { sockets} => {
+            ConnectionSockets::Individual { sockets} => {
                 match sockets.get(endpoint){
                     None => {
                         let mut socket = TrackedSocket::new(context, socket_type, index)?;
                         socket.connect(endpoint)?;
+                        if self.monitoring {
+                            socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.to_string()))?;
+                        }
                         sockets.insert(endpoint.to_string(), socket);
                     }
                     Some(_) => {}
@@ -174,7 +178,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 socket.disconnect_endpoint(endpoint);
             }
-            ConnectionSockets::Dedicated { sockets} => {
+            ConnectionSockets::Individual { sockets} => {
                 match sockets.get_mut(endpoint){
                     None => {}
                     Some(socket) => {
@@ -222,7 +226,7 @@ Receiver{
                 (None, socket.receive()?)
             }
 
-            ConnectionSockets::Dedicated { sockets } => {
+            ConnectionSockets::Individual { sockets } => {
                 let mut items: Vec<_> = sockets
                     .values()
                     .map(|socket| socket.socket().as_poll_item(zmq::POLLIN))
@@ -510,12 +514,13 @@ Receiver{
         Ok(())
     }
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
+        self.monitoring = true;
         match &mut self.sockets {
             ConnectionSockets::Shared { socket } => {
                 //socket.enable_monitoring(self.bsread.context())
                 socket.enable_monitoring(self.bsread.context(),self.tx.clone(), None)?;
             }
-            ConnectionSockets::Dedicated { sockets } => {
+            ConnectionSockets::Individual { sockets } => {
                     for (endpoint, socket) in sockets.iter_mut() {
                         //socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
                         socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
@@ -530,7 +535,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 socket.endpoint_state(endpoint)
             }
-            ConnectionSockets::Dedicated { sockets } => {
+            ConnectionSockets::Individual { sockets } => {
                 sockets.get(endpoint).and_then(|s| s.endpoint_state(endpoint))
             }
         }
@@ -540,7 +545,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 socket.endpoint_states()
             }
-            ConnectionSockets::Dedicated { sockets } => {
+            ConnectionSockets::Individual { sockets } => {
                 let mut out = HashMap::new();
                 for socket in sockets.values() {
                     for (endpoint, state) in socket.endpoint_states() {
@@ -558,7 +563,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 Some(socket)
             }
-            ConnectionSockets::Dedicated { sockets} => {
+            ConnectionSockets::Individual { sockets} => {
                 sockets.get_mut(endpoint)
             }
         }
@@ -566,7 +571,7 @@ Receiver{
     fn ref_socket(& self) -> Option <&TrackedSocket>{
         match &self.sockets {
             ConnectionSockets::Shared { socket } => {Some(socket)}
-            ConnectionSockets::Dedicated{sockets} => {
+            ConnectionSockets::Individual {sockets} => {
                 if (sockets.is_empty()){
                      return None;
                 }
@@ -580,7 +585,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 vec![socket]
             }
-            ConnectionSockets::Dedicated { sockets } => {
+            ConnectionSockets::Individual { sockets } => {
                 sockets.values_mut().collect()
             }
         }
@@ -605,7 +610,7 @@ impl SocketConfig for Receiver {
             ConnectionSockets::Shared { socket } => {
                 vec![socket.socket()]
             }
-            ConnectionSockets::Dedicated { sockets } => {
+            ConnectionSockets::Individual { sockets } => {
                 sockets
                     .values()
                     .map(|socket| socket.socket())

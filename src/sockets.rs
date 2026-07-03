@@ -235,7 +235,8 @@ pub struct TrackedSocket {
     endpoints: Vec<String>,
     index: u32,
     topics: Vec<String>,
-    endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>
+    endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,
+    monitoring: bool
 }
 
 impl TrackedSocket {
@@ -247,25 +248,29 @@ impl TrackedSocket {
             endpoints: Vec::new(),
             topics: Vec::new(),
             endpoint_states: Arc::new(Mutex::new(HashMap::new())),
+            monitoring: false
         };
         //_self.enable_monitoring(context)?;
         Ok(_self)
     }
 
     pub fn enable_monitoring(&mut self, context: &Context, tx: crossbeam_channel::Sender<EndpointEvent>, endpoint: Option<String>) -> IOResult<()> {
-        let monitor_ep = format!("inproc://monitor-{}", Uuid::new_v4());
-        if let Err(e) = self.socket.monitor(&monitor_ep, zmq::SocketEvent::ALL as i32, ) {
-            log::error!("Error creating monitor: {}", e);
-            return Err(e.into());
+        if !self. monitoring {
+            let monitor_ep = format!("inproc://monitor-{}", Uuid::new_v4());
+            if let Err(e) = self.socket.monitor(&monitor_ep, zmq::SocketEvent::ALL as i32, ) {
+                log::error!("Error creating monitor: {}", e);
+                return Err(e.into());
+            }
+            //let (tx, rx) = crossbeam_channel::unbounded();
+            let mon = context.socket(zmq::PAIR)?;
+            mon.connect(&monitor_ep)?;
+            let states = Arc::clone(&self.endpoint_states);
+            let index = self.index;
+            thread::spawn(move || {
+                monitor_loop(mon, states, tx, endpoint, index);
+            });
+            self. monitoring = true
         }
-        //let (tx, rx) = crossbeam_channel::unbounded();
-        let mon = context.socket(zmq::PAIR)?;
-        mon.connect(&monitor_ep)?;
-        let states = Arc::clone(&self.endpoint_states);
-        let index = self.index;
-        thread::spawn(move || {
-            monitor_loop(mon, states, tx,endpoint, index);
-        });
         Ok(())
     }
 

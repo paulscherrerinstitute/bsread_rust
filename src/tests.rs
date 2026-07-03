@@ -59,7 +59,7 @@ const TXP_PUSH: Transport = Transport::Tcp {port:10302, host:None};
 const TXP_IPC: Transport = Transport::Ipc {name:None};
 
 const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
-const CONNECTION_MODE: ConnectionMode = ConnectionMode::Dedicated;
+const CONNECTION_MODE: ConnectionMode = ConnectionMode::Individual;
 
 
 lazy_static! {
