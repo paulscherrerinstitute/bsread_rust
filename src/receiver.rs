@@ -13,7 +13,6 @@ use zmq::{Context, SocketType};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-
 static RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
 fn index() -> u32{
     unsafe {
@@ -69,11 +68,25 @@ enum ConnectionSockets {
         sockets: HashMap<String, TrackedSocket>,
     },
 }
+
+
+const VALID_ID_RANGE:u64 = 3600 * 24 * 100;
+
+pub const CHECK_ID_POSITIVE:u64 = 1;
+pub const CHECK_ID_MONOTONIC:u64 = 2;
+pub const CHECK_ID_RANGE:u64 = 3;
+pub const CHECK_ID_PAST_RANGE:u64 = 4;
+
+pub const CHECK_ALL:u64 = !0;
+
+
 pub struct Receiver {
     sockets: ConnectionSockets,
     endpoints: Option<Vec<String>>,
     socket_type: SocketType,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
+    id_buffer: HashMap<String, u64>,
+    check_mask: u64,
     bsread: Arc<Bsread>,
     fifo: Option<Arc<FifoQueue<Message>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
@@ -107,8 +120,10 @@ Receiver{
         let delivery_mode = DeliveryMode::Callback;
         let  interrupted = Arc::new(AtomicBool::new(false));
         let (tx, rx) = crossbeam_channel::unbounded();
+        let check_mask = CHECK_ALL;
 
-        Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), bsread, fifo:None, handle:None, stats, index,
+        Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
+            bsread, fifo:None, handle:None, stats, index,
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,monitoring:false, connection_mode, tx, rx})
     }
 
@@ -216,8 +231,45 @@ Receiver{
                 Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
             }
         }
-        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw);
-        message
+        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw)?;
+        self.check_message(message, endpoint)
+    }
+
+
+    fn check_message(&mut self, message:Message,  endpoint: Option<String>) -> IOResult<(Message)> {
+        let id = message.id();
+        if self.check_mask & CHECK_ID_POSITIVE != 0 {
+            if id <=0 {
+                return Err(IOError::new(ErrorKind::InvalidData,"Non positive ID",));
+            }
+        }
+
+        if self.check_mask & CHECK_ID_RANGE != 0 {
+            if let Ok(simulated_id) = current_id() {
+                let out_of_range = if self.check_mask & CHECK_ID_PAST_RANGE != 0 {
+                    id.abs_diff(simulated_id) > VALID_ID_RANGE
+                } else {
+                    id > simulated_id && (id - simulated_id) > VALID_ID_RANGE
+                };
+                if out_of_range {
+                    return Err(IOError::new(ErrorKind::InvalidData, "Out of range ID", ));
+                }
+            }
+        }
+
+        if self.check_mask & CHECK_ID_MONOTONIC != 0 {
+            if let Some(endpoint) = endpoint {
+                if let Some(last_id) = self.id_buffer.get(&endpoint){
+                    if *last_id > id{
+                        return Err(IOError::new(ErrorKind::InvalidData,"Decreasing ID"));
+                    } else if *last_id == id{
+                        return Err(IOError::new(ErrorKind::InvalidData,"Repeated ID"));
+                    }
+                }
+                self.id_buffer.insert(endpoint, id);
+            }
+        }
+        Ok(message)
     }
 
     pub fn receive(&mut self) -> IOResult<Message> {
@@ -553,6 +605,14 @@ Receiver{
             }
         }
 
+    }
+
+    pub fn enable_check(& mut self, check:u64){
+        self.check_mask = self.check_mask | check;
+    }
+
+    pub fn disable_check(& mut self, check:u64){
+        self.check_mask = self.check_mask & !check;
     }
 
     pub fn socket(& mut self, endpoint: &str) -> Option<&mut TrackedSocket>{

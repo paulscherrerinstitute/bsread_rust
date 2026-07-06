@@ -3,6 +3,11 @@ use std::sync::{Mutex};
 use md5::{Md5, Digest};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::env;
+use std::io::ErrorKind;
+use chrono::{DateTime, Local, LocalResult, TimeZone};
+use std::sync::OnceLock;
+pub use std::io::Result as IOResult;
+use crate::IOError;
 
 #[derive(Debug)]
 /// Ordered HashMap with a maximum size
@@ -139,6 +144,27 @@ pub fn hash_md5(bytes: &[u8]) -> String{
 pub fn current_timestamp() -> (u64, u64){
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
     ( now.as_secs(),  now.subsec_nanos() as u64)
+}
+
+static id_t0: OnceLock<DateTime<Local>> = OnceLock::new();
+pub fn init_id_t0(dt: DateTime<Local>)-> IOResult<()>{
+    if let Err(e) = id_t0.set(dt){
+        return  Err(IOError::new(ErrorKind::InvalidData,"ID t0 not initialized"));
+    }
+    Ok(())
+}
+
+pub fn init_sf_id_t0() -> IOResult<()>{
+    init_id_t0( Local.with_ymd_and_hms(2017, 9, 4, 11, 11, 18).unwrap())
+}
+
+pub fn current_id() -> IOResult<u64> {
+    let t0 = id_t0.get().ok_or_else(|| {IOError::new(ErrorKind::InvalidData,"id_t0 was not initialized",)})?;
+    let now = Local::now();
+    let millis = now
+        .signed_duration_since(t0)
+        .num_milliseconds();
+    Ok((millis / 10) as u64)
 }
 
 pub fn app_name() -> Option<String> {

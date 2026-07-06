@@ -20,6 +20,7 @@ use indexmap::IndexMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
+use chrono::Local;
 use rand::RngExt;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
@@ -75,6 +76,7 @@ impl TestEnvironment {
     fn new() -> IOResult<Self> {
         if !RUN_ONCE.load(Ordering::Relaxed) {
             RUN_ONCE.store(true, Ordering::Relaxed);
+            init_id_t0(Local::now())?;
             match env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init() {
                 Ok(_) => {}
                 Err(e) => {println!("Error initializing env logger [{:?}]", e);}
@@ -182,10 +184,15 @@ fn multi() -> IOResult<()> {
 fn dynamic() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
+    rec.enable_monitoring();
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.add_endpoint(TXP_CMP.endpoint().as_str());
     rec.connect()?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
+    let ess = rec.endpoint_states();
+    println!("Endpoint states : {:?}",  ess);
+    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(),  EndpointState::Connected);
     print_stats_rec(&rec);
     assert_rec(&rec, None, Some(2));
     Ok(())
@@ -816,6 +823,7 @@ fn receiver_monitoring() ->  IOResult<()> {
     thread::sleep(Duration::from_millis(server_lifetime));
     let es = rec.endpoint_state(&endpoint);
     println!("Endpoint {} state : {:?}", &endpoint, es);
+    println!("Endpoint states : {:?}", ess);
     assert_ne!(es, Some(EndpointState::Connected));
     Ok(())
 }

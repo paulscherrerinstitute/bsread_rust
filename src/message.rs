@@ -372,7 +372,6 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         return Err(IOError::new(ErrorKind::InvalidData, "Invalid message format"));
     }
     let main_header = decode_json(&message_parts[0])?;
-    let id = id(&main_header)?;
     let hash = hash(&main_header)?;
     let global_timestamp = timestamp(&main_header);
 

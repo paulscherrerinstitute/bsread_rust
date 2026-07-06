@@ -4,6 +4,7 @@ pub use crate::bsread::{Bsread};
 pub use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
 pub use crate::value::{Value};
 pub use crate::message::{ChannelData, Message, DataHeaderInfo};
+pub use crate::utils::{init_id_t0, init_sf_id_t0}; 
 pub use crate::receiver::Receiver;
 pub use crate::pool::Pool;
 pub use crate::sender::Sender;
