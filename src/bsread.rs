@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use crate::{Compression, IOError, IOResult};
 use crate::receiver::{ConnectionMode, Receiver};
 use crate::sockets::{Transport};
@@ -58,6 +59,13 @@ impl Bsread {
 
     pub fn interrupted(&self) -> &Arc<AtomicBool> {
         &self.interrupted
+    }
+    pub fn set_io_threads(&self, value:i32) -> IOResult<()> {
+        if let Err(e) = self.context.set_io_threads(value) {
+            log::error!("Error setting io threads to  {}: {}", value, e);
+            return Err(e.into());
+        }
+        Ok(())
     }
 }
 

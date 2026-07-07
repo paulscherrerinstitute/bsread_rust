@@ -838,4 +838,30 @@ fn compression_enum() ->  IOResult<()> {
     Ok(())
 }
 
+#[test]
+fn libzmq() ->  IOResult<()> {
+    let (major, minor, patch) = zmq::version();
+    println!("libzmq {}.{}.{}", major, minor, patch);
+    assert!( (major, minor, patch) >= (4, 2, 0), "libzmq version must be >= 4.2.0, found {}.{}.{}", major, minor,patch);
+    Ok(())
+}
 
+
+#[test]
+fn delayed() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let TXP: Transport = Transport::Tcp {port:10351, host:None};
+    let endpoint = TXP.endpoint();
+    let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
+    rec.start(100)?;
+    thread::sleep(Duration::from_millis(3000));
+    start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None)?;
+
+    let rx = rec.wait_messages(MESSAGE_COUNT as usize,  1000)?;
+    assert_eq!(rx.len(), MESSAGE_COUNT as usize);
+    assert_rec(&rec, Some(MESSAGE_COUNT), None);
+    rec.stop()?;
+    print_stats_rec(&rec);
+
+    Ok(())
+}

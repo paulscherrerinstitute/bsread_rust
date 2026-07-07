@@ -230,47 +230,109 @@ pub fn monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, Endpo
     }
 }
 
+pub struct SocketMonitor {
+    cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
+    endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,
+}
+
+struct MonitorEntry {
+    socket: zmq::Socket,
+    endpoint: Option<String>,
+    index: u32,
+}
+
+enum MonitorCommand {
+    Add(MonitorEntry),
+    Shutdown
+}
+
+impl SocketMonitor {
+    pub fn new( tx: crossbeam_channel::Sender<EndpointEvent>) -> Self {
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let endpoint_states = Arc::new(Mutex::new(HashMap::new()));
+        let states = endpoint_states.clone();
+        thread::spawn(move || {
+            let mut monitors: Vec<MonitorEntry> = Vec::new();
+            loop {
+                // Add newly registered monitors
+                while let Ok(cmd) = cmd_rx.try_recv() {
+                    match cmd {
+                        MonitorCommand::Add(entry) => monitors.push(entry),
+                        MonitorCommand::Shutdown => return,
+                    }
+                }
+                if monitors.is_empty() {
+                    thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+
+                let mut items: Vec<zmq::PollItem> = monitors
+                    .iter()
+                    .map(|m| m.socket.as_poll_item(zmq::POLLIN))
+                    .collect();
+                zmq::poll(&mut items, 100).unwrap();
+                for (idx, item) in items.iter().enumerate() {
+                    if item.is_readable() {
+                        let monitor = &monitors[idx];
+                        if let Ok((_event, endpoint_event)) =decode_monitor_event(&monitor.socket, monitor.index) {
+                            if let Some(event) = endpoint_event {
+                                let endpoint = monitor.endpoint.clone().unwrap_or_else(|| event.endpoint().to_string());
+                                let mut states = states.lock().unwrap();
+                                if states.get(&endpoint) != Some(&event.state()){
+                                    states.insert(endpoint, event.state());
+                                    let _ = tx.send(event);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        Self {endpoint_states, cmd_tx,}
+    }
+    pub fn shutdown(&self) {
+        self.cmd_tx.send(MonitorCommand::Shutdown).unwrap();
+    }
+
+    pub fn add(&self,socket: zmq::Socket,endpoint: Option<String>,index: u32) {
+        self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,index,})).unwrap();
+    }
+
+    pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
+        let mut map = self.endpoint_states.lock().unwrap();
+        map.get(endpoint).copied()
+    }
+    pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
+        let mut map = self.endpoint_states.lock().unwrap();
+        map.clone()
+    }
+}
+
+
 pub struct TrackedSocket {
     socket: zmq::Socket,
     endpoints: Vec<String>,
     index: u32,
     topics: Vec<String>,
-    endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,
     monitoring: bool
 }
 
 impl TrackedSocket {
     pub fn new(context: &Context, socket_type: zmq::SocketType, index: u32) -> IOResult<TrackedSocket> {
         let socket = context.socket(socket_type)?;
-        let mut _self = Self {
-            socket,
-            index,
-            endpoints: Vec::new(),
-            topics: Vec::new(),
-            endpoint_states: Arc::new(Mutex::new(HashMap::new())),
-            monitoring: false
-        };
-        //_self.enable_monitoring(context)?;
-        Ok(_self)
+        Ok (Self {socket, index, endpoints: Vec::new(),topics: Vec::new(),monitoring: false })
     }
 
-    pub fn enable_monitoring(&mut self, context: &Context, tx: crossbeam_channel::Sender<EndpointEvent>, endpoint: Option<String>) -> IOResult<()> {
-        if !self. monitoring {
-            let monitor_ep = format!("inproc://monitor-{}", Uuid::new_v4());
-            if let Err(e) = self.socket.monitor(&monitor_ep, zmq::SocketEvent::ALL as i32, ) {
-                log::error!("Error creating monitor: {}", e);
-                return Err(e.into());
-            }
-            //let (tx, rx) = crossbeam_channel::unbounded();
-            let mon = context.socket(zmq::PAIR)?;
-            mon.connect(&monitor_ep)?;
-            let states = Arc::clone(&self.endpoint_states);
-            let index = self.index;
-            thread::spawn(move || {
-                monitor_loop(mon, states, tx, endpoint, index);
-            });
-            self. monitoring = true
+    pub fn enable_monitoring(&mut self, context: &Context, monitor: &SocketMonitor, endpoint: Option<String>) -> IOResult<()> {
+        if self.monitoring {
+            return Ok(());
         }
+        let monitor_ep = format!("inproc://monitor-{}", Uuid::new_v4());
+        self.socket.monitor(&monitor_ep,zmq::SocketEvent::ALL as i32,)?;
+        let mon = context.socket(zmq::PAIR)?;
+        mon.connect(&monitor_ep)?;
+        monitor.add(mon,endpoint,self.index,);
+        self.monitoring = true;
         Ok(())
     }
 
@@ -337,14 +399,6 @@ impl TrackedSocket {
         }
     }
 
-    pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        let mut map = self.endpoint_states.lock().unwrap();
-        map.get(endpoint).copied()
-    }
-    pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
-        let mut map = self.endpoint_states.lock().unwrap();
-        map.clone()
-    }
     pub fn disconnect(&mut self) {
         for endpoint in self.endpoints.clone(){
             self.disconnect_endpoint(endpoint.as_str());

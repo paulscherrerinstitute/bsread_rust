@@ -97,11 +97,12 @@ pub struct Receiver {
     interrupted: Arc<AtomicBool>,
     delivery_mode: DeliveryMode,
     raw: bool,
-    monitoring: bool,
     connection_mode: ConnectionMode,
+    socket_monitor: Option<SocketMonitor>,
     tx:crossbeam_channel::Sender<EndpointEvent>,
     rx:crossbeam_channel::Receiver<EndpointEvent>,
 }
+
 
 impl
 Receiver{
@@ -124,7 +125,7 @@ Receiver{
 
         Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
             bsread, fifo:None, handle:None, stats, index,
-            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,monitoring:false, connection_mode, tx, rx})
+            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode, socket_monitor:None, tx,rx})
     }
 
     pub fn to_string(& self,) -> String {
@@ -176,8 +177,8 @@ Receiver{
                     None => {
                         let mut socket = TrackedSocket::new(context, socket_type, index)?;
                         socket.connect(endpoint)?;
-                        if self.monitoring {
-                            socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.to_string()))?;
+                        if let Some(socket_monitor) = &self.socket_monitor {
+                            socket.enable_monitoring(self.bsread.context(), &socket_monitor, Some(endpoint.to_string()))?;
                         }
                         sockets.insert(endpoint.to_string(), socket);
                     }
@@ -486,8 +487,16 @@ Receiver{
             }
             thread::sleep(Duration::from_millis(10));
         }
-
         Err(IOError::new(ErrorKind::TimedOut, "Timout waiting for message"))
+    }
+
+    pub fn wait_messages(&self, count:usize, timeout_ms: u64) -> IOResult<Vec<Message>> {
+        let mut ret = Vec::new();
+        for _ in 0..count {
+            let msg = self.wait(timeout_ms)?;
+            ret.push(msg);
+        }
+        Ok(ret)
     }
 
     pub fn fifo(&self) -> Option<Arc<FifoQueue<Message>>> {
@@ -562,49 +571,41 @@ Receiver{
         }
         Ok(())
     }
+
+
+
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
-        self.monitoring = true;
-        match &mut self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                //socket.enable_monitoring(self.bsread.context())
-                socket.enable_monitoring(self.bsread.context(),self.tx.clone(), None)?;
-            }
-            ConnectionSockets::Individual { sockets } => {
+        if self.socket_monitor.is_none(){
+            let  socket_monitor = SocketMonitor::new(self.tx.clone());
+            match &mut self.sockets {
+                ConnectionSockets::Shared { socket } => {
+                    //socket.enable_monitoring(self.bsread.context())
+                    socket.enable_monitoring(self.bsread.context(), &socket_monitor, None)?;
+
+                }
+                ConnectionSockets::Individual { sockets } => {
                     for (endpoint, socket) in sockets.iter_mut() {
                         //socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
-                        socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
+                        socket.enable_monitoring(self.bsread.context(),  &socket_monitor, Some(endpoint.clone()))?;
                     }
+                }
             }
+            self.socket_monitor =Some(socket_monitor);
         }
         Ok(self.rx.clone())
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        match &self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                socket.endpoint_state(endpoint)
-            }
-            ConnectionSockets::Individual { sockets } => {
-                sockets.get(endpoint).and_then(|s| s.endpoint_state(endpoint))
-            }
+        match &self.socket_monitor{
+            None => {None}
+            Some(socket_monitor) => {socket_monitor.endpoint_state(endpoint)}
         }
     }
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
-        match &self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                socket.endpoint_states()
-            }
-            ConnectionSockets::Individual { sockets } => {
-                let mut out = HashMap::new();
-                for socket in sockets.values() {
-                    for (endpoint, state) in socket.endpoint_states() {
-                        out.insert(endpoint, state);
-                    }
-                }
-                out
-            }
+        match &self.socket_monitor{
+            None => {HashMap::new()}
+            Some(socket_monitor) => {socket_monitor.endpoint_states()}
         }
-
     }
 
     pub fn enable_check(& mut self, check:u64){
@@ -708,6 +709,10 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
 impl Drop for Receiver {
     fn drop(&mut self) {
         self.stop_forwarder();
+        if let Some(socket_monitor) = &self.socket_monitor {
+            socket_monitor.shutdown();
+            self.socket_monitor = None;
+        }
     }
 }
 
