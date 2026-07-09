@@ -767,7 +767,10 @@ fn conversions() -> IOResult<()> {
 fn receiver_ipc() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
+    rec.set_keepalive(30,10,3)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
+    //Keepalive should not be set in IPC transport
+    assert_eq!(rec.sockets()[0].get_tcp_keepalive().unwrap(), -1);
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
     Ok(())

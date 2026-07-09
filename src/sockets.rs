@@ -76,61 +76,131 @@ impl Transport {
     }
 }
 
+pub struct KeepAlive {
+    pub idle: i32,
+    pub intvl: i32,
+    pub cnt: i32,
+}
+
+pub struct Heartbeat {
+    pub ivl: i32,
+    pub timeout: i32,
+    pub ttl: i32,
+}
+pub struct SocketOptions{
+    pub linger : Option<i32>,
+    pub rcvhwm : Option<i32>,
+    pub sndhwm : Option<i32>,
+    pub keepalive: Option<KeepAlive>,
+    pub heartbeat: Option<Heartbeat>,
+
+}
+
+impl SocketOptions {
+    pub fn new() -> Self {
+        Self{linger:None, rcvhwm:None, sndhwm:None, keepalive:None, heartbeat:None}
+    }
+    pub fn set(self:& SocketOptions, socket: &zmq::Socket) -> IOResult<()>{
+        if let Some(linger) = self.linger {
+            socket.set_linger(linger)?;
+        }
+        if let Some(rcvhwm) = self.rcvhwm {
+            socket.set_rcvhwm(rcvhwm)?;
+        }
+        if let Some(sndhwm) = self.sndhwm {
+            socket.set_sndhwm(sndhwm)?;
+        }
+        if let Some(keepalive) = &self.keepalive {
+            set_socket_keepalive(socket, keepalive.idle, keepalive.intvl, keepalive.cnt)?;
+        }
+        if let Some(heartbeat) = &self.heartbeat {
+            set_socket_heartbeat(socket, heartbeat.ivl, heartbeat.timeout, heartbeat.ttl)?;
+        }
+        Ok(())
+    }
+
+}
+
+fn set_socket_keepalive(socket: &zmq::Socket, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
+    if !is_socket_ipc(socket) {
+        socket.set_tcp_keepalive(1)?;
+        socket.set_tcp_keepalive_idle(idle)?;
+        socket.set_tcp_keepalive_intvl(intvl)?;
+        socket.set_tcp_keepalive_cnt(cnt)?;
+    }
+    Ok(())
+}
+
+fn set_socket_heartbeat(socket: &zmq::Socket, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
+    socket.set_heartbeat_ivl(ivl)?;
+    socket.set_heartbeat_timeout(timeout)?;
+    socket.set_heartbeat_ttl(ttl)?;
+    Ok(())
+}
+
+fn set_socket_linger(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+    socket.set_linger(value)?;
+    Ok(())
+}
+
+fn set_socket_rcvhwm(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+    socket.set_rcvhwm(value)?;
+    Ok(())
+}
+
+fn set_socket_sndhwm(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+    socket.set_sndhwm(value)?;
+    Ok(())
+}
+
+fn is_socket_ipc(socket: &zmq::Socket) -> bool {
+    if let Ok(last_endpoint) = socket.get_last_endpoint() {
+        if let Ok((endpoint)) = last_endpoint {
+            return endpoint.starts_with("ipc://");
+        };
+    };
+    false
+}
 
 pub trait SocketConfig {
     fn sockets(&self) -> Vec<&zmq::Socket>;
-    fn transport(&self) -> Transport;
-    fn socket_type(&self) -> SocketType;
-    fn set_linger(&self, value: i32) -> IOResult<()> {
+    fn set_options(&self, options: &SocketOptions) -> IOResult<()>{
         for socket in self.sockets() {
-            socket.set_linger(value)?;
+            options.set(socket)?;
+        }
+        Ok(())
+    }
+    fn set_linger(&mut self, value: i32) -> IOResult<()> {
+        for socket in self.sockets() {
+            set_socket_linger(socket, value)?;
         }
         Ok(())
     }
 
     fn set_rcvhwm(&mut self, value: i32)-> IOResult<()> {
         for socket in self.sockets() {
-            if let Err(e) =socket.set_rcvhwm(value) {
-                return Err(e.into());
-            }
+            set_socket_rcvhwm(socket, value)?;
         }
         Ok(())
     }
 
     fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
         for socket in self.sockets() {
-            if let Err(e) = socket.set_sndhwm(value) {
-                return Err(e.into());
-            }
+            set_socket_sndhwm(socket, value)?;
         }
         Ok(())
     }
 
-    fn set_keepalive(&self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
-        match self.transport() {
-            Transport::Tcp { .. } => {
-                for socket in self.sockets() {
-                    socket.set_tcp_keepalive(1)?;
-                    socket.set_tcp_keepalive_idle(idle)?;
-                    socket.set_tcp_keepalive_intvl(intvl)?;
-                    socket.set_tcp_keepalive_cnt(cnt)?;
-                }
-            }
-            Transport::Ipc { .. } => {
-                log::info!(
-                    "Ignoring keepalive on IPC endpoint {}",
-                    self.transport().endpoint()
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn set_heartbeat(&self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
+    fn set_keepalive(& mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
         for socket in self.sockets() {
-            socket.set_heartbeat_ivl(ivl)?;
-            socket.set_heartbeat_timeout(timeout)?;
-            socket.set_heartbeat_ttl(ttl)?;
+            set_socket_keepalive(socket, idle, intvl, cnt)?;
+        }
+        Ok(())
+    }
+
+    fn set_heartbeat(& mut self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
+        for socket in self.sockets() {
+            set_socket_heartbeat(socket, ivl, timeout, ttl)?;
         }
         Ok(())
     }

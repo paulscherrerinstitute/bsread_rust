@@ -86,6 +86,10 @@ impl Sender {
     pub fn start(&mut self) -> IOResult<()> {
         let endpoint = self.endpoint();
         log::info!("Binding endpoint: {}", endpoint);
+        if let Transport::Ipc { .. } = self.transport {
+            //Make sure no socket keepalive if it has been set for IPC
+            self.socket.set_tcp_keepalive(-1)?;
+        }
         self.socket.bind(endpoint.as_str())?;
         self.started = true;
         Ok(())
@@ -192,15 +196,17 @@ impl Sender {
     pub fn endpoint(&self) -> String {
         self.transport.endpoint()
     }
+
+    pub fn socket_type(&self) -> SocketType {
+        self.socket_type
+    }
+
+    pub fn transport(&self) -> Transport {
+        self.transport.clone()
+    }
 }
 
 impl SocketConfig for Sender {
-    fn transport(&self) -> Transport {
-        self.transport.clone()
-    }
-    fn socket_type(&self) -> SocketType {
-        self.socket_type
-    }
     fn sockets(&self) -> Vec<&zmq::Socket>{
         vec![&self.socket]
     }

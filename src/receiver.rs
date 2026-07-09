@@ -101,6 +101,7 @@ pub struct Receiver {
     socket_monitor: Option<SocketMonitor>,
     tx:crossbeam_channel::Sender<EndpointEvent>,
     rx:crossbeam_channel::Receiver<EndpointEvent>,
+    socket_options: SocketOptions,
 }
 
 
@@ -122,10 +123,12 @@ Receiver{
         let  interrupted = Arc::new(AtomicBool::new(false));
         let (tx, rx) = crossbeam_channel::unbounded();
         let check_mask = CHECK_ALL;
+        let socket_options = SocketOptions::new();
 
         Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
             bsread, fifo:None, handle:None, stats, index,
-            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode, socket_monitor:None, tx,rx})
+            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
+            socket_monitor:None, tx,rx, socket_options})
     }
 
     pub fn to_string(& self,) -> String {
@@ -180,6 +183,7 @@ Receiver{
                         if let Some(socket_monitor) = &self.socket_monitor {
                             socket.enable_monitoring(self.bsread.context(), &socket_monitor, Some(endpoint.to_string()))?;
                         }
+                        self.socket_options.set(socket.socket())?;
                         sockets.insert(endpoint.to_string(), socket);
                     }
                     Some(_) => {}
@@ -648,21 +652,23 @@ Receiver{
             }
         }
     }
+    pub fn socket_type(&self) -> SocketType {
+        self.socket_type
+    }
 
+    pub fn transport(&self) -> Option<Transport> {
+        match (self.ref_socket()){
+            None => {
+                None
+            }
+            Some(socket) => {
+                socket.transport()
+            }
+        }
+    }
 }
 
 impl SocketConfig for Receiver {
-    fn transport(&self) -> Transport {
-        if let  Some(socket)  = self.ref_socket() {
-            if let  Some(transport)  = socket.transport() {
-                return transport
-            }
-        }
-        Transport::Tcp { port: 0, host: None}
-    }
-    fn socket_type(&self) -> SocketType {
-        self.socket_type
-    }
     fn sockets(&self) -> Vec<&zmq::Socket> {
         match &self.sockets {
             ConnectionSockets::Shared { socket } => {
@@ -675,7 +681,36 @@ impl SocketConfig for Receiver {
                     .collect()
             }
         }
+    }
 
+    fn set_linger(&mut self, value: i32) -> IOResult<()> {
+        self.socket_options.linger = Some(value);
+        self.set_options(&self.socket_options)?;
+        Ok(())
+    }
+
+    fn set_rcvhwm(&mut self, value: i32)-> IOResult<()> {
+        self.socket_options.rcvhwm = Some(value);
+        self.set_options(&self.socket_options)?;
+        Ok(())
+    }
+
+    fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
+        self.socket_options.sndhwm = Some(value);
+        self.set_options(&self.socket_options)?;
+        Ok(())
+    }
+
+    fn set_keepalive(&mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
+        self.socket_options.keepalive = Some(KeepAlive { idle, intvl, cnt});
+        self.set_options(&self.socket_options)?;
+        Ok(())
+    }
+
+    fn set_heartbeat(&mut self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
+        self.socket_options.heartbeat = Some(Heartbeat { ivl, timeout, ttl});
+        self.set_options(&self.socket_options)?;
+        Ok(())
     }
 }
 
