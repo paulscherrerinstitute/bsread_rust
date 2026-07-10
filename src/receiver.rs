@@ -9,7 +9,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
-use zmq::{Context, SocketEvent, SocketType};
+use zmq::{Context, PollItem, SocketEvent, SocketType};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -66,9 +66,33 @@ enum ConnectionSockets {
     },
     Individual {
         sockets: HashMap<String, TrackedSocket>,
+        poll_items: Vec<zmq::PollItem<'static>>,
     },
 }
 
+impl ConnectionSockets {
+    fn update_poll_items(&mut self) {
+        //We build the polling items when the sockets change, not in receive.
+        //We must however mind the lifetime of PollItem, linked to the socket.
+        match self {
+            ConnectionSockets::Shared { socket } => {}
+            ConnectionSockets::Individual { sockets, poll_items } => {
+                poll_items.clear();
+                for (key, socket) in sockets.iter() {
+                    //Cast or convert the socket reference into an unsafe 'static lifetime.
+                    // This is safe here because both the Socket and the PollItem live inside
+                    // the same struct, and we clear/rebuild this Vec whenever sockets change.
+                    let static_socket_ref: &'static zmq::Socket = unsafe {
+                        std::mem::transmute::<&zmq::Socket, &'static zmq::Socket>(socket.socket())
+                    };
+                    // Build the PollItem using the prolonged lifetime reference
+                    let poll_item = static_socket_ref.as_poll_item(zmq::POLLIN);
+                    poll_items.push(poll_item);
+                }
+            }
+        }
+    }
+}
 
 const VALID_ID_RANGE:u64 = 3600 * 24 * 100;
 
@@ -105,8 +129,7 @@ pub struct Receiver {
 }
 
 
-impl
-Receiver{
+impl Receiver{
     pub fn new(bsread: Arc<Bsread>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
         let index =  index();
         let mut sockets:ConnectionSockets = match connection_mode{
@@ -114,7 +137,7 @@ Receiver{
                 ConnectionSockets::Shared {socket: TrackedSocket::new(&bsread.context(), socket_type, index)?}
             }
             ConnectionMode::Individual => {
-                ConnectionSockets::Individual {sockets: HashMap::new()}
+                ConnectionSockets::Individual {sockets: HashMap::new(),poll_items: Vec::new()}
             }
         };
         let endpoints = endpoints.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
@@ -175,7 +198,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 socket.connect(endpoint)?
             }
-            ConnectionSockets::Individual { sockets} => {
+            ConnectionSockets::Individual { sockets, ..} => {
                 match sockets.get(endpoint){
                     None => {
                         let mut socket = TrackedSocket::new(context, socket_type, index)?;
@@ -185,6 +208,7 @@ Receiver{
                         }
                         self.socket_options.set(socket.socket())?;
                         sockets.insert(endpoint.to_string(), socket);
+                        self.sockets.update_poll_items();
                     }
                     Some(_) => {}
                 }
@@ -198,12 +222,13 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 socket.disconnect_endpoint(endpoint);
             }
-            ConnectionSockets::Individual { sockets} => {
-                match sockets.get_mut(endpoint){
+            ConnectionSockets::Individual { sockets, .. } => {
+                match sockets.get_mut(endpoint) {
                     None => {}
                     Some(socket) => {
                         socket.disconnect();
                         sockets.remove(endpoint);
+                        self.sockets.update_poll_items();
                     }
                 }
             }
@@ -303,30 +328,31 @@ Receiver{
     }
 
     pub fn receive(&mut self) -> IOResult<Message> {
-        let (endpoint, message_parts)  =  match &self.sockets {
+        let (endpoint, message_parts) = match &mut self.sockets {
             ConnectionSockets::Shared { socket } => {
                 (None, socket.receive()?)
             }
-            ConnectionSockets::Individual { sockets } => {
-                let mut items: Vec<_> = sockets
-                    .values()
-                    .map(|socket| socket.socket().as_poll_item(zmq::POLLIN))
-                    .collect();
-
-                zmq::poll(&mut items, -1)?;
+            &mut ConnectionSockets::Individual {ref sockets,ref mut poll_items} => {
+                //We build the polling items when the sockets change, not in receive.
+                //let mut poll_items: Vec<_> = sockets
+                //    .values()
+                //    .map(|socket| socket.socket().as_poll_item(zmq::POLLIN))
+                //    .collect();
+                //zmq::poll(&mut poll_items, -1)?;
+                zmq::poll(poll_items, -1)?;
                 let mut result = None;
-
-                for (item, socket) in items.iter().zip(sockets.values()) {
+                for (item, socket) in poll_items.iter().zip(sockets.values()) {
                     if item.is_readable() {
                         let endpoint = socket.endpoint(0).ok_or_else(|| {
-                            IOError::new(ErrorKind::Other,"Individual socket with no endpoint",)
+                            IOError::new(ErrorKind::Other, "Individual socket with no endpoint")
                         })?;
                         let message_parts = socket.receive()?;
                         result = Some((Some(endpoint), message_parts));
-                        break;                    }
+                        break;
+                    }
                 }
                 result.ok_or_else(|| {
-                    IOError::new(ErrorKind::Other,"poll() returned but no socket was readable",)
+                    IOError::new(ErrorKind::Other, "poll() returned but no socket was readable")
                 })?
             }
         };
@@ -622,7 +648,7 @@ Receiver{
                     socket.enable_monitoring(self.bsread.context(), &socket_monitor, None)?;
 
                 }
-                ConnectionSockets::Individual { sockets } => {
+                ConnectionSockets::Individual { sockets, ..} => {
                     for (endpoint, socket) in sockets.iter_mut() {
                         //socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
                         socket.enable_monitoring(self.bsread.context(),  &socket_monitor, Some(endpoint.clone()))?;
@@ -661,7 +687,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 Some(socket)
             }
-            ConnectionSockets::Individual { sockets} => {
+            ConnectionSockets::Individual { sockets, ..} => {
                 sockets.get_mut(endpoint)
             }
         }
@@ -669,7 +695,7 @@ Receiver{
     fn ref_socket(& self) -> Option <&TrackedSocket>{
         match &self.sockets {
             ConnectionSockets::Shared { socket } => {Some(socket)}
-            ConnectionSockets::Individual {sockets} => {
+            ConnectionSockets::Individual {sockets, ..} => {
                 if (sockets.is_empty()){
                      return None;
                 }
@@ -683,7 +709,7 @@ Receiver{
             ConnectionSockets::Shared { socket } => {
                 vec![socket]
             }
-            ConnectionSockets::Individual { sockets } => {
+            ConnectionSockets::Individual { sockets, .. } => {
                 sockets.values_mut().collect()
             }
         }
@@ -710,7 +736,7 @@ impl SocketConfig for Receiver {
             ConnectionSockets::Shared { socket } => {
                 vec![socket.socket()]
             }
-            ConnectionSockets::Individual { sockets } => {
+            ConnectionSockets::Individual { sockets, .. } => {
                 sockets
                     .values()
                     .map(|socket| socket.socket())
