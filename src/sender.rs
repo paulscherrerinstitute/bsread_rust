@@ -42,7 +42,7 @@ impl Sender {
         ) -> IOResult<Self> {
         let socket = bsread.context().socket(socket_type)?;
         let block = block.unwrap_or(false);
-        let start_id = start_id.unwrap_or(0);
+        let start_id = start_id.unwrap_or(1);
         let header_compression = header_compression.unwrap_or(Compression::None);
 
         let mut main_header = HashMap::new();

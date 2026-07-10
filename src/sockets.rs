@@ -213,28 +213,27 @@ pub enum EndpointState {
     Disconnected,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EndpointDiag {
+    RepeatedId,
+    NonPositiveId,
+    DecreasingId,
+    OutOfRangeId,
+    ParsingError,
+}
+
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
-    Connecting(String),
-    Connected(String),
-    Disconnected(String),
+    State(String, EndpointState),
+    Diagnostic(String, EndpointDiag)
 }
 
 
 impl EndpointEvent {
-    pub fn state(&self) -> EndpointState {
-        match self {
-            EndpointEvent::Connecting(_) => {EndpointState::Connecting}
-            EndpointEvent::Connected(_) => {EndpointState::Connected}
-            EndpointEvent::Disconnected(_) => {EndpointState::Disconnected}
-        }
-    }
-
     pub fn endpoint(&self) -> String {
         match self {
-            EndpointEvent::Connecting(s)
-            | EndpointEvent::Connected(s)
-            | EndpointEvent::Disconnected(s) => s.clone(),
+            EndpointEvent::State(endpoint, _)
+            | EndpointEvent::Diagnostic(endpoint, _) => endpoint.clone()
         }
     }
 }
@@ -258,14 +257,14 @@ fn decode_monitor_event(monitor: &zmq::Socket, index: u32) -> Result<(SocketEven
     log::debug!("Socket event:{:?} ({:}) [{:}]", socket_event, endpoint, index);
 
     let endpoint_event = match socket_event {
-        SocketEvent::CONNECTED => Some(EndpointEvent::Connecting(endpoint)),
-        SocketEvent::CONNECT_DELAYED => Some(EndpointEvent::Connecting(endpoint)),
-        SocketEvent::CONNECT_RETRIED => Some(EndpointEvent::Connecting(endpoint)),
-        SocketEvent::HANDSHAKE_SUCCEEDED  => Some(EndpointEvent::Connected(endpoint)),
-        SocketEvent::DISCONNECTED  => Some(EndpointEvent::Disconnected(endpoint)),
-        SocketEvent::HANDSHAKE_FAILED_NO_DETAIL => Some(EndpointEvent::Disconnected(endpoint)),
-        SocketEvent::HANDSHAKE_FAILED_PROTOCOL => Some(EndpointEvent::Disconnected(endpoint)),
-        SocketEvent::HANDSHAKE_FAILED_AUTH  => Some(EndpointEvent::Disconnected(endpoint)),
+        SocketEvent::CONNECTED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
+        SocketEvent::CONNECT_DELAYED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
+        SocketEvent::CONNECT_RETRIED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
+        SocketEvent::HANDSHAKE_SUCCEEDED  => Some(EndpointEvent::State(endpoint, EndpointState::Connected)),
+        SocketEvent::DISCONNECTED  => Some(EndpointEvent::State(endpoint, EndpointState::Disconnected)),
+        SocketEvent::HANDSHAKE_FAILED_NO_DETAIL => Some(EndpointEvent::State(endpoint, EndpointState::Disconnected)),
+        SocketEvent::HANDSHAKE_FAILED_PROTOCOL => Some(EndpointEvent::State(endpoint, EndpointState::Disconnected)),
+        SocketEvent::HANDSHAKE_FAILED_AUTH  => Some(EndpointEvent::State(endpoint, EndpointState::Disconnected)),
         //Disregard server and debug events
         SocketEvent::LISTENING => None,
         SocketEvent:: BIND_FAILED  => None,
@@ -285,15 +284,16 @@ pub fn monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, Endpo
             if let Some(event) = endpoint_event {
                 let mut map = states.lock().unwrap();
                 let endpoint = endpoint.clone().unwrap_or_else(|| event.endpoint().to_string());
-                let new_state = event.state();
-                let should_send = match map.get(&endpoint) {
-                    Some(old_state) => *old_state != new_state,
-                    None => true,
-                };
-                if should_send {
-                    log::info!("Endpoint event: {:?} [{:}]", event, index);
-                    map.insert(endpoint.clone(), new_state);
-                    let _ = tx.send(event);
+                if let EndpointEvent::State(ep, new_state) = &event {
+                    let should_send = match map.get(&endpoint) {
+                        Some(old_state) => *old_state != *new_state,
+                        None => true,
+                    };
+                    if should_send {
+                        log::info!("Endpoint event: {:?} [{:}]", event, index);
+                        map.insert(endpoint.clone(), *new_state);
+                        let _ = tx.send(event);
+                    }
                 }
             }
         }
@@ -341,16 +341,19 @@ impl SocketMonitor {
                     .map(|m| m.socket.as_poll_item(zmq::POLLIN))
                     .collect();
                 zmq::poll(&mut items, 100).unwrap();
+                let mut states = states.lock().unwrap();
                 for (idx, item) in items.iter().enumerate() {
                     if item.is_readable() {
                         let monitor = &monitors[idx];
                         if let Ok((_event, endpoint_event)) =decode_monitor_event(&monitor.socket, monitor.index) {
                             if let Some(event) = endpoint_event {
-                                let endpoint = monitor.endpoint.clone().unwrap_or_else(|| event.endpoint().to_string());
-                                let mut states = states.lock().unwrap();
-                                if states.get(&endpoint) != Some(&event.state()){
-                                    states.insert(endpoint, event.state());
-                                    let _ = tx.send(event);
+                                if let EndpointEvent::State(ep, state) = &event {
+                                    let endpoint = monitor.endpoint.clone().unwrap_or_else(|| ep.to_string());
+                                    if states.get(&endpoint) != Some(state){
+                                        states.insert(endpoint, state.clone());
+                                        let _ = tx.send(event);
+                                    }
+
                                 }
                             }
                         }

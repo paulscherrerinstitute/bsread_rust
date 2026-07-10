@@ -12,15 +12,17 @@ use crate::receiver::{ConnectionMode, ForwarderConfig};
 use std::{cmp, thread};
 use std::any::Any;
 use std::io::{Cursor, Write};
+use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::str::FromStr;
 use std::string::ToString;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use indexmap::IndexMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
 use chrono::Local;
+use crossbeam_channel::RecvTimeoutError;
 use rand::RngExt;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
@@ -58,6 +60,7 @@ const TXP_PUB: Transport = Transport::Tcp {port:10300, host:None};
 const TXP_CMP: Transport= Transport::Tcp {port:10301, host:None};
 const TXP_PUSH: Transport = Transport::Tcp {port:10302, host:None};
 const TXP_IPC: Transport = Transport::Ipc {name:None};
+const TXP_FLAWED: Transport = Transport::Tcp {port:10303, host:None};
 
 const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1", "SINEG01-DBPM340:Y1"];
 const CONNECTION_MODE: ConnectionMode = ConnectionMode::Individual;
@@ -87,10 +90,11 @@ impl TestEnvironment {
         if !STARTED_SERVERS.load(Ordering::SeqCst) {
             STARTED_SERVERS.store(true, Ordering::SeqCst);
             println!("Starting senders...");
-            start_sender(TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None)?;
-            start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None)?;
-            start_sender(TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None)?;
-            start_sender(TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None)?;
+            start_sender(TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
+            start_sender(TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None, false)?;
+            start_sender(TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None, false)?;
+            start_sender(TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None, false)?;
+            start_sender(TXP_FLAWED, SocketType::PUB, SENDER_INTERVAL, None, None, None, true)?;
         }
         let bsread = Bsread::new()?;
         Ok(Self {bsread})
@@ -740,7 +744,7 @@ fn conversions() -> IOResult<()> {
     rec.start(1)?;
     match rec.wait(1000) {
         Ok(msg) => {
-            let n = msg.id().to_u32().unwrap() ;
+            let n = msg.id().to_u32().unwrap() -1;
             assert_message_contents_ok(&msg);
             //Read scalar as 1-element array
             assert_eq!(msg.channel_value("U32").unwrap().to_au32().unwrap(), vec![n.to_u32().unwrap(); 1]);
@@ -795,7 +799,7 @@ fn receiver_monitoring() ->  IOResult<()> {
     let TXP: Transport = Transport::Tcp {port:10350, host:None};
     let endpoint = TXP.endpoint();
     let server_lifetime = 2000;
-    start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime))?; //Server will stop in 2s
+    start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     let event_receiver = rec.enable_monitoring()?;
     rec.add_endpoint(endpoint.as_str());
@@ -805,9 +809,11 @@ fn receiver_monitoring() ->  IOResult<()> {
     while(true){
         let ev = event_receiver.recv_timeout(Duration::from_millis(server_lifetime)).unwrap();
         if ev.endpoint() == endpoint{
-            println!("Received event: {:?}" , ev.state());
-            if ev.state() == EndpointState::Connected{
-                break;
+            println!("Received event: {:?}" , ev);
+            if let EndpointEvent::State(ep, state) = &ev {
+                if *state == EndpointState::Connected {
+                    break;
+                }
             }
         }
     }
@@ -858,8 +864,7 @@ fn delayed() ->  IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(100)?;
     thread::sleep(Duration::from_millis(3000));
-    start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None)?;
-
+    start_sender(TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
     let rx = rec.wait_messages(MESSAGE_COUNT as usize,  1000)?;
     assert_eq!(rx.len(), MESSAGE_COUNT as usize);
     assert_rec(&rec, Some(MESSAGE_COUNT), None);
@@ -868,3 +873,39 @@ fn delayed() ->  IOResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn flawed() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let endpoint = TXP_FLAWED.endpoint();
+    let mut diag_counts: HashMap<EndpointDiag, u32> = HashMap::new();
+    let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
+    let event_receiver = rec.enable_monitoring()?;
+    rec.fork(on_message, Some(MESSAGE_COUNT));
+    while rec.is_running(){
+        match  event_receiver.recv_timeout(Duration::from_millis(10)){
+            Ok(event) => {
+                println!("Received event: {:?}" , event);
+                if event.endpoint() == endpoint {
+                    match event {
+                        EndpointEvent::State(endpoint, state) => {}
+                        EndpointEvent::Diagnostic(endpoint, diag) => {
+                            *diag_counts.entry(diag).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    print_stats_rec(&rec);
+    let total_rx = rec.message_count() + rec.error_count();
+    println!("RepeatedId: {}", diag_counts.get(&EndpointDiag::RepeatedId).unwrap_or(&0));
+    println!("NonPositiveId: {}", diag_counts.get(&EndpointDiag::NonPositiveId).unwrap_or(&0));
+    println!("DecreasingId: {}", diag_counts.get(&EndpointDiag::DecreasingId).unwrap_or(&0));
+    println!("OutOfRangeId: {}", diag_counts.get(&EndpointDiag::OutOfRangeId).unwrap_or(&0));
+    assert_eq!(*diag_counts.get(&EndpointDiag::RepeatedId).unwrap_or(&0), total_rx/10 + if ((total_rx % 10)>=3) {1} else {0});
+    assert_eq!(*diag_counts.get(&EndpointDiag::DecreasingId).unwrap_or(&0), total_rx/10  + if ((total_rx % 10)>=7) {1} else {0});
+    Ok(())
+}
+

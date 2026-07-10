@@ -9,7 +9,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
-use zmq::{Context, SocketType};
+use zmq::{Context, SocketEvent, SocketType};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -236,15 +236,28 @@ Receiver{
                 Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
             }
         }
-        let message = parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw)?;
-        self.check_message(message, endpoint)
+        let message =parse_message(message_parts, &mut self.header_buffer, &mut self.stats.lock().unwrap().counter_header_changes, self.raw);
+        match message {
+            Ok(message) => {
+                self.check_message(message, endpoint)
+            },
+            Err(e) => {
+                if let Some(endpoint) = endpoint {
+                    self.send_diag(endpoint, EndpointDiag::ParsingError);
+                }
+                return Err(e)
+            }
+        }
     }
-
+    //self.send_diag(endpoint, EndpointDiag::NonPositiveId);
 
     fn check_message(&mut self, message:Message,  endpoint: Option<String>) -> IOResult<(Message)> {
         let id = message.id();
         if self.check_mask & CHECK_ID_POSITIVE != 0 {
             if id <=0 {
+                if let Some(endpoint) = endpoint {
+                    self.send_diag(endpoint, EndpointDiag::NonPositiveId);
+                }
                 return Err(IOError::new(ErrorKind::InvalidData,"Non positive ID",));
             }
         }
@@ -257,6 +270,9 @@ Receiver{
                     id > simulated_id && (id - simulated_id) > VALID_ID_RANGE
                 };
                 if out_of_range {
+                    if let Some(endpoint) = endpoint {
+                        self.send_diag(endpoint, EndpointDiag::OutOfRangeId);
+                    }
                     return Err(IOError::new(ErrorKind::InvalidData, "Out of range ID", ));
                 }
             }
@@ -266,8 +282,10 @@ Receiver{
             if let Some(endpoint) = endpoint {
                 if let Some(last_id) = self.id_buffer.get(&endpoint){
                     if *last_id > id{
+                        self.send_diag(endpoint, EndpointDiag::DecreasingId);
                         return Err(IOError::new(ErrorKind::InvalidData,"Decreasing ID"));
                     } else if *last_id == id{
+                        self.send_diag(endpoint, EndpointDiag::RepeatedId);
                         return Err(IOError::new(ErrorKind::InvalidData,"Repeated ID"));
                     }
                 }
@@ -275,6 +293,13 @@ Receiver{
             }
         }
         Ok(message)
+    }
+
+
+    fn send_diag(&mut self, endpoint:String, diag:EndpointDiag){
+        if self.socket_monitor.is_some() {
+            self.tx.send(EndpointEvent::Diagnostic(endpoint, diag));
+        }
     }
 
     pub fn receive(&mut self) -> IOResult<Message> {
@@ -305,7 +330,6 @@ Receiver{
                 })?
             }
         };
-
         self.process(endpoint, message_parts)
     }
 
@@ -378,7 +402,8 @@ Receiver{
                              callback: Arc<Mutex<F>>, num_messages: Option<u32>,
                              producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,
                              forwarder_config:Option<ForwarderConfig>,
-                             interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool) -> IOResult<()>
+                             interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool,
+                             socket_monitor:Option<SocketMonitor>, tx:crossbeam_channel::Sender<EndpointEvent>) -> IOResult<()>
             where
                 F: FnMut(Message) + Send + 'static,
             {
@@ -389,6 +414,8 @@ Receiver{
             receiver.interrupted = interrupted_self;
             receiver.forwarder_config = forwarder_config;
             receiver.raw = raw;
+            receiver.socket_monitor = socket_monitor;
+            receiver.tx = tx;
             let mut callback = callback.lock().unwrap();
             receiver.listen(&mut callback.deref_mut(), num_messages)
         }
@@ -408,12 +435,15 @@ Receiver{
         let producer_stats =self.stats.clone();
         let shared_callback = Arc::new(Mutex::new(callback));
         let raw = self.raw;
-        let thread_name = self.to_string(); 
+        let thread_name = self.to_string();
+        let socket_monitor = self.socket_monitor.take();
+        let tx = self.tx.clone();
         let handle = thread::Builder::new()
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
                 let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, connection_mode, shared_callback, num_messages, producer_fifo, producer_stats, forwarder_config, interrupted_context, interrupted_self, raw).map_err(|e| {
+                listen_process(endpoints_as_str, socket_type, connection_mode, shared_callback, num_messages, producer_fifo, producer_stats,
+                               forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx).map_err(|e| {
                     // Handle thread panic and convert to an error
                     let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
                     error
@@ -446,6 +476,11 @@ Receiver{
         Ok(())
     }
 
+    pub fn is_running(&self) -> bool {
+        self.handle
+            .as_ref()
+            .is_some_and(|h| !h.is_finished())
+    }
 
     //Buffered mode: non-blocking, messages buffered ibn another thread
     pub fn start(&mut self, buffer_size:usize) -> IOResult<()> {
@@ -598,6 +633,7 @@ Receiver{
         }
         Ok(self.rx.clone())
     }
+
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
         match &self.socket_monitor{

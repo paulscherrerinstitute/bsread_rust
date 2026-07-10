@@ -181,7 +181,7 @@ lazy_static! {
     static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
 }
 
-fn create_message(v:u64, s:usize, compression:Option<Compression>) -> IOResult<Message>{
+fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, index:u64) -> IOResult<Message>{
     let comp = compression.unwrap_or(Compression::None);
     let little_endian = true;
     let mut channels = Vec::new();
@@ -194,11 +194,26 @@ fn create_message(v:u64, s:usize, compression:Option<Compression>) -> IOResult<M
         data.insert(ch.config().name().clone(), ch_data );
         channels.push(ch);
     }
-    Message::new_from_channel_map(ID_SIMULATED,TIMESTAMP_NOW, channels, data)
+
+    let id = match flawed {
+        true => {
+            let mut id = index + 1;
+            if id % 10 == 7{
+                id = id-2
+            }
+            else if id % 10 == 3{
+                id = id-1
+            }
+            id
+        }
+        false => {ID_SIMULATED}
+    };
+
+    Message::new_from_channel_map(id,TIMESTAMP_NOW, channels, data)
 }
 
-pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>) -> IOResult<()> {
-    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>)  -> IOResult<()>{
+pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
+    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
         let bsread = Bsread::new()?;
         let mut sender = Sender::new(bsread, socket_type, transport, block, None, None)?;
         sender.set_linger(0)?;
@@ -216,7 +231,7 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                 }
             }
             if msg_timestamp.elapsed() >= Duration::from_millis(interval_ms){
-                match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone()){
+                match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(_) => {}
@@ -238,7 +253,7 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            match create_sender(transport, socket_type, interval_ms, block, compression, timeout){
+            match create_sender(transport, socket_type, interval_ms, block, compression, timeout, flawed){
                 Ok(_) => {}
                 Err(e) => {log::warn!("Error creating Sender [endpoint={}, socketType={:?}]: {:?}", endpoint, socket_type, e)}
             }
@@ -262,7 +277,7 @@ pub fn stop_senders(){
 }
 
 pub fn assert_message_contents_ok(msg:&Message){
-    let n = msg.id().to_u32().unwrap() ;
+    let n = msg.id().to_u32().unwrap() -1;
     let array_size = MESSAGE_ARRAY_SIZE;
 
     if msg.is_raw() {
