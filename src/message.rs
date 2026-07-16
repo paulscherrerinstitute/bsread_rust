@@ -122,10 +122,12 @@ fn parse_channel_data(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTra
 
     let data = match channel.config().compression() {
         Compression::BitshuffleLz4 => {
-            &decompress_bitshuffle_lz4(v, channel.config().element_size())?
+            &decompress_bitshuffle_lz4(v, channel.config().element_size())
+                .map_err(|e| IOError::new(DECOMPRESSION_ERROR, e))?
         }
         Compression::Lz4 => {
-            &decompress_lz4(v, channel.config().is_little_endian())?
+            &decompress_lz4(v,  channel.config().is_little_endian())
+                .map_err(|e| IOError::new(DECOMPRESSION_ERROR, e))?
         }
         Compression::None => { v }
     };
