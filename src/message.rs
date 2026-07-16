@@ -16,6 +16,9 @@ use serde_json::Number as JsonNumber;
 pub const ID_SIMULATED:u64 = 0;
 pub const TIMESTAMP_NOW:(u64,u64) = (0,0);
 
+// ErrorKind::NotSeekable is used internally as a marker for decompression failures
+pub const DECOMPRESSION_ERROR:ErrorKind = ErrorKind::NotSeekable;
+
 fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, JsonValue>, JSonError> {
     serde_json::from_slice(&bytes)
 }
@@ -386,10 +389,12 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
 
         let json = match compression {
             Compression::BitshuffleLz4 => {
-                &decompress_bitshuffle_lz4(blob, 1)?
+                &decompress_bitshuffle_lz4(blob, 1)
+                    .map_err(|e| IOError::new(DECOMPRESSION_ERROR, e))?
             }
             Compression::Lz4 => {
-                &decompress_lz4(blob, false)?
+                &decompress_lz4(blob, false)
+                    .map_err(|e| IOError::new(DECOMPRESSION_ERROR, e))?
             }
             Compression::None => { &blob }
         };

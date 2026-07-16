@@ -268,7 +268,11 @@ impl Receiver{
             },
             Err(e) => {
                 if let Some(endpoint) = endpoint {
-                    self.send_diag(endpoint, EndpointDiag::ParsingError);
+                    if (e.kind() == DECOMPRESSION_ERROR){
+                        self.send_diag(endpoint, EndpointDiag::DecompressionError);
+                    } else {
+                        self.send_diag(endpoint, EndpointDiag::ParsingError);
+                    }
                 }
                 return Err(e)
             }

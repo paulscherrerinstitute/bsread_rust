@@ -220,6 +220,18 @@ pub enum EndpointDiag {
     DecreasingId,
     OutOfRangeId,
     ParsingError,
+    DecompressionError
+}
+
+impl EndpointDiag {
+    pub const ALL: &'static [EndpointDiag] = &[
+        EndpointDiag::RepeatedId,
+        EndpointDiag::NonPositiveId,
+        EndpointDiag::DecreasingId,
+        EndpointDiag::OutOfRangeId,
+        EndpointDiag::ParsingError,
+        EndpointDiag::DecompressionError,
+    ];
 }
 
 #[derive(Clone, Debug)]

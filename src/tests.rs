@@ -900,10 +900,9 @@ fn flawed() ->  IOResult<()> {
     }
     print_stats_rec(&rec);
     let total_rx = rec.message_count() + rec.error_count();
-    println!("RepeatedId: {}", diag_counts.get(&EndpointDiag::RepeatedId).unwrap_or(&0));
-    println!("NonPositiveId: {}", diag_counts.get(&EndpointDiag::NonPositiveId).unwrap_or(&0));
-    println!("DecreasingId: {}", diag_counts.get(&EndpointDiag::DecreasingId).unwrap_or(&0));
-    println!("OutOfRangeId: {}", diag_counts.get(&EndpointDiag::OutOfRangeId).unwrap_or(&0));
+    for diag in EndpointDiag::ALL {
+        println!("{:?}: {}", diag, diag_counts.get(&diag).unwrap_or(&0));
+    }
     assert_eq!(*diag_counts.get(&EndpointDiag::RepeatedId).unwrap_or(&0), total_rx/10 + if ((total_rx % 10)>=3) {1} else {0});
     assert_eq!(*diag_counts.get(&EndpointDiag::DecreasingId).unwrap_or(&0), total_rx/10  + if ((total_rx % 10)>=7) {1} else {0});
     Ok(())
