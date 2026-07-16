@@ -49,7 +49,8 @@ impl Stats{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryMode {
-    Callback,
+    Inline,
+    Threaded,
     Buffered,
 }
 
@@ -142,7 +143,7 @@ impl Receiver{
         };
         let endpoints = endpoints.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
         let stats = Arc::new(Mutex::new(Stats{counter_messages:0, counter_error:0, counter_header_changes:0}));
-        let delivery_mode = DeliveryMode::Callback;
+        let delivery_mode = DeliveryMode::Inline;
         let  interrupted = Arc::new(AtomicBool::new(false));
         let (tx, rx) = crossbeam_channel::unbounded();
         let check_mask = CHECK_ALL;
@@ -482,7 +483,7 @@ impl Receiver{
              })
             .expect("Failed to spawn thread");
         self.handle = Some(handle);
-        self.delivery_mode = DeliveryMode::Callback;
+        self.delivery_mode = DeliveryMode::Threaded;
     }
 
     pub fn join(& mut self) -> io::Result<()> {
