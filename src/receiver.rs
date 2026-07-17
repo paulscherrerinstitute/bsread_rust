@@ -3,7 +3,7 @@ use crate::message::*;
 use crate::utils::*;
 use crate::sockets::*;
 use std::{io, thread};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
@@ -71,19 +71,23 @@ enum ConnectionSockets {
     Individual {
         sockets: HashMap<String, TrackedSocket>,
         poll_items: Vec<zmq::PollItem<'static>>,
+        poll_endpoints: Vec<String>,
+        poll_ready_list: VecDeque<String>,
     },
 }
 
+//TODO: flag for this poll list to be reconstructed in _receive to avoid synchronization
 impl ConnectionSockets {
+
     fn update_poll_items(&mut self) {
         //We build the polling items when the sockets change, not in receive.
         //We must however mind the lifetime of PollItem, linked to the socket.
         match self {
             ConnectionSockets::Shared { socket } => {}
-            ConnectionSockets::Individual { sockets, poll_items } => {
+            ConnectionSockets::Individual { sockets, poll_items, poll_endpoints, poll_ready_list } => {
                 poll_items.clear();
-                for (key, socket) in sockets.iter() {
-                    //Cast or convert the socket reference into an unsafe 'static lifetime.
+                for (endpoint, socket) in sockets.iter() {
+                    //Cast or convert the socket reference into an unsafe 'static lifetime.v
                     // This is safe here because both the Socket and the PollItem live inside
                     // the same struct, and we clear/rebuild this Vec whenever sockets change.
                     let static_socket_ref: &'static zmq::Socket = unsafe {
@@ -91,8 +95,52 @@ impl ConnectionSockets {
                     };
                     // Build the PollItem using the prolonged lifetime reference
                     let poll_item = static_socket_ref.as_poll_item(zmq::POLLIN);
+                    poll_endpoints.push(endpoint.clone());
                     poll_items.push(poll_item);
                 }
+            }
+        }
+    }
+
+    fn add_poll_item(&mut self, endpoint: String) {
+        match self {
+            ConnectionSockets::Shared { socket } => {}
+            ConnectionSockets::Individual { sockets, poll_items, poll_endpoints, poll_ready_list } => {
+                //Cast or convert the socket reference into an unsafe 'static lifetime.
+                // This is safe here because both the Socket and the PollItem live inside
+                // the same struct, and we clear/rebuild this Vec whenever sockets change.
+                if let Some(socket) = sockets.get(&endpoint) {
+                    let static_socket_ref: &'static zmq::Socket = unsafe {
+                        std::mem::transmute::<&zmq::Socket, &'static zmq::Socket>(socket.socket())
+                    };
+                    // Build the PollItem using the prolonged lifetime reference
+                    let poll_item = static_socket_ref.as_poll_item(zmq::POLLIN);
+                    poll_endpoints.push(endpoint);
+                    poll_items.push(poll_item);
+                }
+            }
+        }
+    }
+    fn remove_poll_item(&mut self, endpoint: &String) {
+        match self {
+            ConnectionSockets::Shared { socket } => {}
+            ConnectionSockets::Individual { sockets, poll_items, poll_endpoints, poll_ready_list } => {
+                if let Some(index) = poll_endpoints.iter().position(|e| e == endpoint) {
+                    poll_endpoints.remove(index);
+                    poll_items.remove(index);
+                    poll_ready_list.retain(|ep| ep != endpoint);
+                }
+            }
+        }
+    }
+
+    fn clear_poll_items(&mut self) {
+        match self {
+            ConnectionSockets::Shared { socket } => {}
+            ConnectionSockets::Individual { sockets, poll_items, poll_endpoints, poll_ready_list } => {
+                poll_items.clear();
+                poll_endpoints.clear();
+                poll_ready_list.clear();
             }
         }
     }
@@ -141,7 +189,7 @@ impl Receiver{
                 ConnectionSockets::Shared {socket: TrackedSocket::new(&bsread.context(), socket_type, index)?}
             }
             ConnectionMode::Individual => {
-                ConnectionSockets::Individual {sockets: HashMap::new(),poll_items: Vec::new()}
+                ConnectionSockets::Individual {sockets: HashMap::new(), poll_items: Vec::new(), poll_endpoints: Vec::new(), poll_ready_list: VecDeque::new()}
             }
         };
         let endpoints = endpoints.map(|vec| vec.into_iter().map(|s| s.to_string()).collect());
@@ -212,7 +260,7 @@ impl Receiver{
                         }
                         self.socket_options.set(socket.socket())?;
                         sockets.insert(endpoint.to_string(), socket);
-                        self.sockets.update_poll_items();
+                        self.sockets.add_poll_item(endpoint.to_string());
                     }
                     Some(_) => {}
                 }
@@ -232,7 +280,7 @@ impl Receiver{
                     Some(socket) => {
                         socket.disconnect();
                         sockets.remove(endpoint);
-                        self.sockets.update_poll_items();
+                        self.sockets.remove_poll_item(&endpoint.to_string());
                     }
                 }
             }
@@ -341,27 +389,31 @@ impl Receiver{
             ConnectionSockets::Shared { socket } => {
                 (None, socket.receive())
             }
-            ConnectionSockets::Individual { sockets, poll_items } => {
+            ConnectionSockets::Individual { sockets, poll_items, poll_endpoints, poll_ready_list }  => {
                 //We build the polling items when the sockets change, not in receive.
                 //let mut poll_items: Vec<_> = sockets
                 //    .values()
                 //    .map(|socket| socket.socket().as_poll_item(zmq::POLLIN))
                 //    .collect();
                 //zmq::poll(&mut poll_items, -1)?;
-                if let Err(e) = zmq::poll(poll_items, -1) {
-                    return (None, Err(e.into()));
-                }
-                for (item, socket) in poll_items.iter().zip(sockets.values()) {
-                    if item.is_readable() {
-                        let endpoint = match socket.endpoint(0) {
-                            Some(ep) => Some(ep),
-                            None => {return (None, Err(IOError::new(ErrorKind::Other,"Individual socket with no endpoint",)),);
-                            }
-                        };
-                        return (endpoint, socket.receive());
+                if poll_ready_list.is_empty(){
+                    if let Err(e) = zmq::poll(poll_items, -1) {
+                        return (None, Err(e.into()));
                     }
+
+                    for (item, (endpoint, socket)) in poll_items.iter().zip(sockets.iter()) {
+                        if item.is_readable() {
+                            poll_ready_list.push_back(endpoint.clone());
+                        }
+                    }
+
                 }
-                (None,Err(IOError::new(ErrorKind::Other,"poll() returned but no socket was readable",)),)
+                if let Some(endpoint) = poll_ready_list.pop_front() {
+                    if let Some(socket) = sockets.get(&endpoint) {
+                        return (Some(endpoint), socket.receive());
+                    };
+                }
+                (None,Err(IOError::new(ErrorKind::Other,"No socket was readable")),)
             }
         }
     }
@@ -838,6 +890,7 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
 impl Drop for Receiver {
     fn drop(&mut self) {
         self.stop_forwarder();
+        self.sockets.clear_poll_items();
         if let Some(socket_monitor) = &self.socket_monitor {
             socket_monitor.shutdown();
             self.socket_monitor = None;

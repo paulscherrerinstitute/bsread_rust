@@ -396,18 +396,29 @@ impl SocketMonitor {
 }
 
 
+static SOCKET_INDEX: Mutex<u32> = Mutex::new(0);
+fn index() -> u32{
+    unsafe {
+        let mut counter = SOCKET_INDEX.lock().unwrap();
+        *counter += 1;
+        *counter
+    }
+}
+
 pub struct TrackedSocket {
     socket: zmq::Socket,
     endpoints: Vec<String>,
-    index: u32,
+    rec_index: u32,
     topics: Vec<String>,
-    monitoring: bool
+    monitoring: bool,
+    index: u32,
 }
 
 impl TrackedSocket {
-    pub fn new(context: &Context, socket_type: zmq::SocketType, index: u32) -> IOResult<TrackedSocket> {
+    pub fn new(context: &Context, socket_type: zmq::SocketType, rec_index: u32) -> IOResult<TrackedSocket> {
         let socket = context.socket(socket_type)?;
-        Ok (Self {socket, index, endpoints: Vec::new(),topics: Vec::new(),monitoring: false })
+        let index =  index();
+        Ok (Self {socket, rec_index, endpoints: Vec::new(),topics: Vec::new(),monitoring: false, index })
     }
 
     pub fn enable_monitoring(&mut self, context: &Context, monitor: &SocketMonitor, endpoint: Option<String>) -> IOResult<()> {
@@ -418,7 +429,7 @@ impl TrackedSocket {
         self.socket.monitor(&monitor_ep,zmq::SocketEvent::ALL as i32,)?;
         let mon = context.socket(zmq::PAIR)?;
         mon.connect(&monitor_ep)?;
-        monitor.add(mon,endpoint,self.index,);
+        monitor.add(mon,endpoint,self.rec_index,);
         self.monitoring = true;
         Ok(())
     }
@@ -507,6 +518,10 @@ impl TrackedSocket {
             return Some(Transport::from_endpoint(endpoint.as_str()).unwrap())
         }
         None
+    }
+
+    pub fn index(&self) -> u32{
+        self.index
     }
 
 }
