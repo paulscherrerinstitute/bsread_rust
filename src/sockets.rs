@@ -219,8 +219,10 @@ pub enum EndpointDiag {
     NonPositiveId,
     DecreasingId,
     OutOfRangeId,
+    SocketError,
     ParsingError,
-    DecompressionError
+    DecompressionError,
+    HeaderChange
 }
 
 impl EndpointDiag {

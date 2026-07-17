@@ -371,7 +371,7 @@ pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<Has
     Ok(data_header)
 }
 
-pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo> , counter_header_changes:& mut u32, raw:bool) -> IOResult<Message> {
+pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo>, raw:bool) -> IOResult<Message> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
         return Err(IOError::new(ErrorKind::InvalidData, "Invalid message format"));
@@ -385,7 +385,6 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
         // Reuse the previous data header and channels
         (last_msg.data_header, last_msg.channels, false)
     } else {
-        *counter_header_changes = *counter_header_changes +1;
         let blob = &message_parts[1];
         let compression = dh_compression(&main_header)?;
 

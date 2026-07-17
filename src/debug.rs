@@ -145,6 +145,13 @@ pub fn print_stats_rec(rec: &Receiver) -> () {
     println!("\tMessage Count: {}", rec.message_count());
     println!("\tError Count: {}", rec.error_count());
     println!("\tHeader Changes: {}", rec.change_count());
+    let diags = rec.diagnostics();
+    for diag in EndpointDiag::ALL {
+        if diags.contains_key(&diag) {
+            println!("{:?}: {}", diag, diags.get(&diag).unwrap_or(&0));
+        }         
+    }
+    
 }
 
 
