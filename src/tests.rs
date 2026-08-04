@@ -177,18 +177,20 @@ fn receiver_pull() ->  IOResult<()> {
 
 #[test]
 fn multi() -> IOResult<()> {
-    let env = TestEnvironment::new()?;
-    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
-    //rec.set_header_buffer_size(0);
-    rec.listen(on_message, Some(MESSAGE_COUNT))?;
-    print_stats_rec(&rec);
-    assert_rec(&rec, None, Some(2));
-    let mut endpoints= vec![TXP_PUB.endpoint().clone(), TXP_CMP.endpoint().clone()];
-    let mut diagnostics_endpoints = rec.diagnostics_endpoints();
-    endpoints.sort();
-    diagnostics_endpoints.sort();
-    assert_eq!(endpoints, diagnostics_endpoints);
-    println!("Diagnostics : {:?}",   diagnostics_endpoints);
+    for i in 0..5 {
+        let env = TestEnvironment::new()?;
+        let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
+        //rec.set_header_buffer_size(0);
+        rec.listen(on_message, Some(MESSAGE_COUNT))?;
+        print_stats_rec(&rec);
+        assert_rec(&rec, None, Some(2));
+        let mut endpoints = vec![TXP_PUB.endpoint().clone(), TXP_CMP.endpoint().clone()];
+        let mut diagnostics_endpoints = rec.diagnostics_endpoints();
+        endpoints.sort();
+        diagnostics_endpoints.sort();
+        assert_eq!(endpoints, diagnostics_endpoints);
+        println!("Diagnostics : {:?}",   diagnostics_endpoints);
+    }
     Ok(())
 }
 
