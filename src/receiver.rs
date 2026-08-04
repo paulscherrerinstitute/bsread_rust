@@ -25,7 +25,7 @@ fn index() -> u32{
 struct Stats {
     counter_messages: u32,
     counter_error: u32,
-    diagnostics: HashMap<EndpointDiag, u32>
+    diagnostics: HashMap<String, HashMap<EndpointDiag, u32>>
 }
 
 impl Stats{
@@ -38,16 +38,11 @@ impl Stats{
         self.counter_error = self.counter_error + 1;
     }
 
-    pub fn reset(& mut self){
+    fn reset(& mut self){
         self.counter_messages = 0;
         self.counter_error = 0;
         self.diagnostics = HashMap::new();
     }
-
-    pub fn header_changes(& self) -> u32 {
-        self.diagnostics.get(&EndpointDiag::HeaderChange).copied().unwrap_or(0)
-    }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,12 +71,9 @@ enum ConnectionSockets {
     },
 }
 
-//TODO: flag for this poll list to be reconstructed in _receive to avoid synchronization
 impl ConnectionSockets {
 
     fn update_poll_items(&mut self) {
-        //We build the polling items when the sockets change, not in receive.
-        //We must however mind the lifetime of PollItem, linked to the socket.
         match self {
             ConnectionSockets::Shared { socket } => {}
             ConnectionSockets::Individual { sockets, poll_items, poll_endpoints, poll_ready_list } => {
@@ -98,9 +90,11 @@ impl ConnectionSockets {
                     poll_endpoints.push(endpoint.clone());
                     poll_items.push(poll_item);
                 }
+                poll_ready_list.retain(|endpoint| sockets.contains_key(endpoint));
             }
         }
     }
+
 
     fn add_poll_item(&mut self, endpoint: String) {
         match self {
@@ -306,7 +300,7 @@ impl Receiver{
         self.raw
     }
 
-    fn process(&mut self, endpoint: Option<String>, message_parts:Vec<Vec<u8>>) -> IOResult<Message> {
+    fn process(&mut self, endpoint: &Option<String>, message_parts:Vec<Vec<u8>>) -> IOResult<Message> {
         if let Some(sender) = self.forwarder.as_mut() {
             match sender.forward(&message_parts) {
                 Ok(_) => (),
@@ -330,7 +324,7 @@ impl Receiver{
     }
     //self.send_diag(endpoint, EndpointDiag::NonPositiveId);
 
-    fn check_message(&mut self, message:Message,  endpoint: Option<String>) -> IOResult<(Message)> {
+    fn check_message(&mut self, message:Message,  endpoint: &Option<String>) -> IOResult<(Message)> {
         let id = message.id();
         if self.check_mask & CHECK_ID_POSITIVE != 0 {
             if id <=0 {
@@ -375,7 +369,7 @@ impl Receiver{
 
 
     fn send_diag(&mut self, endpoint: &Option<String>, diag:EndpointDiag){
-        *self.stats.lock().unwrap().diagnostics.entry(diag).or_insert(0) += 1;
+        self.increse_stats(endpoint, diag);
         if self.socket_monitor.is_some() {
             if let Some(ep) = endpoint {
                 self.tx.send(EndpointEvent::Diagnostic(ep.clone(), diag));
@@ -408,6 +402,7 @@ impl Receiver{
                     }
 
                 }
+                //println!("poll_ready_list : {:?}",  poll_ready_list);
                 if let Some(endpoint) = poll_ready_list.pop_front() {
                     if let Some(socket) = sockets.get(&endpoint) {
                         return (Some(endpoint), socket.receive());
@@ -429,14 +424,16 @@ impl Receiver{
             e
         })?;
 
-        let message = self.process(endpoint, message_parts);
+        let message = self.process(&endpoint, message_parts);
         match &message {
             Ok(_) => {
                 self.stats.lock().unwrap().increase_messages();
+                self.send_diag(&endpoint, EndpointDiag::Messages);
             }
             Err(e) => {
                 log::trace!("Receiver Error: {}", e);
                 self.stats.lock().unwrap().increase_errors();
+                self.send_diag(&endpoint, EndpointDiag::Errors);
             }
         }
         message
@@ -686,6 +683,43 @@ impl Receiver{
         }
     }
 
+    fn increse_stats(& mut self, endpoint: &Option<String>, diag:EndpointDiag){
+        let ep: &str = endpoint.as_deref().unwrap_or("");
+        //*self.stats.lock().unwrap().diagnostics.entry(ep.clone()).or_insert( HashMap::new()).entry(diag).or_insert(0) += 1;
+        //Only clone endpoint if entry is absent
+        let mut stats = self.stats.lock().unwrap();
+        let map = if let Some(map) = stats.diagnostics.get_mut(ep) {
+            map
+        } else {
+            stats.diagnostics.entry(ep.to_string()).or_insert_with(HashMap::new)
+        };
+        *map.entry(diag).or_insert(0) += 1;
+    }
+
+    pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>>{
+        self.stats.lock().unwrap().diagnostics.clone()
+    }
+    pub fn diagnostics_endpoints(&self) -> Vec<String> {
+        self.stats.lock().unwrap().diagnostics.keys().cloned().collect()
+    }
+
+    pub fn endpoint_diagnostics(& self,  endpoint: &String) -> Option<HashMap<EndpointDiag, u32>> {
+        self.stats.lock().unwrap().diagnostics.get(endpoint).cloned()
+    }
+
+    pub fn endpoint_diagnostic(& self,  endpoint: &String, diag:EndpointDiag) -> Option<u32> {
+        self.stats.lock().unwrap().diagnostics.get(endpoint)?.get(&diag).copied()
+    }
+
+    pub fn header_changes(& self,  endpoint: &String) -> u32 {
+        self.endpoint_diagnostic(endpoint, EndpointDiag::HeaderChange).unwrap_or(
+            if let Some (x) =  self.endpoint_diagnostic(endpoint, EndpointDiag::Messages) {
+                1
+            } else {
+                0
+            }
+        )
+    }
 
     pub fn message_count(&self) -> u32 {
         self.stats.lock().unwrap().counter_messages
@@ -693,14 +727,6 @@ impl Receiver{
 
     pub fn error_count(&self) -> u32 {
         self.stats.lock().unwrap().counter_error
-    }
-
-    pub fn change_count(&self) -> u32 {
-        self.stats.lock().unwrap().header_changes()
-    }
-
-    pub fn diagnostics(&self) -> HashMap<EndpointDiag, u32> {
-        self.stats.lock().unwrap().diagnostics.clone()
     }
 
     pub fn reset_counters(& mut self) {

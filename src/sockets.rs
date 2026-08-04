@@ -215,6 +215,8 @@ pub enum EndpointState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EndpointDiag {
+    Messages,
+    Errors,
     RepeatedId,
     NonPositiveId,
     DecreasingId,
@@ -227,12 +229,16 @@ pub enum EndpointDiag {
 
 impl EndpointDiag {
     pub const ALL: &'static [EndpointDiag] = &[
+        EndpointDiag::Messages,
+        EndpointDiag::Errors,
         EndpointDiag::RepeatedId,
         EndpointDiag::NonPositiveId,
         EndpointDiag::DecreasingId,
         EndpointDiag::OutOfRangeId,
+        EndpointDiag::SocketError,
         EndpointDiag::ParsingError,
         EndpointDiag::DecompressionError,
+        EndpointDiag::HeaderChange
     ];
 }
 

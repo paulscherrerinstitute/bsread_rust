@@ -108,7 +108,7 @@ impl Sender {
     }
 
 
-    pub fn send(&mut self,  id:u64, timestamp: (u64,u64), channels: &Vec<Box<dyn ChannelTrait>>, channel_data: &Vec<Option<&ChannelData>>) -> IOResult<()> {
+    pub fn send(&mut self,  id:u64, timestamp: (u64,u64), channels: &Vec<Box<dyn ChannelTrait>>, channel_data: &Vec<Option<&ChannelData>>) -> IOResult<u64> {
         if channel_data.len() ==0 {
             return Err(IOError::new(ErrorKind::InvalidInput, "Empty channel data list"));
         }
@@ -116,7 +116,7 @@ impl Sender {
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid size of channel data list"));
         }
 
-        self.update_main_header(id, timestamp);
+        let sent_id = self.update_main_header(id, timestamp);
 
         let flags_last = if self.block {0} else {zmq::DONTWAIT};
         let flags_more = flags_last | zmq::SNDMORE;
@@ -141,7 +141,7 @@ impl Sender {
                 channel_index = channel_index + 1;
             } ;
         }
-        Ok(())
+        Ok(sent_id)
     }
 
     pub fn forward (&mut self,  message_parts:&Vec<Vec<u8>>) -> IOResult<()> {
@@ -155,7 +155,7 @@ impl Sender {
     }
 
 
-    pub fn send_message(&mut self,  message: &Message, create_data_header:bool) -> IOResult<()> {
+    pub fn send_message(&mut self,  message: &Message, create_data_header:bool) -> IOResult<u64> {
         let empty_data_header = self.data_header_buffer.len() == 0;
         if create_data_header || empty_data_header {
             self.create_data_header(message.channels())?;
@@ -167,7 +167,7 @@ impl Sender {
         self.send(id, timestamp, message.channels(), &ordered_values)
     }
 
-    pub fn update_main_header(& mut self, id:u64, timestamp: (u64,u64)) {
+    pub fn update_main_header(& mut self, id:u64, timestamp: (u64,u64)) -> u64{
         let id = if id == ID_SIMULATED {
             let ret = self.pulse_id;
             self.pulse_id = self.pulse_id+1;
@@ -187,7 +187,7 @@ impl Sender {
         global_timestamp.insert("sec".to_string(), JsonValue::Number(tm.0.into()));
         global_timestamp.insert("ns".to_string(), JsonValue::Number(tm.1.into()));
         self.main_header.insert("global_timestamp".to_string(), JsonValue::Object(global_timestamp));
-
+        id
     }
     pub fn is_started(&self) -> bool{
         self.started

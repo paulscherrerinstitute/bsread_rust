@@ -144,14 +144,16 @@ pub fn print_stats_rec(rec: &Receiver) -> () {
     println!("\tDropped: {}", rec.dropped());
     println!("\tMessage Count: {}", rec.message_count());
     println!("\tError Count: {}", rec.error_count());
-    println!("\tHeader Changes: {}", rec.change_count());
     let diags = rec.diagnostics();
-    for diag in EndpointDiag::ALL {
-        if diags.contains_key(&diag) {
-            println!("{:?}: {}", diag, diags.get(&diag).unwrap_or(&0));
-        }         
+    for endpoint in diags.keys() {
+        println!("\tEndpoint Diagnostics: {}", endpoint);
+        let endpoint_diags = diags.get(endpoint).unwrap();
+        for diag in EndpointDiag::ALL {
+            if endpoint_diags.contains_key(&diag) {
+                println!("\t\t{:?}: {}", diag, endpoint_diags.get(&diag).unwrap_or(&0));
+            }
+        }
     }
-    
 }
 
 
@@ -221,6 +223,7 @@ fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, 
 
 pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
     fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
+        let ep = transport.endpoint().clone();
         let bsread = Bsread::new()?;
         let mut sender = Sender::new(bsread, socket_type, transport, block, None, None)?;
         sender.set_linger(0)?;
@@ -241,7 +244,9 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                 match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
-                            Ok(_) => {}
+                            Ok(id) => {
+                                println!("Sent message Sender: {} ID: {}",   ep, id);
+                            }
                             Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)}
                         }
                     }

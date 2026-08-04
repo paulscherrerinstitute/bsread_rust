@@ -130,7 +130,10 @@ fn assert_rec(rec : &Receiver, min_msg_count: Option<u32>, connections: Option<u
         }
     }
     assert_eq!(rec.error_count(),0);
-    assert_eq!(rec.change_count(), connections.unwrap_or(1));
+    let diags = rec.diagnostics();
+    for endpoint in rec.diagnostics_endpoints() {
+        assert_eq!(rec.header_changes(&endpoint), 1);
+    }
 }
 
 fn assert_pool(pool: &Pool){
@@ -180,6 +183,12 @@ fn multi() -> IOResult<()> {
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, Some(2));
+    let mut endpoints= vec![TXP_PUB.endpoint().clone(), TXP_CMP.endpoint().clone()];
+    let mut diagnostics_endpoints = rec.diagnostics_endpoints();
+    endpoints.sort();
+    diagnostics_endpoints.sort();
+    assert_eq!(endpoints, diagnostics_endpoints);
+    println!("Diagnostics : {:?}",   diagnostics_endpoints);
     Ok(())
 }
 
