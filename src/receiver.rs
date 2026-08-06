@@ -12,6 +12,9 @@ use std::thread::JoinHandle;
 use zmq::{Context, PollItem, SocketEvent, SocketType};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+#[cfg(feature = "async")]
+use tokio::runtime::Handle;
+
 
 static RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
 fn index() -> u32{
@@ -50,6 +53,7 @@ pub enum DeliveryMode {
     Inline,
     Threaded,
     Buffered,
+    Async
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +116,8 @@ pub struct Receiver {
     bsread: Arc<Bsread>,
     fifo: Option<Arc<FifoQueue<Message>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
+    #[cfg(feature = "async")]
+    async_handle: Option<tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     stats: Arc<Mutex<Stats>>,
     index: u32,
     forwarder_config: Option<ForwarderConfig>,
@@ -147,9 +153,13 @@ impl Receiver{
         let socket_options = SocketOptions::new();
 
         Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
-            bsread, fifo:None, handle:None, stats, index,
+            bsread, fifo:None, handle:None,
+            stats, index,
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
-            socket_monitor:None, tx,rx, socket_options})
+            socket_monitor:None, tx,rx, socket_options,
+            #[cfg(feature = "async")]
+            async_handle:None,
+        })
     }
 
     pub fn to_string(& self,) -> String {
@@ -397,7 +407,7 @@ impl Receiver{
     //Synchronous Mode: blocking, callback in same thread
     pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
     where
-        F: FnMut(Message),
+        F: Fn(Message),
     {
         self.reset_counters();
         if let Some(cfg) = self.forwarder_config.as_mut() {
@@ -448,48 +458,23 @@ impl Receiver{
         Ok(())
     }
 
-    //Asynchronous Mode: non-bloclong, callback in another thread
+    //Asynchronous Mode: non-blocking, callback in another thread
     pub fn fork<F>(& mut self, mut callback: F,  num_messages: Option<u32>)
         where
-        F: FnMut(Message) + Send + 'static,
+        F: Fn(Message) + Send + 'static,
         {
-
-        fn listen_process<F>(endpoint: Option<Vec<&str>>, socket_type: SocketType, connection_mode:ConnectionMode,
-                             callback: Arc<Mutex<F>>, num_messages: Option<u32>,
-                             producer_fifo: Option<Arc<FifoQueue<Message>>>, producer_stats:Arc<Mutex<Stats>>,
-                             forwarder_config:Option<ForwarderConfig>,
-                             interrupted_context: Arc<AtomicBool>, interrupted_self: Arc<AtomicBool>, raw: bool,
-                             socket_monitor:Option<SocketMonitor>, tx:crossbeam_channel::Sender<EndpointEvent>) -> IOResult<()>
-            where
-                F: FnMut(Message) + Send + 'static,
-            {
-            let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
-            let mut receiver = bsread.receiver(endpoint, socket_type, connection_mode)?;
-            receiver.fifo = producer_fifo;
-            receiver.stats = producer_stats;
-            receiver.interrupted = interrupted_self;
-            receiver.forwarder_config = forwarder_config;
-            receiver.raw = raw;
-            receiver.socket_monitor = socket_monitor;
-            receiver.tx = tx;
-            let mut callback = callback.lock().unwrap();
-            receiver.listen(&mut callback.deref_mut(), num_messages)
-        }
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
         let interrupted_context = Arc::clone(self.bsread.interrupted());
         let interrupted_self = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
-
         let producer_fifo = match &self.fifo {
             None => { None }
             Some(f) => { Some(f.clone()) }
         };
-        //let producer_stats = Arc::clone(&self.stats);
-        //let producer_stats = Arc::new(Mutex::new(&self.stats));
         let producer_stats =self.stats.clone();
-        let shared_callback = Arc::new(Mutex::new(callback));
+        //let shared_callback = Arc::new(Mutex::new(callback));
         let raw = self.raw;
         let thread_name = self.to_string();
         let socket_monitor = self.socket_monitor.take();
@@ -497,21 +482,15 @@ impl Receiver{
         let handle = thread::Builder::new()
             .name(thread_name.to_string())
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
-                let endpoints_as_str: Option<Vec<&str>> = endpoints.as_ref().map(|vec| vec.iter().map(String::as_str).collect());
-                listen_process(endpoints_as_str, socket_type, connection_mode, shared_callback, num_messages, producer_fifo, producer_stats,
-                               forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx).map_err(|e| {
-                    // Handle thread panic and convert to an error
-                    let error: Box<dyn Error + Send + Sync> = format!("{}|{}",e.kind(), e.to_string()).into();
-                    error
-                })
-                //self.listen(callback, num_messages);
+                listen_task(endpoints, socket_type, connection_mode, callback, num_messages, producer_fifo, producer_stats,
+                               forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
              })
             .expect("Failed to spawn thread");
         self.handle = Some(handle);
         self.delivery_mode = DeliveryMode::Threaded;
     }
 
-    pub fn join(& mut self) -> io::Result<()> {
+    pub fn join(& mut self) -> IOResult<()> {
         if let Some(handle) = self.handle.take() { // Take ownership of the handle
             self.handle = None;
             handle
@@ -532,10 +511,65 @@ impl Receiver{
         Ok(())
     }
 
+    #[cfg(feature = "async")]
+    pub fn start_async<F, Fut>(&mut self, callback: F, num_messages: Option<u32>, handle: Option<tokio::runtime::Handle>)
+    where
+        F: Fn(Message) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
+        let socket_type = self.socket_type.clone();
+        let connection_mode = self.connection_mode.clone();
+        let interrupted_context = Arc::clone(self.bsread.interrupted());
+        let interrupted_self = Arc::clone(&self.interrupted);
+        let forwarder_config = self.forwarder_config.clone();
+        let producer_fifo =None;
+        let producer_stats =self.stats.clone();
+        let raw = self.raw;
+        let socket_monitor = self.socket_monitor.take();
+        let tx = self.tx.clone();
+
+        let handle  =  match handle{
+            None => {tokio::runtime::Handle::current()}
+            Some(handle) => {handle}
+        };
+        let callback_handle = handle.clone();
+
+        let join_handle = handle.spawn_blocking(move || {
+            let cb = move |msg| {
+                let callback = callback(msg);
+                callback_handle.spawn(callback);
+            };
+
+            listen_task(endpoints, socket_type, connection_mode, cb,
+                        num_messages, producer_fifo, producer_stats,
+                        forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
+        });
+        self.delivery_mode = DeliveryMode::Async;
+        self.async_handle = Some(join_handle);
+    }
+
+    #[cfg(feature = "async")]
+    pub async fn join_async(&mut self) -> IOResult<()> {
+        if let Some(handle) = self.async_handle.take() {
+            match handle.await {
+                Ok(result) => result.map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, e.to_string())
+                }),
+                Err(e) => Err(io::Error::new(
+                    io::ErrorKind::Other,format!("Tokio join error: {}", e),
+                )),
+            }
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn is_running(&self) -> bool {
-        self.handle
-            .as_ref()
-            .is_some_and(|h| !h.is_finished())
+        let running = self.handle.as_ref().is_some_and(|h| !h.is_finished());
+        #[cfg(feature = "async")]
+        let running = running || self.async_handle.as_ref().is_some_and(|h| !h.is_finished());
+        running
     }
 
     //Buffered mode: non-blocking, messages buffered ibn another thread
@@ -544,6 +578,7 @@ impl Receiver{
             return Err(IOError::new(ErrorKind::AlreadyExists, "Receiver already started"));
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
+        self.reset_counters();
 
         fn callback(_: Message) -> () {}
         self.fork(callback, None);
@@ -793,6 +828,42 @@ impl Receiver{
             }
         }
     }
+}
+
+fn listen_task<F>(
+    endpoints: Option<Vec<String>>,
+    socket_type: SocketType,
+    connection_mode: ConnectionMode,
+    callback: F,
+    num_messages: Option<u32>,
+    producer_fifo: Option<Arc<FifoQueue<Message>>>,
+    producer_stats: Arc<Mutex<Stats>>,
+    forwarder_config: Option<ForwarderConfig>,
+    interrupted_context: Arc<AtomicBool>,
+    interrupted_self: Arc<AtomicBool>,
+    raw: bool,
+    socket_monitor: Option<SocketMonitor>,
+    tx: crossbeam_channel::Sender<EndpointEvent>,
+) -> Result<(), Box<dyn Error + Send + Sync>>
+where
+    F: Fn(Message) + Send + 'static,
+{
+    let endpoints = endpoints
+        .as_ref()
+        .map(|v| v.iter().map(String::as_str).collect::<Vec<_>>());
+
+    let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
+    let mut receiver = bsread.receiver(endpoints, socket_type, connection_mode)?;
+    receiver.fifo = producer_fifo;
+    receiver.stats = producer_stats;
+    receiver.interrupted = interrupted_self;
+    receiver.forwarder_config = forwarder_config;
+    receiver.raw = raw;
+    receiver.socket_monitor = socket_monitor;
+    receiver.tx = tx;
+    receiver
+        .listen(callback, num_messages)
+        .map_err(|e| format!("{}|{}", e.kind(), e).into())
 }
 
 impl SocketConfig for Receiver {

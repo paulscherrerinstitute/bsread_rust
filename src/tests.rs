@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use indexmap::IndexMap;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering, AtomicI32};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicI32, AtomicUsize};
 use chrono::Local;
 use crossbeam_channel::RecvTimeoutError;
 use rand::RngExt;
@@ -237,7 +237,57 @@ fn threaded() -> IOResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "async")]
+fn new_tokio_runtime() -> tokio::runtime::Runtime {
+    //let runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        //.thread_name("async_carrier")
+        .thread_name_fn(|| {
+            static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+            format!("async_carrier-{}", id)
+        })
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+}
+#[test]
+#[cfg(feature = "async")]
+fn run_async() -> IOResult<()> {
+    let callback = |msg| async move {
+        println!("Async callback");
+        on_message(msg);
+    };
 
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()], ), SocketType::SUB, CONNECTION_MODE)?;
+    let runtime = new_tokio_runtime();
+
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        rec.start_async(callback, Some(MESSAGE_COUNT), Some(handle));
+        rec.join_async().await.unwrap();
+    });
+    //thread::sleep(Duration::from_millis(2000));
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        rec.start_async(callback, Some(MESSAGE_COUNT), Some(handle));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        rec.interrupt();
+        rec.join_async().await.unwrap();
+    });
+    let messages = rec.message_count();
+    if messages==0 || messages >= MESSAGE_COUNT{
+        panic!("Interrupted receiver received {} messages", messages);
+    }
+    println!("Interrupted receiver received {} messages", messages);
+    Ok(())
+}
 #[test]
 fn interrupting() ->  IOResult<()> {
     let env = TestEnvironment::new()?;

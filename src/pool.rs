@@ -58,7 +58,7 @@ Pool {
     //Callback called in each receiver thread
     pub fn start<F>(&mut self, callback: F) -> IOResult<()>
     where
-        F: FnMut(Message) + Send + 'static,
+        F: Fn(Message) + Send + 'static,
     {
         let shared_callback = Arc::new(Mutex::new(callback));
         for receiver in &mut self.receivers {
@@ -75,7 +75,7 @@ Pool {
     //Callback called in a private thread for each receiver using a message buffer.
     pub fn start_buffered<F>(&mut self, mut callback: F, buffer_size:usize) -> IOResult<()>
     where
-        F: FnMut(Message) + Send + 'static,
+        F: Fn(Message) + Send + 'static,
     {
         let shared_callback = Arc::new(Mutex::new(callback));
         for receiver in & mut self.receivers {
