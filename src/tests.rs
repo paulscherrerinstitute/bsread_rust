@@ -34,7 +34,7 @@ const PRINT_DATA_HEADER: bool = false;
 const PRINT_META_DATA: bool = false;
 const PRINT_DATA: bool = false;
 
-pub fn print_message(message: &Message){
+pub fn print_message(message: &ReceivedMessage){
     debug::print_message( message, PRINT_ARRAY_MAX_SIZE, PRINT_MAIN_HEADER,
                           PRINT_DATA_HEADER, PRINT_META_DATA, PRINT_DATA);
 }
@@ -50,7 +50,7 @@ pub fn print_stats_pool(pool: &Pool){
 }
 
 
-fn on_message(message: Message) -> () {
+fn on_message(message: ReceivedMessage) -> () {
     print_message(&message);
 }
 
@@ -100,8 +100,9 @@ impl TestEnvironment {
         Ok(Self {bsread})
     }
 
-    pub fn on_message(&self, msg: &Message){
-        println!("Received {} [{}]", msg.id(), thread::current().name().unwrap_or("Unnamed Thread").to_string())
+    pub fn on_message(&self, msg: &ReceivedMessage){
+
+        println!("Received {} from endpoint: {:?} [{}]", msg.message.id(), msg.endpoint, thread::current().name().unwrap_or("Unnamed Thread").to_string())
     }
 }
 
@@ -342,8 +343,9 @@ fn conversion() -> IOResult<()> {
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.connect()?;
-    let message = rec.receive()?;
-    print_message(&message);
+    let rx = rec.receive()?;
+    print_message(&rx);
+    let message = rx.message;
     let v = message.channel_value("AF32").unwrap();
     println!("{:?}", v.to_astr());
     println!("{:?}", v.to_ai32());
@@ -359,8 +361,9 @@ fn booleans() -> IOResult<()> {
     let mut rec = env.bsread.receiver(None,  SocketType::SUB, CONNECTION_MODE)?;
     rec.add_endpoint(TXP_PUB.endpoint().as_str());
     rec.connect()?;
-    let message = rec.receive()?;
-    print_message(&message);
+    let rx = rec.receive()?;
+    print_message(&rx);
+    let message = rx.message;
     let v = message.channel_value("ABOOL").unwrap();
     println!("{:?}", v.to_astr());
     println!("{:?}", v.to_ai32());
@@ -377,9 +380,9 @@ fn buffered() -> IOResult<()> {
     rec.start(100)?;
     for _ in 0..MESSAGE_COUNT {
         match rec.wait(1000) {
-            Ok(msg) => {
-                print_message(&msg);
-                assert_message_contents_ok(&msg);
+            Ok(rx) => {
+                print_message(&rx);
+                assert_message_contents_ok(&rx.message);
             }
             Err(e) => {println!("{}",e)}
         }
@@ -684,7 +687,7 @@ fn sender_demo() ->  IOResult<()> {
         data.push(Some(ChannelData::new(Value::AU8(vec![count as u8; MESSAGE_ARRAY_SIZE ] ), TIMESTAMP_NOW)));
         let message = Message::new_from_channel_vec(ID_SIMULATED,TIMESTAMP_NOW, &channels, data)?;
         sender.send_message(&message ,false)?;
-        print_message(&message);
+        print_message(&ReceivedMessage{endpoint:None, message: message});
         thread::sleep(Duration::from_millis(SENDER_INTERVAL));
         count = count+1;
     }
@@ -702,7 +705,7 @@ fn forwarder() ->  IOResult<()> {
     rec.fork(on_message, None);
 
     //Asynchronous
-    rxtx.fork(|msg| {log::info!("RTX Msg {}", msg.id())}, Some(MESSAGE_COUNT));
+    rxtx.fork(|rx| {log::info!("RTX Msg {}", rx.message.id())}, Some(MESSAGE_COUNT));
     rxtx.join()?;
     thread::sleep(Duration::from_millis(500));
     print_stats_rec(&rec);
@@ -710,7 +713,7 @@ fn forwarder() ->  IOResult<()> {
 
     rec.reset_counters();
     //Synchronous
-    rxtx.listen(|msg| {log::info!("RTX Msg {}", msg.id())}, Some(MESSAGE_COUNT))?;
+    rxtx.listen(|rx| {log::info!("RTX Msg {}", rx.message.id())}, Some(MESSAGE_COUNT))?;
     thread::sleep(Duration::from_millis(100));
     print_stats_rec(&rec);
     //Would fail because header change = 0
@@ -744,12 +747,12 @@ fn forwarder_with_sender() ->  IOResult<()> {
 fn closure() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
-    rec.listen(|msg| {env.on_message(&msg);}, Some(MESSAGE_COUNT))?;
+    rec.listen(|rx| {env.on_message(&rx);}, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
 
     //Must move env to fork
-    rec.fork(move |msg| {env.on_message(&msg);}, Some(MESSAGE_COUNT));
+    rec.fork(move |rx| {env.on_message(&rx);}, Some(MESSAGE_COUNT));
     rec.join()?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
@@ -761,12 +764,12 @@ fn closure_interrupt() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
 
-    rec.listen(|msg| {
-        env.on_message(&msg);
-        if msg.id() > 15{
+    rec.listen(|rx| {
+        env.on_message(&rx);
+        if rx.message.id() > 15{
             env.bsread.interrupt();
         }
-        assert_message_contents_ok(&msg);
+        assert_message_contents_ok(&rx.message);
     }, None)?;
     print_stats_rec(&rec);
     assert_rec(&rec, Some(10), None);
@@ -792,8 +795,8 @@ fn receiver_raw_buffered() ->  IOResult<()> {
     rec.start(100)?;
     for i in 1..MESSAGE_COUNT+1 {
         match rec.wait(1000) {
-            Ok(msg) => {
-                assert_message_contents_ok(&msg);
+            Ok(rx) => {
+                assert_message_contents_ok(&rx.message);
             }
             Err(e) => {println!("{}",e)}
         }
@@ -811,11 +814,11 @@ fn receiver_raw_async () ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.set_raw(raw);
-    rec.listen(|_msg| {
-         println!("\tId: {}", _msg.id());
-         let v = _msg.channel_value("AI64").unwrap().as_bytes().unwrap();
+    rec.listen(|rx| {
+         println!("\tId: {}", rx.message.id());
+         let v = rx.message.channel_value("AI64").unwrap().as_bytes().unwrap();
          println!("\tData: {:?}", v);
-        assert_message_contents_ok(&_msg);
+        assert_message_contents_ok(&rx.message);
     }, Some(count));
     rec.stop()?;
     assert_rec(&rec, Some(count), None);
@@ -828,7 +831,8 @@ fn conversions() -> IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(1)?;
     match rec.wait(1000) {
-        Ok(msg) => {
+        Ok(rx) => {
+            let msg = rx.message;
             let n = msg.id().to_u32().unwrap() -1;
             assert_message_contents_ok(&msg);
             //Read scalar as 1-element array

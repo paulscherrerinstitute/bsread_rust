@@ -6,7 +6,7 @@ pub use crate::value::{Value};
 pub use crate::message::{ChannelData, Message, DataHeaderInfo};
 pub use crate::sockets::{Transport};
 pub use crate::utils::{init_id_t0, init_sf_id_t0};
-pub use crate::receiver::{Receiver, DeliveryMode, ConnectionMode};
+pub use crate::receiver::{Receiver, DeliveryMode, ConnectionMode, ReceivedMessage};
 pub use crate::pool::Pool;
 pub use crate::sender::Sender;
 pub use zmq::SocketType;

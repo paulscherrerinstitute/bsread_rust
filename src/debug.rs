@@ -73,14 +73,16 @@ fn increment_counter() {
     }
 }
 
-pub fn print_message(message: &Message, max_size:usize, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
+pub fn print_message(rx: &ReceivedMessage, max_size:usize, main_header:bool, data_header:bool, meta:bool, data:bool) -> () {
     println!("{}", "-".repeat(110));
+    let endpoint = &rx.endpoint;
+    let message = &rx.message;
     let current_thread = thread::current(); // Keep the thread alive
     let thread_name = current_thread.name().unwrap_or("Unnamed Thread");
     let ts = message.timestamp();
     unsafe {
-        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{} {} [{}]", *MESSAGE_COUNTER.lock().unwrap(), message.id(),
-                 ts.0, ts.1, message.hash(), if message.header_changed() {"*"} else {" "}, thread_name);
+        println!("Message {:<5} Id:{}  Ts:{},{:<10}  Hash:{} {} Endpoint:{:?} [{}]" , *MESSAGE_COUNTER.lock().unwrap(), message.id(),
+                 ts.0, ts.1, message.hash(), if message.header_changed() {"*"} else {" "}, endpoint, thread_name);
     }
     increment_counter();
 

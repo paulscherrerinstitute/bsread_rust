@@ -58,7 +58,7 @@ Pool {
     //Callback called in each receiver thread
     pub fn start<F>(&mut self, callback: F) -> IOResult<()>
     where
-        F: Fn(Message) + Send + 'static,
+        F: Fn(ReceivedMessage) + Send + 'static,
     {
         let shared_callback = Arc::new(Mutex::new(callback));
         for receiver in &mut self.receivers {
@@ -75,7 +75,7 @@ Pool {
     //Callback called in a private thread for each receiver using a message buffer.
     pub fn start_buffered<F>(&mut self, mut callback: F, buffer_size:usize) -> IOResult<()>
     where
-        F: Fn(Message) + Send + 'static,
+        F: Fn(ReceivedMessage) + Send + 'static,
     {
         let shared_callback = Arc::new(Mutex::new(callback));
         for receiver in & mut self.receivers {
@@ -117,11 +117,11 @@ Pool {
         }
         Ok(())
     }
-    
+
     #[cfg(feature = "async")]
     pub fn start_async<F, Fut>(&mut self, callback: F, handle: Option<tokio::runtime::Handle>) -> IOResult<()>
     where
-        F: Fn(Message) -> Fut + Send + Sync + 'static,
+        F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let shared_callback = Arc::new(Mutex::new(callback));
@@ -149,7 +149,7 @@ Pool {
             receiver.join_async().await?;
         }
         Ok(())
-    }    
+    }
     pub fn socket_type(&self) -> SocketType {
         self.socket_type
     }

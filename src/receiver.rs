@@ -25,10 +25,16 @@ fn index() -> u32{
     }
 }
 
+
 struct Stats {
     counter_messages: u32,
     counter_error: u32,
     diagnostics: HashMap<String, HashMap<EndpointDiag, u32>>
+}
+
+pub struct ReceivedMessage{
+    pub endpoint: Option<String>,
+    pub message: Message,
 }
 
 impl Stats{
@@ -114,7 +120,7 @@ pub struct Receiver {
     id_buffer: HashMap<String, u64>,
     check_mask: u64,
     bsread: Arc<Bsread>,
-    fifo: Option<Arc<FifoQueue<Message>>>,
+    fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
     handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
     #[cfg(feature = "async")]
     async_handle: Option<tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
@@ -378,7 +384,7 @@ impl Receiver{
         }
     }
 
-    pub fn receive(&mut self) -> IOResult<Message> {
+    pub fn receive(&mut self) -> IOResult<ReceivedMessage> {
         let (endpoint, message_parts) = self._receive();
 
 
@@ -390,24 +396,26 @@ impl Receiver{
         })?;
 
         let message = self.process(&endpoint, message_parts);
-        match &message {
-            Ok(_) => {
+        match message {
+            Ok(msg) => {
                 self.stats.lock().unwrap().increase_messages();
                 self.increse_stats(&endpoint,  EndpointDiag::Messages);
+                Ok(ReceivedMessage{endpoint, message:msg})
             }
             Err(e) => {
                 log::trace!("Receiver Error: {}", e);
                 self.stats.lock().unwrap().increase_errors();
                 self.increse_stats(&endpoint,  EndpointDiag::Errors);
+                Err(IOError::new(e.kind(), e))
             }
         }
-        message
+
     }
 
     //Synchronous Mode: blocking, callback in same thread
     pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
     where
-        F: Fn(Message),
+        F: Fn(ReceivedMessage),
     {
         self.reset_counters();
         if let Some(cfg) = self.forwarder_config.as_mut() {
@@ -436,7 +444,7 @@ impl Receiver{
         }
 
         loop {
-            let message = self.receive();
+            let message= self.receive();
             if let Ok(msg) = message {
                 match &self.fifo {
                     None => {
@@ -461,7 +469,7 @@ impl Receiver{
     //Asynchronous Mode: non-blocking, callback in another thread
     pub fn fork<F>(& mut self, mut callback: F,  num_messages: Option<u32>)
         where
-        F: Fn(Message) + Send + 'static,
+        F: Fn(ReceivedMessage) + Send + 'static,
         {
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
@@ -514,7 +522,7 @@ impl Receiver{
     #[cfg(feature = "async")]
     pub fn start_async<F, Fut>(&mut self, callback: F, num_messages: Option<u32>, handle: Option<tokio::runtime::Handle>)
     where
-        F: Fn(Message) -> Fut + Send + Sync + 'static,
+        F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
@@ -536,7 +544,7 @@ impl Receiver{
         let callback_handle = handle.clone();
 
         let join_handle = handle.spawn_blocking(move || {
-            let cb = move |msg| {
+            let cb = move | msg| {
                 let callback = callback(msg);
                 callback_handle.spawn(callback);
             };
@@ -580,7 +588,7 @@ impl Receiver{
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
         self.reset_counters();
 
-        fn callback(_: Message) -> () {}
+        fn callback(_: ReceivedMessage) -> () {}
         self.fork(callback, None);
         self.delivery_mode = DeliveryMode::Buffered;
         Ok(())
@@ -601,14 +609,14 @@ impl Receiver{
         Ok(())
     }
 
-    pub fn get(&self) -> Option<Message> {
+    pub fn get(&self) -> Option<ReceivedMessage> {
         match &self.fifo{
             None => {None}
             Some(fifo) => {fifo.get()}
         }
     }
 
-    pub fn wait(&self, timeout_ms: u64) -> IOResult<Message> {
+    pub fn wait(&self, timeout_ms: u64) -> IOResult<ReceivedMessage> {
         let timeout_duration = Duration::from_millis(timeout_ms);
         let start_time = Instant::now();
         while start_time.elapsed() < timeout_duration {
@@ -620,7 +628,7 @@ impl Receiver{
         Err(IOError::new(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
-    pub fn wait_messages(&self, count:usize, timeout_ms: u64) -> IOResult<Vec<Message>> {
+    pub fn wait_messages(&self, count:usize, timeout_ms: u64) -> IOResult<Vec<ReceivedMessage>> {
         let mut ret = Vec::new();
         for _ in 0..count {
             let msg = self.wait(timeout_ms)?;
@@ -629,7 +637,7 @@ impl Receiver{
         Ok(ret)
     }
 
-    pub fn fifo(&self) -> Option<Arc<FifoQueue<Message>>> {
+    pub fn fifo(&self) -> Option<Arc<FifoQueue<ReceivedMessage>>> {
         match &self.fifo{
             None => {None}
             Some(fifo) => {Some(fifo.clone())}
@@ -836,7 +844,7 @@ fn listen_task<F>(
     connection_mode: ConnectionMode,
     callback: F,
     num_messages: Option<u32>,
-    producer_fifo: Option<Arc<FifoQueue<Message>>>,
+    producer_fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
     producer_stats: Arc<Mutex<Stats>>,
     forwarder_config: Option<ForwarderConfig>,
     interrupted_context: Arc<AtomicBool>,
@@ -846,7 +854,7 @@ fn listen_task<F>(
     tx: crossbeam_channel::Sender<EndpointEvent>,
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where
-    F: Fn(Message) + Send + 'static,
+    F: Fn(ReceivedMessage) + Send + 'static,
 {
     let endpoints = endpoints
         .as_ref()
