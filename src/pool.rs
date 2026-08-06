@@ -117,7 +117,39 @@ Pool {
         }
         Ok(())
     }
+    
+    #[cfg(feature = "async")]
+    pub fn start_async<F, Fut>(&mut self, callback: F, handle: Option<tokio::runtime::Handle>) -> IOResult<()>
+    where
+        F: Fn(Message) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let shared_callback = Arc::new(Mutex::new(callback));
+        let handle  =  match handle{
+            None => {tokio::runtime::Handle::current()}
+            Some(handle) => {handle}
+        };
+        for receiver in &mut self.receivers {
+            let receiver_handle = handle.clone();
+            let callback_clone = Arc::clone(&shared_callback);
+            receiver.start_async( move |msg| {
+                let callback = callback_clone.lock().unwrap();
+                callback(msg)
+            }, None, Some(receiver_handle));
+        }
+        Ok(())
+    }
 
+    #[cfg(feature = "async")]
+    pub async fn stop_async(&mut self) -> IOResult<()> {
+        for receiver in &mut self.receivers{
+            receiver.interrupt();
+        }
+        for receiver in &mut self.receivers{
+            receiver.join_async().await?;
+        }
+        Ok(())
+    }    
     pub fn socket_type(&self) -> SocketType {
         self.socket_type
     }
