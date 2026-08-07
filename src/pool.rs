@@ -78,21 +78,12 @@ Pool {
     pub fn is_raw(&self) -> bool{
         self.receivers[0].is_raw()
     }
-
-    //TODO: this is blocking in each receiver
-    pub fn receive(&mut self) -> IOResult<ReceivedMessage> {
-        for i in 0..self.receivers.len() {
-            let message = {
-                let receiver = &mut self.receivers[i];
-                receiver.receive()
-            };
-            if let Ok(msg) = message {
-                return Ok(msg);
-            }
-        }
-        Err(IOError::new(ErrorKind::InvalidInput, "No message received"))
+    
+    pub fn receive(&mut self, index:usize) -> IOResult<ReceivedMessage> {
+         self.receivers[index].receive()
     }
 
+    //TODO: this is blocking in each receiver
     //Synchronous Mode: blocking, callback in same thread
     pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
         where
@@ -102,16 +93,18 @@ Pool {
         self.connect()?;
 
         loop {
-            if let Ok(rx) = self.receive(){
-                callback(rx);
-            }
-            if let Some(n) = num_messages {
-                if self.message_count() >= n {
-                    return Ok(())
+            for index in 0..self.num_receivers(){
+                if let Ok(rx) = self.receive(index) {
+                    callback(rx);
                 }
-            }
-            if self.is_stopped() {
-                return Err(IOError::new(ErrorKind::ConnectionAborted, "Pool stopped"));
+                if let Some(n) = num_messages {
+                    if self.message_count() >= n {
+                        return Ok(())
+                    }
+                }
+                if self.is_stopped() {
+                    return Err(IOError::new(ErrorKind::ConnectionAborted, "Pool stopped"));
+                }
             }
         }
     }
@@ -243,6 +236,10 @@ Pool {
 
     pub fn receivers(&self) -> &Vec<Receiver> {
         &self.receivers
+    }
+
+    pub fn num_receivers(&self) -> usize {
+        self.receivers.len()
     }
 
     pub fn delivery_mode(&self) -> DeliveryMode {
@@ -410,6 +407,6 @@ impl Drop for Pool {
         if let Some(socket_monitor) = &self.socket_monitor {
             socket_monitor.shutdown();
             self.socket_monitor = None;
-        }        
+        }
     }
 }

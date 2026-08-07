@@ -578,7 +578,7 @@ fn pool_monitoring() ->  IOResult<()> {
         }
     }
 
-    let message = pool.receive()?;
+    let message = pool.receive(0)?;
     print_message(&message);
 
     //Checking endpoint state
