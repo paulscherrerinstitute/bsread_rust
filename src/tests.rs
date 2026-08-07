@@ -509,27 +509,100 @@ fn pool_buffered() -> IOResult<()> {
     let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
     pool.start(100)?;
     assert_eq!(pool.available(), 0);
-    thread::sleep(Duration::from_millis(MESSAGE_COUNT  as u64 * SENDER_INTERVAL / pool.connections() as u64 + 500));
-    println!("{}", pool.available());
-    thread::sleep(Duration::from_millis(500));
-    println!("{}", pool.available());
-    thread::sleep(Duration::from_millis(500));
-    println!("{}", pool.available());
-
     match pool.wait(1000) {
         Ok(rx) => {
-            println!("Received:");
+            println!("Wait:");
             print_message(&rx);
             assert_message_contents_ok(&rx.message);
         }
         Err(e) => {println!("{}",e)}
     }
-
-
+    thread::sleep(Duration::from_millis(1000));
+    println!("{}", pool.available());
+    if pool.available()==0 || pool.available() < 5 {
+        panic!("Didn't receive messages");
+    }
+    match pool.get() {
+        Some(rx) => {
+            println!("Get:");
+            print_message(&rx);
+            assert_message_contents_ok(&rx.message);
+        }
+        None => { panic!("Get failed")}
+    }
     pool.stop()?;
     print_stats_pool(&pool);
     //assert_eq!(pool.available(), 2*MESSAGE_COUNT);
     assert_pool(&pool);
+    Ok(())
+}
+
+#[test]
+fn pool_monitoring() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let TXP1: Transport = Transport::Tcp {port:10351, host:None};
+    let endpoint1 = TXP1.endpoint();
+    let TXP2: Transport = Transport::Tcp {port:10352, host:None};
+    let endpoint2 = TXP2.endpoint();
+    let server_lifetime = 2000;
+    start_sender(TXP1, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    start_sender(TXP2, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    let mut pool = env.bsread.pool(vec![&endpoint1, &endpoint2], SocketType::SUB, CONNECTION_MODE, 2)?;
+    let event_receiver = pool.enable_monitoring()?;
+    pool.connect()?;
+    //let event_receiver = pool.enable_monitoring()?;
+    let mut done1 = false;
+    let mut done2 = false;
+
+    //Waiting for connected state using events
+    while(true){
+        let ev = event_receiver.recv_timeout(Duration::from_millis(server_lifetime)).unwrap();
+        if ev.endpoint() == endpoint1 {
+            println!("Received event: {:?}" , ev);
+            if let EndpointEvent::State(ep, state) = &ev {
+                if *state == EndpointState::Connected {
+                    done1 = true;
+                }
+            }
+        }
+        if ev.endpoint() == endpoint2 {
+            println!("Received event: {:?}" , ev);
+            if let EndpointEvent::State(ep, state) = &ev {
+                if *state == EndpointState::Connected {
+                    done2 = true;
+                }
+            }
+        }
+        if (done1 && done2){
+            break;
+        }
+    }
+
+    let message = pool.receive()?;
+    print_message(&message);
+
+    //Checking endpoint state
+    let es1 = pool.endpoint_state(&endpoint1);
+    let es2 = pool.endpoint_state(&endpoint2);
+    //Map with all states
+    let ess = pool.endpoint_states();
+    assert_eq!(es1, ess.get(&endpoint1).copied());
+    assert_eq!(es2, ess.get(&endpoint2).copied());
+    assert_eq!(es1, Some(EndpointState::Connected));
+    assert_eq!(es2, Some(EndpointState::Connected));
+    println!("Endpoint 1 {} state : {:?}", &endpoint1, es1);
+    println!("Endpoint 2 {} state : {:?}", &endpoint2, es1);
+    println!("Endpoint states : {:?}", ess);
+    print_stats_pool(&pool);
+
+    thread::sleep(Duration::from_millis(server_lifetime));
+    let es1 = pool.endpoint_state(&endpoint1);
+    let es2 = pool.endpoint_state(&endpoint2);
+    println!("Endpoint 1 {} state : {:?}", &endpoint1, es1);
+    println!("Endpoint 2 {} state : {:?}", &endpoint2, es1);
+    println!("Endpoint states : {:?}", ess);
+    assert_ne!(es1, Some(EndpointState::Connected));
+    assert_ne!(es2, Some(EndpointState::Connected));
     Ok(())
 }
 
@@ -1065,7 +1138,7 @@ fn libzmq() ->  IOResult<()> {
 #[test]
 fn delayed() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
-    let TXP: Transport = Transport::Tcp {port:10351, host:None};
+    let TXP: Transport = Transport::Tcp {port:10353, host:None};
     let endpoint = TXP.endpoint();
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(100)?;

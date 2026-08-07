@@ -651,7 +651,7 @@ impl Receiver{
     pub fn wait(&self, timeout_ms: u64) -> IOResult<ReceivedMessage> {
         match &self.fifo{
             None => {
-                Err(IOError::new(ErrorKind::Other, "Operation only valid for buffered delivery mode"))
+                Err(IOError::new(ErrorKind::Unsupported, "Operation only valid for buffered delivery mode"))
             }
             Some(fifo) => {
                 match fifo.wait(timeout_ms){
@@ -783,8 +783,6 @@ impl Receiver{
         Ok(())
     }
 
-
-
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
         if self.socket_monitor.is_none(){
             let  socket_monitor = SocketMonitor::new(self.tx.clone());
@@ -806,6 +804,20 @@ impl Receiver{
         Ok(self.rx.clone())
     }
 
+    pub fn enable_shared_monitoring(& mut self, socket_monitor: &SocketMonitor)-> IOResult<()> {
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                socket.enable_monitoring(self.bsread.context(), &socket_monitor, None)?;
+
+            }
+            ConnectionSockets::Individual { sockets, ..} => {
+                for (endpoint, socket) in sockets.iter_mut() {
+                    socket.enable_monitoring(self.bsread.context(),  &socket_monitor, Some(endpoint.clone()))?;
+                }
+            }
+        }
+        Ok(())
+    }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
         match &self.socket_monitor{

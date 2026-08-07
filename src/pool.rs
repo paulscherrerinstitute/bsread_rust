@@ -8,13 +8,16 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 use zmq::SocketType;
-use crate::sockets::{EndpointDiag, EndpointState, SocketConfig, TrackedSocket};
+use crate::sockets::{EndpointDiag, EndpointEvent, EndpointState, SocketConfig, SocketMonitor, TrackedSocket};
 
 pub struct Pool {
     socket_type: SocketType,
     threads: usize,
     bsread: Arc<Bsread>,
-    receivers: Vec<Receiver>
+    receivers: Vec<Receiver>,
+    socket_monitor: Option<SocketMonitor>,
+    tx:crossbeam_channel::Sender<EndpointEvent>,
+    rx:crossbeam_channel::Receiver<EndpointEvent>,
 }
 
 impl
@@ -33,7 +36,8 @@ Pool {
                 index = 0;
             }
         }
-        Ok(Self { socket_type, threads, bsread,  receivers})
+        let (tx, rx) = crossbeam_channel::unbounded();
+        Ok(Self { socket_type, threads, bsread,  receivers, socket_monitor:None, tx,rx})
     }
 
     //Endpoints manually set grouped per thread
@@ -53,12 +57,16 @@ Pool {
                 index = 0;
             }
         }
-        Ok(Self { socket_type, threads, bsread,  receivers})
+        let (tx, rx) = crossbeam_channel::unbounded();
+        Ok(Self { socket_type, threads, bsread,  receivers, socket_monitor:None, tx,rx})
     }
 
     pub fn connect(&mut self) -> IOResult<()> {
         for receiver in & mut self.receivers {
             receiver.connect()?;
+            if let Some(socket_monitor) = &self.socket_monitor {
+                receiver.enable_shared_monitoring(socket_monitor)?;
+            }
         }
         Ok(())
     }
@@ -71,6 +79,20 @@ Pool {
         self.receivers[0].is_raw()
     }
 
+    //TODO: this is blocking in each receiver
+    pub fn receive(&mut self) -> IOResult<ReceivedMessage> {
+        for i in 0..self.receivers.len() {
+            let message = {
+                let receiver = &mut self.receivers[i];
+                receiver.receive()
+            };
+            if let Ok(msg) = message {
+                return Ok(msg);
+            }
+        }
+        Err(IOError::new(ErrorKind::InvalidInput, "No message received"))
+    }
+
     //Synchronous Mode: blocking, callback in same thread
     pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
         where
@@ -80,22 +102,16 @@ Pool {
         self.connect()?;
 
         loop {
-            for i in 0..self.receivers.len() {
-                let message = {
-                    let receiver = &mut self.receivers[i];
-                    receiver.receive()
-                };
-                if let Ok(msg) = message {
-                    callback(msg);
-                };
-                if let Some(n) = num_messages {
-                    if self.message_count() >= n {
-                        return Ok(())
-                    }
+            if let Ok(rx) = self.receive(){
+                callback(rx);
+            }
+            if let Some(n) = num_messages {
+                if self.message_count() >= n {
+                    return Ok(())
                 }
-                if self.is_stopped() {
-                    break;
-                }
+            }
+            if self.is_stopped() {
+                return Err(IOError::new(ErrorKind::ConnectionAborted, "Pool stopped"));
             }
         }
     }
@@ -338,15 +354,16 @@ Pool {
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        self.endpoint_receiver(endpoint)
-            .map_or(None, |receiver| receiver.endpoint_state(endpoint))
+        match &self.socket_monitor{
+            None => {None}
+            Some(socket_monitor) => {socket_monitor.endpoint_state(endpoint)}
+        }
     }
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
-        let mut states = HashMap::new();
-        for receiver in &self.receivers {
-            states.extend(receiver.endpoint_states());
+        match &self.socket_monitor{
+            None => {HashMap::new()}
+            Some(socket_monitor) => {socket_monitor.endpoint_states()}
         }
-        states
     }
 
     pub fn enable_check(& mut self, check:u64){
@@ -374,10 +391,25 @@ Pool {
         sockets
     }
 
+    pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
+        if self.socket_monitor.is_none(){
+            let  socket_monitor = SocketMonitor::new(self.tx.clone());
+            for receiver in &mut self.receivers {
+                receiver.enable_shared_monitoring(&socket_monitor);
+            }
+            self.socket_monitor =Some(socket_monitor);
+        }
+        Ok(self.rx.clone())
+    }
+
 }
 
 impl Drop for Pool {
     fn drop(&mut self) {
         self.stop();
+        if let Some(socket_monitor) = &self.socket_monitor {
+            socket_monitor.shutdown();
+            self.socket_monitor = None;
+        }        
     }
 }
