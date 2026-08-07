@@ -119,7 +119,7 @@ Pool {
     }
 
     #[cfg(feature = "async")]
-    pub fn start_async<F, Fut>(&mut self, callback: F, handle: Option<tokio::runtime::Handle>) -> IOResult<()>
+    pub fn start_async<F, Fut>(&mut self, callback: F, concurrent:bool, handle: Option<tokio::runtime::Handle>) -> IOResult<()>
     where
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
@@ -135,7 +135,7 @@ Pool {
             receiver.start_async( move |msg| {
                 let callback = callback_clone.lock().unwrap();
                 callback(msg)
-            }, None, Some(receiver_handle));
+            }, None, concurrent, Some(receiver_handle));
         }
         Ok(())
     }
@@ -150,6 +150,16 @@ Pool {
         }
         Ok(())
     }
+
+    pub fn is_running(&self) -> bool {
+        for receiver in & self.receivers{
+            if receiver.is_running(){
+                return true;
+            }
+        }
+        false
+    }
+    
     pub fn socket_type(&self) -> SocketType {
         self.socket_type
     }

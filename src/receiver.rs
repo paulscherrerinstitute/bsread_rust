@@ -520,7 +520,7 @@ impl Receiver{
     }
 
     #[cfg(feature = "async")]
-    pub fn start_async<F, Fut>(&mut self, callback: F, num_messages: Option<u32>, handle: Option<tokio::runtime::Handle>)
+    pub fn start_async<F, Fut>(&mut self, callback: F, num_messages: Option<u32>, concurrent:bool, handle: Option<tokio::runtime::Handle>)
     where
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
@@ -543,16 +543,50 @@ impl Receiver{
         };
         let callback_handle = handle.clone();
 
-        let join_handle = handle.spawn_blocking(move || {
-            let cb = move | msg| {
-                let callback = callback(msg);
-                callback_handle.spawn(callback);
-            };
+        let join_handle = if concurrent {
+             handle.spawn_blocking(move || {
+                let cb = move |msg: ReceivedMessage| {
+                    let callback = callback(msg);
+                    callback_handle.spawn(callback);
+                };
 
-            listen_task(endpoints, socket_type, connection_mode, cb,
-                        num_messages, producer_fifo, producer_stats,
-                        forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
-        });
+                listen_task(endpoints, socket_type, connection_mode, cb,
+                            num_messages, producer_fifo, producer_stats,
+                            forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
+            })
+        } else {
+                //let shared_callback = Arc::new(Mutex::new(callback));
+                handle.spawn_blocking(move || {
+                    let senders:Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<ReceivedMessage>>>>
+                        = Arc::new(Mutex::new(HashMap::new()));
+                    let senders_cb = senders.clone();
+                    let runtime = callback_handle.clone();
+                    let callback = Arc::new(callback);
+                    let cb = move |msg: ReceivedMessage| {
+                        let endpoint = msg.endpoint.clone().unwrap_or_default();
+                        let sender = {
+                            let mut senders = senders_cb.lock().unwrap();
+                            senders.entry(endpoint).or_insert_with(|| {
+                                    let (tx, mut rx) =
+                                        tokio::sync::mpsc::channel::<ReceivedMessage>(1000);
+                                    let callback = callback.clone();
+                                    runtime.spawn(async move {
+                                        while let Some(msg) = rx.recv().await {
+                                            callback(msg).await;
+                                        }
+                                    });
+                                    tx
+                                })
+                                .clone()
+                        };
+                        // ZMQ receiver thread is blocking, so use blocking_send
+                        sender.blocking_send(msg).unwrap();
+                    };
+                    listen_task(endpoints, socket_type, connection_mode, cb,
+                                num_messages, producer_fifo, producer_stats,
+                                forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
+            })
+        };
         self.delivery_mode = DeliveryMode::Async;
         self.async_handle = Some(join_handle);
     }

@@ -268,7 +268,7 @@ fn run_async() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), true, Some(handle));
         rec.join_async().await.unwrap();
     });
     //thread::sleep(Duration::from_millis(2000));
@@ -277,7 +277,7 @@ fn run_async() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), true,  Some(handle));
         tokio::time::sleep(Duration::from_millis(500)).await;
         rec.interrupt();
         rec.join_async().await.unwrap();
@@ -289,6 +289,67 @@ fn run_async() -> IOResult<()> {
     println!("Interrupted receiver received {} messages", messages);
     Ok(())
 }
+
+#[test]
+#[cfg(feature = "async")]
+fn run_async_() -> IOResult<()> {
+    let callback = |msg| async move {
+        println!("Async callback");
+        on_message(msg);
+    };
+
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()], ), SocketType::SUB, CONNECTION_MODE)?;
+    let runtime = new_tokio_runtime();
+
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        rec.start_async(callback, Some(MESSAGE_COUNT), true, Some(handle));
+        rec.join_async().await.unwrap();
+    });
+    //thread::sleep(Duration::from_millis(2000));
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        rec.start_async(callback, Some(MESSAGE_COUNT), true,  Some(handle));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        rec.interrupt();
+        rec.join_async().await.unwrap();
+    });
+    let messages = rec.message_count();
+    if messages==0 || messages >= MESSAGE_COUNT{
+        panic!("Interrupted receiver received {} messages", messages);
+    }
+    println!("Interrupted receiver received {} messages", messages);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn run_async_endpoint_serial_executor() -> IOResult<()> {
+    let callback = |msg| async move {
+        println!("Async callback");
+        on_message(msg);
+    };
+
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()], ), SocketType::SUB, CONNECTION_MODE)?;
+    let runtime = new_tokio_runtime();
+
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        rec.start_async(callback, Some(MESSAGE_COUNT), false, Some(handle));
+        rec.join_async().await.unwrap();
+    });
+    //thread::sleep(Duration::from_millis(2000));
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, None);
+    Ok(())
+}
+
+
 #[test]
 fn interrupting() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
@@ -457,10 +518,37 @@ fn pool_async() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        pool.start_async(callback, Some(handle)).unwrap();
+        pool.start_async(callback, true, Some(handle)).unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(pool.is_running(), true);
         pool.stop_async().await.unwrap();
+        assert_eq!(pool.is_running(), false);
+    });
+    print_stats_pool(&pool);
+    assert_pool(&pool);
 
+    Ok(())
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn pool_async_endpoint_serial_executor() -> IOResult<()> {
+    let callback = |msg| async move {
+        println!("Async callback");
+        on_message(msg);
+    };
+
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
+    let runtime = new_tokio_runtime();
+
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        pool.start_async(callback, false, Some(handle)).unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(pool.is_running(), true);
+        pool.stop_async().await.unwrap();
+        assert_eq!(pool.is_running(), false);
     });
     print_stats_pool(&pool);
     assert_pool(&pool);
