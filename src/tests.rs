@@ -26,7 +26,7 @@ use crossbeam_channel::RecvTimeoutError;
 use rand::RngExt;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
-use num_traits::ToPrimitive;
+use num_traits::{AsPrimitive, ToPrimitive};
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_MAIN_HEADER: bool = false;
@@ -472,7 +472,7 @@ fn limited_hashmap() {
 fn pool() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
-    pool.start(on_message)?;
+    pool.fork(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
@@ -484,7 +484,7 @@ fn pool() -> IOResult<()> {
 fn pool_grouped() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut pool = env.bsread.pool_grouped(vec![vec![&TXP_PUB.endpoint(),], vec![&TXP_CMP.endpoint()]], SocketType::SUB, CONNECTION_MODE)?;
-    pool.start(on_message)?;
+    pool.fork(on_message)?;
     thread::sleep(Duration::from_millis(100));
     pool.stop()?;
     print_stats_pool(&pool);
@@ -493,13 +493,42 @@ fn pool_grouped() -> IOResult<()> {
 }
 
 #[test]
+fn pool_inline() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool_grouped(vec![vec![&TXP_PUB.endpoint(),], vec![&TXP_CMP.endpoint()]], SocketType::SUB, CONNECTION_MODE)?;
+    pool.listen(on_message, Some(MESSAGE_COUNT))?;
+    print_stats_pool(&pool);
+    assert_pool(&pool);
+    Ok(())
+}
+
+
+#[test]
 fn pool_buffered() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint(), &TXP_CMP.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
-    pool.start_buffered(on_message,100)?;
-    thread::sleep(Duration::from_millis(100));
+    pool.start(100)?;
+    assert_eq!(pool.available(), 0);
+    thread::sleep(Duration::from_millis(MESSAGE_COUNT  as u64 * SENDER_INTERVAL / pool.connections() as u64 + 500));
+    println!("{}", pool.available());
+    thread::sleep(Duration::from_millis(500));
+    println!("{}", pool.available());
+    thread::sleep(Duration::from_millis(500));
+    println!("{}", pool.available());
+
+    match pool.wait(1000) {
+        Ok(rx) => {
+            println!("Received:");
+            print_message(&rx);
+            assert_message_contents_ok(&rx.message);
+        }
+        Err(e) => {println!("{}",e)}
+    }
+
+
     pool.stop()?;
     print_stats_pool(&pool);
+    //assert_eq!(pool.available(), 2*MESSAGE_COUNT);
     assert_pool(&pool);
     Ok(())
 }

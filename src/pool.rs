@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::DerefMut;
 use crate::*;
 use crate::receiver::{ConnectionMode, Receiver};
@@ -5,8 +6,9 @@ use crate::bsread::Bsread;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zmq::SocketType;
+use crate::sockets::{EndpointDiag, EndpointState, SocketConfig, TrackedSocket};
 
 pub struct Pool {
     socket_type: SocketType,
@@ -54,56 +56,73 @@ Pool {
         Ok(Self { socket_type, threads, bsread,  receivers})
     }
 
+    pub fn connect(&mut self) -> IOResult<()> {
+        for receiver in & mut self.receivers {
+            receiver.connect()?;
+        }
+        Ok(())
+    }
+    pub fn set_raw(&mut self, raw:bool) {
+        for receiver in & mut self.receivers{
+            receiver.set_raw(raw);
+        }
+    }
+    pub fn is_raw(&self) -> bool{
+        self.receivers[0].is_raw()
+    }
 
-    //Callback called in each receiver thread
-    pub fn start<F>(&mut self, callback: F) -> IOResult<()>
+    //Synchronous Mode: blocking, callback in same thread
+    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
+        where
+        F: Fn(ReceivedMessage),
+        {
+        self.reset_counters();
+        self.connect()?;
+
+        loop {
+            for i in 0..self.receivers.len() {
+                let message = {
+                    let receiver = &mut self.receivers[i];
+                    receiver.receive()
+                };
+                if let Ok(msg) = message {
+                    callback(msg);
+                };
+                if let Some(n) = num_messages {
+                    if self.message_count() >= n {
+                        return Ok(())
+                    }
+                }
+                if self.is_stopped() {
+                    break;
+                }
+            }
+        }
+    }
+
+    //Threaded Mode: non-blocking, callback in another thread
+    pub fn fork<F>(&mut self, callback: F) -> IOResult<()>
     where
-        F: Fn(ReceivedMessage) + Send + 'static,
+        F: Fn(ReceivedMessage) + Send + Sync + 'static,
     {
-        let shared_callback = Arc::new(Mutex::new(callback));
+        let shared_callback = Arc::new(callback);
         for receiver in &mut self.receivers {
-            let callback_clone = Arc::clone(&shared_callback);
-            receiver.fork(move |msg| {
-                let mut callback = callback_clone.lock().unwrap();
-                callback(msg);
-            }, None);
-
+            let callback = Arc::clone(&shared_callback);
+            receiver.fork(
+                move |msg| {
+                    callback(msg);
+                },
+                None,
+            );
         }
         Ok(())
     }
 
-    //Callback called in a private thread for each receiver using a message buffer.
-    pub fn start_buffered<F>(&mut self, mut callback: F, buffer_size:usize) -> IOResult<()>
-    where
-        F: Fn(ReceivedMessage) + Send + 'static,
+    //Buffered mode: non-blocking, messages buffered ibn another thread
+    pub fn start(&mut self, buffer_size:usize) -> IOResult<()>
     {
-        let shared_callback = Arc::new(Mutex::new(callback));
-        for receiver in & mut self.receivers {
-            let callback_clone = Arc::clone(&shared_callback);
-            let thread_name = format!("Pool {}", receiver.to_string());
-            let interrupted = Arc::clone(self.bsread.interrupted());
-            receiver.start(buffer_size)?;
-            let fifo = receiver.fifo().unwrap();
-
-            thread::Builder::new()
-                .name(thread_name.to_string())
-                .spawn(move || -> IOResult<()>{
-                    while !interrupted.load(Ordering::Relaxed){
-                        match fifo.get(){
-                            None => {
-                                thread::sleep(Duration::from_millis(10));
-                            }
-                            Some(msg) => {
-                                // Lock the callback and extend the lifetime of the mutable reference
-                                let mut callback = callback_clone.lock().unwrap();
-                                let callback_ref = callback.deref_mut(); // Create a long-lived reference
-                                callback_ref(msg); // Call the callback using the long-lived reference
-                            }
-                        }
-                    }
-                    Ok(())
-                })
-                .expect("Failed to spawn thread");
+        for receiver in &mut self.receivers{
+            receiver.start(buffer_size);
         }
         Ok(())
     }
@@ -116,6 +135,44 @@ Pool {
             receiver.join()?;
         }
         Ok(())
+    }
+
+    pub fn is_stopped(&self) ->bool {
+        self.receivers[0].is_interrupted()
+    }
+
+    // TODO: Get/wait are inefficient in Pool - based on polling.
+    // Potentialy pool could set a common buffer on receivers, but then Receiver.wait fail.
+    // To be accessed if buffered mode may me useful for buffered delivery mode.
+    pub fn get(&self) -> Option<ReceivedMessage> {
+        for receiver in & self.receivers {
+            match receiver.get (){
+                None => { }
+                Some(fifo) => return Some(fifo)
+            }
+        }
+        None
+    }
+
+    pub fn wait(&self, timeout_ms: u64) -> IOResult<ReceivedMessage> {
+        let timeout_duration = Duration::from_millis(timeout_ms);
+        let start_time = Instant::now();
+        while start_time.elapsed() < timeout_duration {
+            if let Some(msg) = self.get() {
+                return Ok(msg);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Err(IOError::new(ErrorKind::TimedOut, "Timeout waiting for message"))
+    }
+
+    pub fn wait_messages(&self, count:usize, timeout_ms: u64) -> IOResult<Vec<ReceivedMessage>> {
+        let mut ret = Vec::new();
+        for _ in 0..count {
+            let msg = self.wait(timeout_ms)?;
+            ret.push(msg);
+        }
+        Ok(ret)
     }
 
     #[cfg(feature = "async")]
@@ -159,7 +216,7 @@ Pool {
         }
         false
     }
-    
+
     pub fn socket_type(&self) -> SocketType {
         self.socket_type
     }
@@ -172,4 +229,155 @@ Pool {
         &self.receivers
     }
 
+    pub fn delivery_mode(&self) -> DeliveryMode {
+        self.receivers[0].delivery_mode()
+    }
+
+    pub fn connection_mode(&self) -> ConnectionMode {
+        self.receivers[0].connection_mode()
+    }
+
+    pub fn endpoints(&self) -> impl Iterator<Item = &String> {
+        self.receivers
+            .iter()
+            .filter_map(|r| r.endpoints().as_ref())
+            .flatten()
+    }
+
+    pub fn connections(&self) -> usize {
+        self.receivers
+            .iter()
+            .map(|r| r.endpoints().as_ref().map_or(0, Vec::len))
+            .sum()
+    }
+
+    pub fn available(&self) -> u32 {
+        self.receivers
+            .iter()
+            .map(|r| r.available())
+            .sum()
+    }
+
+    pub fn dropped(&self) -> u32 {
+        self.receivers
+            .iter()
+            .map(|r| r.dropped())
+            .sum()
+    }
+
+    pub fn message_count(&self) -> u32 {
+        self.receivers
+            .iter()
+            .map(|r| r.message_count())
+            .sum()
+    }
+
+    pub fn error_count(&self) -> u32 {
+        self.receivers
+            .iter()
+            .map(|r| r.error_count())
+            .sum()
+    }
+
+    pub fn reset_counters(& mut self){
+        for receiver in &mut self.receivers {
+            receiver.reset_counters();
+        }
+    }
+    pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>> {
+        let mut diagnostics = HashMap::new();
+        for receiver in &self.receivers {
+            diagnostics.extend(receiver.diagnostics());
+        }
+        diagnostics
+    }
+
+    pub fn diagnostics_endpoints(&self) -> Vec<String> {
+        self.receivers
+            .iter()
+            .flat_map(|receiver| receiver.diagnostics_endpoints())
+            .collect()
+    }
+
+    pub fn endpoint_receiver(&self, endpoint: &str) -> Option<&Receiver> {
+        self.receivers
+            .iter()
+            .find(|receiver| {
+                receiver
+                    .endpoints()
+                    .as_ref()
+                    .is_some_and(|endpoints| endpoints.iter().any(|e| e == endpoint))
+            })
+    }
+
+    pub fn endpoint_receiver_mut(&mut self, endpoint: &str) -> Option<&mut Receiver> {
+        self.receivers
+            .iter_mut()
+            .find(|receiver| {
+                receiver
+                    .endpoints()
+                    .as_ref()
+                    .is_some_and(|endpoints| endpoints.iter().any(|e| e == endpoint))
+            })
+    }
+
+
+    pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<HashMap<EndpointDiag, u32>> {
+        self.endpoint_receiver(endpoint)
+            .map_or(None, |receiver| receiver.endpoint_diagnostics(endpoint))
+    }
+
+    pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u32> {
+        self.endpoint_receiver(endpoint)
+            .map_or(None, |receiver| receiver.endpoint_diagnostic(endpoint, diag))
+    }
+
+    pub fn header_changes(&self, endpoint: &str) -> u32 {
+        self.endpoint_receiver(endpoint)
+            .map_or(0, |receiver| receiver.header_changes(endpoint))
+    }
+
+    pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
+        self.endpoint_receiver(endpoint)
+            .map_or(None, |receiver| receiver.endpoint_state(endpoint))
+    }
+    pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
+        let mut states = HashMap::new();
+        for receiver in &self.receivers {
+            states.extend(receiver.endpoint_states());
+        }
+        states
+    }
+
+    pub fn enable_check(& mut self, check:u64){
+        for receiver in &mut self.receivers {
+            receiver.enable_check(check);
+        }
+    }
+
+    pub fn disable_check(& mut self, check:u64){
+        for receiver in &mut self.receivers {
+            receiver.disable_check(check);
+        }
+    }
+
+    pub fn socket(& mut self, endpoint: &str) -> Option<&mut TrackedSocket>{
+        self.endpoint_receiver_mut(endpoint)
+            .map_or(None, |receiver| receiver.socket(endpoint))
+    }
+
+    pub fn sockets(&mut self) -> Vec<&mut TrackedSocket> {
+        let mut sockets = Vec::new();
+        for receiver in &mut self.receivers {
+            sockets.extend(receiver.sockets());
+        }
+        sockets
+    }
+
+}
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }

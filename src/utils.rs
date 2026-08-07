@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex};
+use std::sync::{Condvar, Mutex};
 use md5::{Md5, Digest};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::env;
 use std::io::ErrorKind;
 use chrono::{DateTime, Local, LocalResult, TimeZone};
@@ -91,6 +91,7 @@ pub struct FifoQueue<K> {
     queue: Mutex<VecDeque<K>>,          // Thread-safe FIFO
     dropped_count: Mutex<u32>,        // Counter for dropped items
     max_size: usize,                  // Maximum size of the FIFO
+    available: Condvar,
 }
 
 impl<K> FifoQueue<K> {
@@ -100,6 +101,7 @@ impl<K> FifoQueue<K> {
             queue: Mutex::new(VecDeque::new()),
             dropped_count: Mutex::new(0),
             max_size,
+            available: Condvar::new(),
         }
     }
 
@@ -113,11 +115,25 @@ impl<K> FifoQueue<K> {
             *dropped_count += 1; // Increment the dropped counter
         }
         queue.push_back(message);
+        self.available.notify_one();
     }
 
     /// Retrieves the next message from the FIFO, or `None` if empty.
     pub fn get(&self) -> Option<K> {
         let mut queue = self.queue.lock().unwrap();
+        queue.pop_front()
+    }
+
+    pub fn wait(&self, timeout_ms: u64) -> Option<K> {
+        let timeout = Duration::from_millis(timeout_ms);
+        let mut queue = self.queue.lock().unwrap();
+        if queue.is_empty() {
+            let (guard, result) = self.available.wait_timeout(queue, timeout).unwrap();
+            queue = guard;
+            if result.timed_out() && queue.is_empty() {
+                return None;
+            }
+        }
         queue.pop_front()
     }
 

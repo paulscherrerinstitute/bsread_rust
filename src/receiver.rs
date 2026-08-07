@@ -179,6 +179,9 @@ impl Receiver{
                 self.connect_endpoint(&endpoint)?;
             }
         }
+        if self.header_buffer.is_void(){
+            self.set_header_buffer_size(self.connections());
+        }
         Ok(())
     }
 
@@ -413,7 +416,7 @@ impl Receiver{
     }
 
     //Synchronous Mode: blocking, callback in same thread
-    pub fn listen<F>(&mut self, mut callback: F, num_messages: Option<u32>) -> IOResult<()>
+    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
     where
         F: Fn(ReceivedMessage),
     {
@@ -439,10 +442,6 @@ impl Receiver{
             }
         }
         self.connect()?;
-        if self.header_buffer.is_void(){
-            self.set_header_buffer_size(self.connections());
-        }
-
         loop {
             let message= self.receive();
             if let Ok(msg) = message {
@@ -455,7 +454,7 @@ impl Receiver{
                     }
                 }
             };
-            if num_messages.map_or(false, |m| self.stats.lock().unwrap().counter_messages >= m) {
+            if num_messages.map_or(false, |m| self.message_count() >= m) {
                 break;
             }
             if self.is_interrupted() {
@@ -466,34 +465,32 @@ impl Receiver{
         Ok(())
     }
 
-    //Asynchronous Mode: non-blocking, callback in another thread
-    pub fn fork<F>(& mut self, mut callback: F,  num_messages: Option<u32>)
-        where
+    //Threaded Mode: non-blocking, callback in another thread
+    pub fn fork<F>(&mut self, callback: F, num_messages: Option<u32>)
+    where
         F: Fn(ReceivedMessage) + Send + 'static,
-        {
-        let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
+    {
+        let endpoints = self.endpoints.clone();
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
         let interrupted_context = Arc::clone(self.bsread.interrupted());
         let interrupted_self = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
-        let producer_fifo = match &self.fifo {
-            None => { None }
-            Some(f) => { Some(f.clone()) }
-        };
-        let producer_stats =self.stats.clone();
-        //let shared_callback = Arc::new(Mutex::new(callback));
+        let producer_fifo = self.fifo.clone();
+        let producer_stats = Arc::clone(&self.stats);
         let raw = self.raw;
         let thread_name = self.to_string();
         let socket_monitor = self.socket_monitor.take();
         let tx = self.tx.clone();
+
         let handle = thread::Builder::new()
-            .name(thread_name.to_string())
-            .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
+            .name(thread_name)
+            .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 listen_task(endpoints, socket_type, connection_mode, callback, num_messages, producer_fifo, producer_stats,
-                               forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
-             })
+                            forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx)
+            })
             .expect("Failed to spawn thread");
+
         self.handle = Some(handle);
         self.delivery_mode = DeliveryMode::Threaded;
     }
@@ -525,6 +522,7 @@ impl Receiver{
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
+        self.reset_counters();
         let endpoints: Option<Vec<String>> = self.endpoints.as_ref().map(|vec| vec.clone());
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
@@ -651,15 +649,21 @@ impl Receiver{
     }
 
     pub fn wait(&self, timeout_ms: u64) -> IOResult<ReceivedMessage> {
-        let timeout_duration = Duration::from_millis(timeout_ms);
-        let start_time = Instant::now();
-        while start_time.elapsed() < timeout_duration {
-            if let Some(msg) = self.get() {
-                return Ok(msg);
+        match &self.fifo{
+            None => {
+                Err(IOError::new(ErrorKind::Other, "Operation only valid for buffered delivery mode"))
             }
-            thread::sleep(Duration::from_millis(10));
+            Some(fifo) => {
+                match fifo.wait(timeout_ms){
+                    None => {
+                        Err(IOError::new(ErrorKind::TimedOut, "Timeout waiting for message"))
+                    }
+                    Some(rx) => {
+                        Ok(rx)
+                    }
+                }
+            }
         }
-        Err(IOError::new(ErrorKind::TimedOut, "Timout waiting for message"))
     }
 
     pub fn wait_messages(&self, count:usize, timeout_ms: u64) -> IOResult<Vec<ReceivedMessage>> {
@@ -735,15 +739,15 @@ impl Receiver{
         self.stats.lock().unwrap().diagnostics.keys().cloned().collect()
     }
 
-    pub fn endpoint_diagnostics(& self,  endpoint: &String) -> Option<HashMap<EndpointDiag, u32>> {
+    pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<HashMap<EndpointDiag, u32>> {
         self.stats.lock().unwrap().diagnostics.get(endpoint).cloned()
     }
 
-    pub fn endpoint_diagnostic(& self,  endpoint: &String, diag:EndpointDiag) -> Option<u32> {
+    pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u32> {
         self.stats.lock().unwrap().diagnostics.get(endpoint)?.get(&diag).copied()
     }
 
-    pub fn header_changes(& self,  endpoint: &String) -> u32 {
+    pub fn header_changes(& self,  endpoint:  &str) -> u32 {
         self.endpoint_diagnostic(endpoint, EndpointDiag::HeaderChange).unwrap_or(
             if let Some (x) =  self.endpoint_diagnostic(endpoint, EndpointDiag::Messages) {
                 1

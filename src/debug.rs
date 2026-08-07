@@ -140,7 +140,6 @@ pub fn print_stats_rec(rec: &Receiver) -> () {
     let delivery_mode = rec.delivery_mode();
     let socket_type = rec.socket_type();
     println!("Receiver {} ({:?}, {:?}, {:?}):", rec.index(), socket_type, connection_mode, delivery_mode);
-    println!("\tMode: {}", rec.connections());
     println!("\tConnections: {}", rec.connections());
     println!("\tAvailable: {}", rec.available());
     println!("\tDropped: {}", rec.dropped());
@@ -160,7 +159,28 @@ pub fn print_stats_rec(rec: &Receiver) -> () {
 
 
 pub fn print_stats_pool(pool: &Pool) -> () {
-    println!("Pool: {} threads", pool.threads());
+    let connection_mode = pool.connection_mode();
+    let delivery_mode = pool.delivery_mode();
+    let socket_type = pool.socket_type();
+    println!("Pool({:?}, {:?}, {:?}):", socket_type, connection_mode, delivery_mode);
+    println!("\tConnections: {}", pool.connections());
+    println!("\tAvailable: {}", pool.available());
+    println!("\tDropped: {}", pool.dropped());
+    println!("\tMessage Count: {}", pool.message_count());
+    println!("\tError Count: {}", pool.error_count());
+    let diags = pool.diagnostics();
+    for endpoint in diags.keys() {
+        println!("\tEndpoint Diagnostics: {}", endpoint);
+        let endpoint_diags = diags.get(endpoint).unwrap();
+        for diag in EndpointDiag::ALL {
+            if endpoint_diags.contains_key(&diag) {
+                println!("\t\t{:?}: {}", diag, endpoint_diags.get(&diag).unwrap_or(&0));
+            }
+        }
+    }
+
+
+
     for rec in pool.receivers(){
         print_stats_rec(rec);
     }
@@ -247,7 +267,7 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                     Ok(msg) => {
                         match sender.send_message(&msg, true){
                             Ok(id) => {
-                                println!("Sent message Sender: {} ID: {}",   ep, id);
+                                //println!("Sent message Sender: {} ID: {}",   ep, id);
                             }
                             Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)}
                         }
