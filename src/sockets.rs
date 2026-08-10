@@ -320,6 +320,7 @@ pub fn _monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, Endp
     }
 }
 
+#[derive(Clone)]
 pub struct SocketMonitor {
     cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
     endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,

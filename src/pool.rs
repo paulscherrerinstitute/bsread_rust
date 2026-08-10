@@ -105,14 +105,13 @@ Pool {
     }
 
     pub fn remove_endpoint(&mut self, endpoint: &str) {
-        let socket_monitor = self.socket_monitor.take();
+        let socket_monitor = self.socket_monitor.clone();
         if let Some(receiver) = self.endpoint_receiver_mut(endpoint) {
             if let Some(sm) = &socket_monitor {
                 receiver.disable_shared_monitoring_socket(&sm, endpoint);
             }
             receiver.remove_endpoint(endpoint);
         }
-        self.socket_monitor = socket_monitor;
     }
 
     pub fn has_endpoint(&self, endpoint: &str) -> bool {
