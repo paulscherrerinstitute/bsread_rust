@@ -115,6 +115,7 @@ pub const CHECK_ALL:u64 = !0;
 pub struct Receiver {
     sockets: ConnectionSockets,
     endpoints: Option<Vec<String>>,
+    connected: bool,
     socket_type: SocketType,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
     id_buffer: HashMap<String, u64>,
@@ -158,7 +159,7 @@ impl Receiver{
         let check_mask = CHECK_ALL;
         let socket_options = SocketOptions::new();
 
-        Ok(Self { sockets, endpoints, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
+        Ok(Self { sockets, endpoints, connected:false, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
             bsread, fifo:None, handle:None,
             stats, index,
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
@@ -179,19 +180,24 @@ impl Receiver{
                 self.connect_endpoint(&endpoint)?;
             }
         }
-        if self.header_buffer.is_void(){
-            self.set_header_buffer_size(self.connections());
-        }
+        self.connected = true;
         Ok(())
     }
 
     pub fn disconnect(&mut self)  {
-        for socket in  self.sockets(){
-            socket.disconnect();
+        self.connected = false;
+        //for socket in  self.sockets(){
+        //    socket.disconnect();
+        //}
+        if let Some(endpoints) = self.endpoints.clone() {
+            for endpoint in endpoints {
+                //TODO: Should break if one of the endpoints fail?
+                self.disconnect_endpoint(&endpoint);
+            }
         }
     }
 
-    pub fn add_endpoint(&mut self, endpoint: &str) {
+    pub fn add_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
         match &mut self.endpoints {
             Some(vec) => {
                 let ep = endpoint.to_string();
@@ -203,11 +209,24 @@ impl Receiver{
                 self.endpoints = Some(vec![endpoint.to_string()]);
             }
         }
+        if (self.connected){
+            self.connect_endpoint(endpoint)?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_endpoint(&mut self, endpoint: &str) {
+        if (self.connected){
+            self.disconnect_endpoint(endpoint);
+        }
+        if let Some(endpoints) = self.endpoints.as_mut() {
+            endpoints.retain(|e| e != endpoint);
+        }
+        self.remove_stats(endpoint);
     }
 
 
-    pub fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
-        self.add_endpoint(endpoint);
+    fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
         let context = self.bsread.context();
         let socket_type = self.socket_type();
         let index = self.index;
@@ -231,10 +250,12 @@ impl Receiver{
                 }
             }
         }
+        self.set_header_buffer_size(self.connections());
+
         Ok(())
     }
 
-    pub fn disconnect_endpoint(&mut self, endpoint: &str)  {
+    fn disconnect_endpoint(&mut self, endpoint: &str)  {
         match &mut self.sockets {
             ConnectionSockets::Shared { socket } => {
                 socket.disconnect_endpoint(endpoint);
@@ -244,6 +265,9 @@ impl Receiver{
                     None => {}
                     Some(socket) => {
                         socket.disconnect();
+                        if let Some(socket_monitor) = &self.socket_monitor {
+                            socket.disable_monitoring(&socket_monitor);
+                        }
                         sockets.remove(endpoint);
                         self.sockets.update_poll_items();
                     }
@@ -732,6 +756,11 @@ impl Receiver{
         *map.entry(diag).or_insert(0) += 1;
     }
 
+    fn remove_stats(& mut self, endpoint: &str){
+        let mut stats = self.stats.lock().unwrap();
+        stats.diagnostics.remove(endpoint);
+    }
+
     pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>>{
         self.stats.lock().unwrap().diagnostics.clone()
     }
@@ -769,8 +798,12 @@ impl Receiver{
         self.stats.lock().unwrap().reset()
     }
 
-    pub fn set_header_buffer_size(&mut self, size:usize) {
-        self.header_buffer = LimitedHashMap::new(size);
+    fn set_header_buffer_size(&mut self, size:usize) {
+        if self.header_buffer.is_void() {
+            self.header_buffer = LimitedHashMap::new(size);
+        } else {
+            self.header_buffer.set_max_size(size);
+        }
     }
 
     pub fn stop_forwarder(&mut self) -> IOResult<()> {

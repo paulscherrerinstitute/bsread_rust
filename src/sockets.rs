@@ -258,7 +258,7 @@ impl EndpointEvent {
     }
 }
 
-fn decode_monitor_event(monitor: &zmq::Socket, index: u32) -> Result<(SocketEvent, Option<EndpointEvent>), zmq::Error> {
+fn decode_monitor_event(monitor: &zmq::Socket, rec_index: u32, index: u32) -> Result<(SocketEvent, Option<EndpointEvent>), zmq::Error> {
 
     // First frame: event info (binary struct)
     let msg = monitor.recv_msg(0)?;
@@ -274,7 +274,7 @@ fn decode_monitor_event(monitor: &zmq::Socket, index: u32) -> Result<(SocketEven
     let endpoint_msg = monitor.recv_msg(0)?;
     let endpoint = endpoint_msg.as_str().unwrap_or("").to_string();
 
-    log::debug!("Socket event:{:?} ({:}) [{:}]", socket_event, endpoint, index);
+    log::debug!("Socket event:{:?} ({:}) [{:}/{:}]", socket_event, endpoint, rec_index, index);
 
     let endpoint_event = match socket_event {
         SocketEvent::CONNECTED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
@@ -298,9 +298,9 @@ fn decode_monitor_event(monitor: &zmq::Socket, index: u32) -> Result<(SocketEven
     Ok((socket_event, endpoint_event))
 }
 
-pub fn monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, EndpointState>>>,tx: crossbeam_channel::Sender<EndpointEvent>, endpoint: Option<String>, index: u32) {
+pub fn _monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, EndpointState>>>,tx: crossbeam_channel::Sender<EndpointEvent>, endpoint: Option<String>, rec_index: u32, index: u32) {
     loop {
-        if let Ok((socket_event, endpoint_event)) = decode_monitor_event(&monitor, index) {
+        if let Ok((socket_event, endpoint_event)) = decode_monitor_event(&monitor, rec_index, index) {
             if let Some(event) = endpoint_event {
                 let mut map = states.lock().unwrap();
                 let endpoint = endpoint.clone().unwrap_or_else(|| event.endpoint().to_string());
@@ -310,7 +310,7 @@ pub fn monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, Endpo
                         None => true,
                     };
                     if should_send {
-                        log::info!("Endpoint event: {:?} [{:}]", event, index);
+                        log::info!("Endpoint event: {:?} [{:}]", event, rec_index);
                         map.insert(endpoint.clone(), *new_state);
                         let _ = tx.send(event);
                     }
@@ -328,11 +328,13 @@ pub struct SocketMonitor {
 struct MonitorEntry {
     socket: zmq::Socket,
     endpoint: Option<String>,
+    rec_index: u32,
     index: u32,
 }
 
 enum MonitorCommand {
     Add(MonitorEntry),
+    Remove(u32),
     Shutdown
 }
 
@@ -348,6 +350,15 @@ impl SocketMonitor {
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     match cmd {
                         MonitorCommand::Add(entry) => monitors.push(entry),
+                        MonitorCommand::Remove(index) => {
+                            //monitors.retain(|m| m.index != index);
+                            if let Some(pos) = monitors.iter().position(|m| m.index == index) {
+                                let entry = monitors.remove(pos);
+                                if let Some(endpoint) = entry.endpoint {
+                                     states.lock().unwrap().remove(&endpoint);
+                                }
+                            }
+                        },
                         MonitorCommand::Shutdown => return,
                     }
                 }
@@ -365,7 +376,7 @@ impl SocketMonitor {
                 for (idx, item) in items.iter().enumerate() {
                     if item.is_readable() {
                         let monitor = &monitors[idx];
-                        if let Ok((_event, endpoint_event)) =decode_monitor_event(&monitor.socket, monitor.index) {
+                        if let Ok((_event, endpoint_event)) =decode_monitor_event(&monitor.socket, monitor.rec_index, monitor.index) {
                             if let Some(event) = endpoint_event {
                                 if let EndpointEvent::State(ep, state) = &event {
                                     let endpoint = monitor.endpoint.clone().unwrap_or_else(|| ep.to_string());
@@ -387,8 +398,12 @@ impl SocketMonitor {
         self.cmd_tx.send(MonitorCommand::Shutdown).unwrap();
     }
 
-    pub fn add(&self,socket: zmq::Socket,endpoint: Option<String>,index: u32) {
-        self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,index,})).unwrap();
+    pub fn add(&self,socket: zmq::Socket,endpoint: Option<String>, rec_index: u32,index: u32) {
+        self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,rec_index,index})).unwrap();
+    }
+
+    pub fn remove(&self,index: u32) {
+        self.cmd_tx.send(MonitorCommand::Remove(index)).unwrap();
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
@@ -435,8 +450,24 @@ impl TrackedSocket {
         self.socket.monitor(&monitor_ep,zmq::SocketEvent::ALL as i32,)?;
         let mon = context.socket(zmq::PAIR)?;
         mon.connect(&monitor_ep)?;
-        monitor.add(mon,endpoint,self.rec_index,);
+        monitor.add(mon, endpoint, self.rec_index, self.index);
         self.monitoring = true;
+        Ok(())
+    }
+
+    pub fn disable_monitoring(&mut self, monitor: &SocketMonitor) -> IOResult<()> {
+        if !self.monitoring {
+            return Ok(());
+        }
+        match self.socket.monitor("", 0){
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("Error disabling monitoring: {}", e);
+            }
+        }
+        monitor.remove(self.index);
+        self.monitoring = false;
+
         Ok(())
     }
 

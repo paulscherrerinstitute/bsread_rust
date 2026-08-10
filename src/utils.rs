@@ -83,6 +83,16 @@ where
     pub fn keys(&self) -> Vec<K>{
         Vec::from(self.order.clone())
     }
+
+    pub fn set_max_size(&mut self, max_size: usize) {
+        self.max_size = max_size;
+
+        while self.map.len() > self.max_size {
+            if let Some(oldest_key) = self.order.pop_front() {
+                self.map.remove(&oldest_key);
+            }
+        }
+    }
 }
 
 

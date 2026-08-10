@@ -197,12 +197,12 @@ fn multi() -> IOResult<()> {
 
 
 #[test]
-fn dynamic() ->  IOResult<()> {
+fn late() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.enable_monitoring();
-    rec.add_endpoint(TXP_PUB.endpoint().as_str());
-    rec.add_endpoint(TXP_CMP.endpoint().as_str());
+    rec.add_endpoint(&TXP_PUB.endpoint());
+    rec.add_endpoint(&TXP_CMP.endpoint());
     rec.connect()?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     let ess = rec.endpoint_states();
@@ -215,10 +215,38 @@ fn dynamic() ->  IOResult<()> {
 }
 
 #[test]
+fn dynamic() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
+    rec.enable_monitoring();
+    rec.connect();
+    rec.add_endpoint(&TXP_PUB.endpoint())?;
+    rec.add_endpoint(&TXP_CMP.endpoint())?;
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
+    let ess = rec.endpoint_states();
+    println!("Endpoint states : {:?}",  ess);
+    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, Some(2));
+
+    rec.remove_endpoint(&TXP_CMP.endpoint());
+    rec.listen(on_message, Some(MESSAGE_COUNT))?;
+    let ess = rec.endpoint_states();
+    println!("Endpoint states : {:?}",  ess);
+    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    assert_eq!(ess.get(&TXP_CMP.endpoint()), None);
+    print_stats_rec(&rec);
+    assert_rec(&rec, None, Some(1));
+
+    Ok(())
+}
+
+#[test]
 fn manual() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
-    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.add_endpoint(&TXP_PUB.endpoint());
     rec.connect()?;
     let message = rec.receive()?;
     print_message(&message);
@@ -402,7 +430,7 @@ fn bitshuffle() -> IOResult<()> {
 fn conversion() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
-    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.add_endpoint(&TXP_PUB.endpoint());
     rec.connect()?;
     let rx = rec.receive()?;
     print_message(&rx);
@@ -420,7 +448,7 @@ fn conversion() -> IOResult<()> {
 fn booleans() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None,  SocketType::SUB, CONNECTION_MODE)?;
-    rec.add_endpoint(TXP_PUB.endpoint().as_str());
+    rec.add_endpoint(&TXP_PUB.endpoint());
     rec.connect()?;
     let rx = rec.receive()?;
     print_message(&rx);
