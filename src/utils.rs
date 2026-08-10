@@ -172,9 +172,9 @@ pub fn current_timestamp() -> (u64, u64){
     ( now.as_secs(),  now.subsec_nanos() as u64)
 }
 
-static id_t0: OnceLock<DateTime<Local>> = OnceLock::new();
+static ID_T0: OnceLock<DateTime<Local>> = OnceLock::new();
 pub fn init_id_t0(dt: DateTime<Local>)-> IOResult<()>{
-    if let Err(e) = id_t0.set(dt){
+    if let Err(e) = ID_T0.set(dt){
         return  Err(IOError::new(ErrorKind::InvalidData,"ID t0 not initialized"));
     }
     Ok(())
@@ -185,7 +185,7 @@ pub fn init_sf_id_t0() -> IOResult<()>{
 }
 
 pub fn current_id() -> IOResult<u64> {
-    let t0 = id_t0.get().ok_or_else(|| {IOError::new(ErrorKind::InvalidData,"id_t0 was not initialized",)})?;
+    let t0 = ID_T0.get().ok_or_else(|| {IOError::new(ErrorKind::InvalidData, "ID_T0 was not initialized",)})?;
     let now = Local::now();
     let millis = now
         .signed_duration_since(t0)

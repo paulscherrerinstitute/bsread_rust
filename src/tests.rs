@@ -27,6 +27,7 @@ use rand::RngExt;
 use lazy_static::lazy_static;
 use log::SetLoggerError;
 use num_traits::{AsPrimitive, ToPrimitive};
+use std::sync::Once;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_MAIN_HEADER: bool = false;
@@ -66,8 +67,8 @@ const DISPATCHER_CHANNEL_NAMES: [&str;0] = []; //[&str;2] = ["SINEG01-DBPM340:X1
 const CONNECTION_MODE: ConnectionMode = ConnectionMode::Individual;
 
 
+static RUN_ONCE: Once = Once::new();
 lazy_static! {
-    static ref RUN_ONCE: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     static ref STARTED_SERVERS: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     static ref RUNNING_TESTS: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 }
@@ -77,14 +78,13 @@ struct TestEnvironment {
 }
 impl TestEnvironment {
     fn new() -> IOResult<Self> {
-        if !RUN_ONCE.load(Ordering::Relaxed) {
-            RUN_ONCE.store(true, Ordering::Relaxed);
-            init_id_t0(Local::now())?;
+        RUN_ONCE.call_once(|| {
+            init_id_t0(Local::now()).unwrap();
             match env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init() {
                 Ok(_) => {}
                 Err(e) => {println!("Error initializing env logger [{:?}]", e);}
             };
-        }
+        });
         let running_tests = RUNNING_TESTS.fetch_add(1, Ordering::SeqCst);
         println!("Setting up test environment [{}]", running_tests);
         if !STARTED_SERVERS.load(Ordering::SeqCst) {
@@ -634,6 +634,41 @@ fn pool_monitoring() ->  IOResult<()> {
     Ok(())
 }
 
+#[test]
+fn pool_dynamic() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool(vec![], SocketType::SUB, CONNECTION_MODE, 2)?;
+    //pool.enable_monitoring()?;
+    pool.connect()?;
+    pool.add_endpoint(&TXP_PUB.endpoint(),0)?;
+    pool.add_endpoint(&TXP_CMP.endpoint(),1)?;
+    pool.enable_monitoring()?;
+    pool.listen(on_message, Some(MESSAGE_COUNT))?;
+    let ess = pool.endpoint_states();
+    println!("Endpoint states : {:?}",  ess);
+    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    print_stats_pool(&pool);
+    assert_pool(&pool);
+
+    pool.remove_endpoint(&TXP_CMP.endpoint());
+    println!("== 1 == ");
+    pool.reset_counters();
+    print_stats_pool(&pool);
+
+
+    pool.listen(on_message, Some(MESSAGE_COUNT))?;
+    let ess = pool.endpoint_states();
+    println!("Endpoint states : {:?}",  ess);
+    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    assert_eq!(ess.get(&TXP_CMP.endpoint()), None);
+    print_stats_pool(&pool);
+    assert_rec(&pool.receivers()[0], None, Some(1));
+    assert_eq!(pool.receivers()[0].message_count(), MESSAGE_COUNT);
+    assert_eq!(pool.receivers()[1].message_count(), 0);
+    Ok(())
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn pool_async() -> IOResult<()> {
@@ -1081,7 +1116,7 @@ fn receiver_ipc() ->  IOResult<()> {
     rec.set_keepalive(30,10,3)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     //Keepalive should not be set in IPC transport
-    assert_eq!(rec.sockets()[0].get_tcp_keepalive().unwrap(), -1);
+    assert_eq!(rec.zmq_sockets()[0].get_tcp_keepalive().unwrap(), -1);
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
     Ok(())
@@ -1096,6 +1131,21 @@ fn receiver_options() ->  IOResult<()> {
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
+    Ok(())
+}
+
+#[test]
+fn pool_options() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
+    pool.set_linger(0)?;
+    pool.set_rcvhwm(10000)?;
+    pool.connect();
+    pool.add_endpoint(&TXP_CMP.endpoint(), 1)?;
+    assert_eq!(pool.zmq_sockets()[0].get_linger().unwrap(), 0);
+    assert_eq!(pool.zmq_sockets()[1].get_linger().unwrap(), 0);
+    assert_eq!(pool.zmq_sockets()[0].get_rcvhwm().unwrap(), 10000);
+    assert_eq!(pool.zmq_sockets()[1].get_rcvhwm().unwrap(), 10000);
     Ok(())
 }
 

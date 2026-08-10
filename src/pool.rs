@@ -8,11 +8,12 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 use zmq::SocketType;
-use crate::sockets::{EndpointDiag, EndpointEvent, EndpointState, SocketConfig, SocketMonitor, TrackedSocket};
+use crate::sockets::{EndpointDiag, EndpointEvent, EndpointState, Heartbeat, KeepAlive, SocketConfig, SocketMonitor, TrackedSocket};
 
 pub struct Pool {
     socket_type: SocketType,
     threads: usize,
+    connected: bool,
     bsread: Arc<Bsread>,
     receivers: Vec<Receiver>,
     socket_monitor: Option<SocketMonitor>,
@@ -37,7 +38,7 @@ Pool {
             }
         }
         let (tx, rx) = crossbeam_channel::unbounded();
-        Ok(Self { socket_type, threads, bsread,  receivers, socket_monitor:None, tx,rx})
+        Ok(Self { socket_type, threads, connected:false, bsread,  receivers, socket_monitor:None, tx,rx})
     }
 
     //Endpoints manually set grouped per thread
@@ -58,18 +59,67 @@ Pool {
             }
         }
         let (tx, rx) = crossbeam_channel::unbounded();
-        Ok(Self { socket_type, threads, bsread,  receivers, socket_monitor:None, tx,rx})
+        Ok(Self { socket_type, threads, connected: false, bsread,  receivers, socket_monitor:None, tx,rx})
     }
 
     pub fn connect(&mut self) -> IOResult<()> {
-        for receiver in & mut self.receivers {
-            receiver.connect()?;
-            if let Some(socket_monitor) = &self.socket_monitor {
-                receiver.enable_shared_monitoring(socket_monitor)?;
+        if !self.connected {
+            for receiver in & mut self.receivers {
+                receiver.connect()?;
+                if let Some(socket_monitor) = &self.socket_monitor {
+                    receiver.enable_shared_monitoring(socket_monitor)?;
+                }
             }
+            self.connected = true;
         }
         Ok(())
     }
+
+    pub fn disconnect(&mut self)  {
+        if self.connected {
+            self.connected = false;
+            for receiver in &mut self.receivers {
+                if let Some(socket_monitor) = &self.socket_monitor {
+                    receiver.disable_shared_monitoring(socket_monitor);
+                }
+                receiver.disconnect();
+            }
+        }
+    }
+
+    pub fn add_endpoint(&mut self, endpoint: &str, index:usize) -> IOResult<()> {
+        if self.has_endpoint(endpoint) {
+            if let Some(receiver) = self.endpoint_receiver(endpoint){
+                if self.receivers[index].index() == receiver.index() {
+                    return Ok(())
+                }
+            }
+            return Err(IOError::new(ErrorKind::InvalidInput, "endpoint already exists"));
+        }
+        self.receivers[index].add_endpoint(endpoint)?;
+        let socket_monitor = &self.socket_monitor;
+        if let Some(socket_monitor) = &socket_monitor {
+            self.receivers[index].enable_shared_monitoring_socket(socket_monitor, endpoint);
+        }
+        Ok(())
+    }
+
+    pub fn remove_endpoint(&mut self, endpoint: &str) {
+        let socket_monitor = self.socket_monitor.take();
+        if let Some(receiver) = self.endpoint_receiver_mut(endpoint) {
+            if let Some(sm) = &socket_monitor {
+                receiver.disable_shared_monitoring_socket(&sm, endpoint);
+            }
+            receiver.remove_endpoint(endpoint);
+        }
+        self.socket_monitor = socket_monitor;
+    }
+
+    pub fn has_endpoint(&self, endpoint: &str) -> bool {
+       self.endpoint_receiver(endpoint).is_some()
+    }
+
+
     pub fn set_raw(&mut self, raw:bool) {
         for receiver in & mut self.receivers{
             receiver.set_raw(raw);
@@ -78,7 +128,7 @@ Pool {
     pub fn is_raw(&self) -> bool{
         self.receivers[0].is_raw()
     }
-    
+
     pub fn receive(&mut self, index:usize) -> IOResult<ReceivedMessage> {
          self.receivers[index].receive()
     }
@@ -400,6 +450,53 @@ Pool {
     }
 
 }
+
+
+impl SocketConfig for Pool {
+    fn zmq_sockets(&self) -> Vec<&zmq::Socket> {
+        let mut sockets = Vec::new();
+        for receiver in &self.receivers {
+            sockets.extend(receiver.zmq_sockets());
+        }
+        sockets
+    }
+
+    fn set_linger(&mut self, value: i32) -> IOResult<()> {
+        for receiver in &mut self.receivers {
+            receiver.set_linger(value)?;
+        }
+        Ok(())
+    }
+
+    fn set_rcvhwm(&mut self, value: i32)-> IOResult<()> {
+        for receiver in &mut self.receivers {
+            receiver.set_rcvhwm(value)?;
+        }
+        Ok(())
+    }
+
+    fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
+        for receiver in &mut self.receivers {
+            receiver.set_sndhwm(value)?;
+        }
+        Ok(())
+    }
+
+    fn set_keepalive(&mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
+        for receiver in &mut self.receivers {
+            receiver.set_keepalive(idle, intvl, cnt)?;
+        }
+        Ok(())
+    }
+
+    fn set_heartbeat(&mut self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
+        for receiver in &mut self.receivers {
+            receiver.set_heartbeat(ivl, timeout, ttl)?;
+        }
+        Ok(())
+    }
+}
+
 
 impl Drop for Pool {
     fn drop(&mut self) {

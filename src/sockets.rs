@@ -163,43 +163,43 @@ fn is_socket_ipc(socket: &zmq::Socket) -> bool {
 }
 
 pub trait SocketConfig {
-    fn sockets(&self) -> Vec<&zmq::Socket>;
+    fn zmq_sockets(&self) -> Vec<&zmq::Socket>;
     fn set_options(&self, options: &SocketOptions) -> IOResult<()>{
-        for socket in self.sockets() {
+        for socket in self.zmq_sockets() {
             options.set(socket)?;
         }
         Ok(())
     }
     fn set_linger(&mut self, value: i32) -> IOResult<()> {
-        for socket in self.sockets() {
+        for socket in self.zmq_sockets() {
             set_socket_linger(socket, value)?;
         }
         Ok(())
     }
 
     fn set_rcvhwm(&mut self, value: i32)-> IOResult<()> {
-        for socket in self.sockets() {
+        for socket in self.zmq_sockets() {
             set_socket_rcvhwm(socket, value)?;
         }
         Ok(())
     }
 
     fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
-        for socket in self.sockets() {
+        for socket in self.zmq_sockets() {
             set_socket_sndhwm(socket, value)?;
         }
         Ok(())
     }
 
     fn set_keepalive(& mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
-        for socket in self.sockets() {
+        for socket in self.zmq_sockets() {
             set_socket_keepalive(socket, idle, intvl, cnt)?;
         }
         Ok(())
     }
 
     fn set_heartbeat(& mut self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
-        for socket in self.sockets() {
+        for socket in self.zmq_sockets() {
             set_socket_heartbeat(socket, ivl, timeout, ttl)?;
         }
         Ok(())

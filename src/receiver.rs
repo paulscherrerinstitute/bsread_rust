@@ -174,25 +174,29 @@ impl Receiver{
     }
 
     pub fn connect(&mut self) -> IOResult<()> {
-        if let Some(endpoints) = self.endpoints.clone() { // Clone to avoid immutable borrow
-            for endpoint in endpoints {
-                //TODO: Should break if one of the endpoints fail?
-                self.connect_endpoint(&endpoint)?;
+        if !self.connected {
+            if let Some(endpoints) = self.endpoints.clone() { // Clone to avoid immutable borrow
+                for endpoint in endpoints {
+                    //TODO: Should break if one of the endpoints fail?
+                    self.connect_endpoint(&endpoint)?;
+                }
             }
+            self.connected = true;
         }
-        self.connected = true;
         Ok(())
     }
 
     pub fn disconnect(&mut self)  {
-        self.connected = false;
-        //for socket in  self.sockets(){
-        //    socket.disconnect();
-        //}
-        if let Some(endpoints) = self.endpoints.clone() {
-            for endpoint in endpoints {
-                //TODO: Should break if one of the endpoints fail?
-                self.disconnect_endpoint(&endpoint);
+        if self.connected {
+            self.connected = false;
+            //for socket in  self.sockets(){
+            //    socket.disconnect();
+            //}
+            if let Some(endpoints) = self.endpoints.clone() {
+                for endpoint in endpoints {
+                    //TODO: Should break if one of the endpoints fail?
+                    self.disconnect_endpoint(&endpoint);
+                }
             }
         }
     }
@@ -225,6 +229,9 @@ impl Receiver{
         self.remove_stats(endpoint);
     }
 
+    pub fn has_endpoint(&self, endpoint: &str) -> bool {
+        self.endpoints.as_ref().is_some_and(|endpoints| endpoints.iter().any(|e| e == endpoint))
+    }
 
     fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
         let context = self.bsread.context();
@@ -412,6 +419,9 @@ impl Receiver{
     }
 
     pub fn receive(&mut self) -> IOResult<ReceivedMessage> {
+        if self.connections() ==0 {
+            return Err(IOError::new(ErrorKind::NotConnected,"No connected endpoint"));
+        }
         let (endpoint, message_parts) = self._receive();
 
 
@@ -852,6 +862,37 @@ impl Receiver{
         Ok(())
     }
 
+    pub fn disable_shared_monitoring(& mut self, socket_monitor: &SocketMonitor)-> IOResult<()> {
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                socket.disable_monitoring( &socket_monitor)?;
+
+            }
+            ConnectionSockets::Individual { sockets, ..} => {
+                for (endpoint, socket) in sockets.iter_mut() {
+                    socket.disable_monitoring(  &socket_monitor)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn enable_shared_monitoring_socket(& mut self, socket_monitor: &SocketMonitor,  endpoint:&str)-> IOResult<()> {
+        let context = self.bsread.context().clone();
+        if let Some(socket) = self.socket(endpoint) {
+            socket.enable_monitoring(&context,  &socket_monitor, Some(endpoint.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn disable_shared_monitoring_socket(& mut self, socket_monitor: &SocketMonitor,  endpoint:&str)-> IOResult<()> {
+        if let Some(socket) = self.socket(endpoint) {
+            socket.disable_monitoring(&socket_monitor)?;
+        }
+        Ok(())
+    }
+
+
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
         match &self.socket_monitor{
             None => {None}
@@ -958,7 +999,7 @@ where
 }
 
 impl SocketConfig for Receiver {
-    fn sockets(&self) -> Vec<&zmq::Socket> {
+    fn zmq_sockets(&self) -> Vec<&zmq::Socket> {
         match &self.sockets {
             ConnectionSockets::Shared { socket } => {
                 vec![socket.socket()]
