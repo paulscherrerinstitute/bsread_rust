@@ -387,15 +387,14 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last
         .and_then(|ep| last_headers.get(ep))
         .filter(|info| info.hash == hash)
         .cloned();
-    let has_endpoint_info = endpoint_info.is_some();
 
     // Determine whether to reuse or reparse data
     let (data_header, channels, changed) =
-    if let Some(ei) = endpoint_info {
-        (ei.data_header.clone(), ei.channels.clone(), false)
-    } else if let Some(last_msg) = last_headers.remove(&hash) {
+    if let Some(last_msg) = endpoint_info {
+        (last_msg.data_header.clone(), last_msg.channels.clone(), false)
+    } else if let Some(last_msg) = last_headers.get(&hash) {
         // Reuse the previous data header and channels
-        (last_msg.data_header, last_msg.channels, false)
+        (last_msg.data_header.clone(), last_msg.channels.clone(), false)
     } else {
         let blob = &message_parts[1];
         let compression = dh_compression(&main_header)?;
@@ -430,13 +429,13 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last
     let msg = Message::new(main_header, data_header, channels, data, Some(changed), raw);
 
     if let Ok(m) = &msg {
-        if let Some(l) = m.clone_data_header_info(hash) {
-            if let Some(ep) = endpoint {
-                if !has_endpoint_info {
+        if changed {
+            if let Some(l) = m.clone_data_header_info(hash) {
+                if let Some(ep) = endpoint {
                     last_headers.insert(ep.clone(), l);
+                } else {
+                    last_headers.insert(l.hash.clone(), l);
                 }
-            } else {
-                last_headers.insert(l.hash.clone(), l);
             }
         }
     }
