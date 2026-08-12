@@ -181,7 +181,9 @@ pub struct Message {
     raw: bool,
 }
 
+#[derive(Clone)]
 pub struct DataHeaderInfo {
+    pub hash: String,
     pub data_header: HashMap<String, JsonValue>,
     pub channels: Vec<Box<dyn ChannelTrait>>,
 }
@@ -334,7 +336,7 @@ impl Message {
         self.channel_data(channel_name).map(ChannelData::value)
     }
 
-    fn clone_data_header_info(&self) -> Option<DataHeaderInfo> {
+    fn clone_data_header_info(&self, hash:String) -> Option<DataHeaderInfo> {
         let data_header = self.data_header.clone();
         //TODO: is there a better way to clone channels?
         let channels;
@@ -342,7 +344,7 @@ impl Message {
             Ok(ch) => {channels = ch;}
             Err(_) => {return None}
         }
-        Some(DataHeaderInfo {data_header, channels})
+        Some(DataHeaderInfo {hash, data_header, channels})
     }
 }
 
@@ -371,7 +373,7 @@ pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<Has
     Ok(data_header)
 }
 
-pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo>, raw:bool) -> IOResult<Message> {
+pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo>, raw:bool) -> IOResult<Message> {
     let mut data = IndexMap::new();
     if message_parts.len() < 2 {
         return Err(IOError::new(ErrorKind::InvalidData, "Invalid message format"));
@@ -380,8 +382,18 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     let hash = hash(&main_header)?;
     let global_timestamp = timestamp(&main_header);
 
+    let endpoint_info = endpoint
+        .as_ref()
+        .and_then(|ep| last_headers.get(ep))
+        .filter(|info| info.hash == hash)
+        .cloned();
+    let has_endpoint_info = endpoint_info.is_some();
+
     // Determine whether to reuse or reparse data
-    let (data_header, channels, changed) = if let Some(last_msg) = last_headers.remove(&hash) {
+    let (data_header, channels, changed) =
+    if let Some(ei) = endpoint_info {
+        (ei.data_header.clone(), ei.channels.clone(), false)
+    } else if let Some(last_msg) = last_headers.remove(&hash) {
         // Reuse the previous data header and channels
         (last_msg.data_header, last_msg.channels, false)
     } else {
@@ -418,8 +430,14 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, last_headers:& mut LimitedHash
     let msg = Message::new(main_header, data_header, channels, data, Some(changed), raw);
 
     if let Ok(m) = &msg {
-        if let Some(l) = m.clone_data_header_info() {
-            last_headers.insert(hash, l);
+        if let Some(l) = m.clone_data_header_info(hash) {
+            if let Some(ep) = endpoint {
+                if !has_endpoint_info {
+                    last_headers.insert(ep.clone(), l);
+                }
+            } else {
+                last_headers.insert(l.hash.clone(), l);
+            }
         }
     }
     msg

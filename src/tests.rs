@@ -133,7 +133,14 @@ fn assert_rec(rec : &Receiver, min_msg_count: Option<u32>, connections: Option<u
     assert_eq!(rec.error_count(),0);
     let diags = rec.diagnostics();
     for endpoint in rec.diagnostics_endpoints() {
-        assert_eq!(rec.header_changes(&endpoint), 1);
+        match CONNECTION_MODE{
+            ConnectionMode::Shared => {
+                assert_eq!(rec.header_changes(&endpoint),rec.connections() as u32);
+            }
+            ConnectionMode::Individual => {
+                assert_eq!(rec.header_changes(&endpoint), 1);
+            }
+        }
     }
 }
 
@@ -186,11 +193,13 @@ fn multi() -> IOResult<()> {
         print_stats_rec(&rec);
         assert_rec(&rec, None, Some(2));
         let mut endpoints = vec![TXP_PUB.endpoint().clone(), TXP_CMP.endpoint().clone()];
-        let mut diagnostics_endpoints = rec.diagnostics_endpoints();
-        endpoints.sort();
-        diagnostics_endpoints.sort();
-        assert_eq!(endpoints, diagnostics_endpoints);
-        println!("Diagnostics : {:?}",   diagnostics_endpoints);
+        if CONNECTION_MODE == ConnectionMode::Individual {
+            let mut diagnostics_endpoints = rec.diagnostics_endpoints();
+            endpoints.sort();
+            diagnostics_endpoints.sort();
+            assert_eq!(endpoints, diagnostics_endpoints);
+            println!("Diagnostics : {:?}", diagnostics_endpoints);
+        }
     }
     Ok(())
 }
@@ -205,10 +214,12 @@ fn late() ->  IOResult<()> {
     rec.add_endpoint(&TXP_CMP.endpoint());
     rec.connect()?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
-    let ess = rec.endpoint_states();
-    println!("Endpoint states : {:?}",  ess);
-    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
-    assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        let ess = rec.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+        assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(), EndpointState::Connected);
+        assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(), EndpointState::Connected);
+    }
     print_stats_rec(&rec);
     assert_rec(&rec, None, Some(2));
     Ok(())
@@ -223,19 +234,23 @@ fn dynamic() ->  IOResult<()> {
     rec.add_endpoint(&TXP_PUB.endpoint())?;
     rec.add_endpoint(&TXP_CMP.endpoint())?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
-    let ess = rec.endpoint_states();
-    println!("Endpoint states : {:?}",  ess);
-    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
-    assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        let ess = rec.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+        assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(), EndpointState::Connected);
+        assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(), EndpointState::Connected);
+    }
     print_stats_rec(&rec);
     assert_rec(&rec, None, Some(2));
 
     rec.remove_endpoint(&TXP_CMP.endpoint());
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
-    let ess = rec.endpoint_states();
-    println!("Endpoint states : {:?}",  ess);
-    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
-    assert_eq!(ess.get(&TXP_CMP.endpoint()), None);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        let ess = rec.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+        assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(), EndpointState::Connected);
+        assert_eq!(ess.get(&TXP_CMP.endpoint()), None);
+    }
     print_stats_rec(&rec);
     assert_rec(&rec, None, Some(1));
 
@@ -567,6 +582,9 @@ fn pool_buffered() -> IOResult<()> {
 
 #[test]
 fn pool_monitoring() ->  IOResult<()> {
+    if CONNECTION_MODE == ConnectionMode::Shared {
+        return Ok(());
+    }
     let env = TestEnvironment::new()?;
     let TXP1: Transport = Transport::Tcp {port:10351, host:None};
     let endpoint1 = TXP1.endpoint();
@@ -644,10 +662,12 @@ fn pool_dynamic() ->  IOResult<()> {
     pool.add_endpoint(&TXP_CMP.endpoint(),1)?;
     pool.enable_monitoring()?;
     pool.listen(on_message, Some(MESSAGE_COUNT))?;
-    let ess = pool.endpoint_states();
-    println!("Endpoint states : {:?}",  ess);
-    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
-    assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(),  EndpointState::Connected);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        let ess = pool.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+        assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(), EndpointState::Connected);
+        assert_eq!(ess.get(&TXP_CMP.endpoint()).unwrap().clone(), EndpointState::Connected);
+    }
     print_stats_pool(&pool);
     assert_pool(&pool);
 
@@ -658,10 +678,12 @@ fn pool_dynamic() ->  IOResult<()> {
 
 
     pool.listen(on_message, Some(MESSAGE_COUNT))?;
-    let ess = pool.endpoint_states();
-    println!("Endpoint states : {:?}",  ess);
-    assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(),  EndpointState::Connected);
-    assert_eq!(ess.get(&TXP_CMP.endpoint()), None);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        let ess = pool.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+        assert_eq!(ess.get(&TXP_PUB.endpoint()).unwrap().clone(), EndpointState::Connected);
+        assert_eq!(ess.get(&TXP_CMP.endpoint()), None);
+    }
     print_stats_pool(&pool);
     assert_rec(&pool.receivers()[0], None, Some(1));
     assert_eq!(pool.receivers()[0].message_count(), MESSAGE_COUNT);
@@ -1115,8 +1137,10 @@ fn receiver_ipc() ->  IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.set_keepalive(30,10,3)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
-    //Keepalive should not be set in IPC transport
-    assert_eq!(rec.zmq_sockets()[0].get_tcp_keepalive().unwrap(), -1);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        //Keepalive should not be set in IPC transport
+        assert_eq!(rec.zmq_sockets()[0].get_tcp_keepalive().unwrap(), -1);
+    }
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
     Ok(())
@@ -1152,6 +1176,9 @@ fn pool_options() ->  IOResult<()> {
 
 #[test]
 fn receiver_monitoring() ->  IOResult<()> {
+    if CONNECTION_MODE == ConnectionMode::Shared {
+        return Ok(());
+    }
     let env = TestEnvironment::new()?;
     let TXP: Transport = Transport::Tcp {port:10350, host:None};
     let endpoint = TXP.endpoint();
@@ -1257,11 +1284,13 @@ fn flawed() ->  IOResult<()> {
     }
     print_stats_rec(&rec);
     let total_rx = rec.message_count() + rec.error_count();
-    for diag in EndpointDiag::ALL {
-        println!("{:?}: {}", diag, diag_counts.get(&diag).unwrap_or(&0));
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        for diag in EndpointDiag::ALL {
+            println!("{:?}: {}", diag, diag_counts.get(&diag).unwrap_or(&0));
+        }
+        assert_eq!(*diag_counts.get(&EndpointDiag::RepeatedId).unwrap_or(&0), total_rx/10 + if ((total_rx % 10)>=3) {1} else {0});
+        assert_eq!(*diag_counts.get(&EndpointDiag::DecreasingId).unwrap_or(&0), total_rx/10  + if ((total_rx % 10)>=7) {1} else {0});
     }
-    assert_eq!(*diag_counts.get(&EndpointDiag::RepeatedId).unwrap_or(&0), total_rx/10 + if ((total_rx % 10)>=3) {1} else {0});
-    assert_eq!(*diag_counts.get(&EndpointDiag::DecreasingId).unwrap_or(&0), total_rx/10  + if ((total_rx % 10)>=7) {1} else {0});
     Ok(())
 }
 

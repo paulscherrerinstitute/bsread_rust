@@ -8,6 +8,7 @@ use serde_json::Value as JsonValue;
 use crate::compression::{decompress_bitshuffle_lz4, decompress_lz4};
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct ChannelConfig {
     name: String,
     kind: String,
@@ -66,18 +67,21 @@ impl ChannelConfig {
 }
 
 
+#[derive(Clone)]
 pub struct ChannelScalar<T> {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>,
     writer: fn(&mut Cursor<&mut Vec<u8>>, &T) -> IOResult<()>
 }
 
+#[derive(Clone)]
 pub struct ChannelArray<T> {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,
     writer: fn(&mut Cursor<&mut Vec<u8>>, &[T]) -> IOResult<()>
 }
 
+#[derive(Clone)]
 pub struct ChannelRaw {
     config: ChannelConfig,
     reader: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()>,
@@ -143,7 +147,13 @@ impl ChannelRaw {
 }
 
 static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), kind: String::new(), shape: None, elements: 0, element_size: 0, little_endian: false, compression: Compression::None, raw: false};
-pub trait ChannelTrait: Send {
+
+
+pub trait ChannelClone {
+    fn clone_box(&self) -> Box<dyn ChannelTrait>;
+}
+
+pub trait ChannelTrait: Send + ChannelClone {
     fn config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }
@@ -155,6 +165,21 @@ pub trait ChannelTrait: Send {
         Err(IOError::new(ErrorKind::Unsupported, "Unsupported channel type"))
     }
 
+}
+
+impl<T> ChannelClone for T
+where
+    T: ChannelTrait + Clone + 'static,
+{
+    fn clone_box(&self) -> Box<dyn ChannelTrait> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn ChannelTrait> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
 }
 
 impl ChannelTrait for ChannelRaw {

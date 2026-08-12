@@ -309,7 +309,7 @@ impl Receiver{
                 Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
             }
         }
-        let message =parse_message(message_parts, &mut self.header_buffer, self.raw);
+        let message =parse_message(message_parts, endpoint, &mut self.header_buffer, self.raw);
         match message {
             Ok(message) => {
                 self.check_message(message, endpoint)
