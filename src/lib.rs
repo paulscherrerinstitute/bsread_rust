@@ -3,10 +3,10 @@ extern crate core;
 pub use crate::bsread::{Bsread};
 pub use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
 pub use crate::value::{Value};
-pub use crate::message::{ChannelData, Message, DataHeaderInfo};
-pub use crate::sockets::{Transport};
+pub use crate::message::{ChannelData, Message, DataHeaderInfo, ID_SIMULATED, TIMESTAMP_NOW};
+pub use crate::sockets::{Transport,EndpointState, EndpointDiag, EndpointEvent, SocketConfig};
 pub use crate::utils::{init_id_t0, init_sf_id_t0};
-pub use crate::receiver::{Receiver, DeliveryMode, ConnectionMode, ReceivedMessage};
+pub use crate::receiver::{Receiver, DeliveryMode, ConnectionMode, ReceivedMessage, ForwarderConfig};
 pub use crate::pool::Pool;
 pub use crate::sender::Sender;
 pub use zmq::SocketType;
@@ -19,6 +19,9 @@ use zmq::Context;
 use log;
 use core::result::Result;
 use std::io;
+#[cfg(feature = "dispatcher")]
+use crate::dispatcher::ChannelDescription;
+
 
 //Constants
 pub const HTYPE:&str = "bsr_m-1.1";
