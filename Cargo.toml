@@ -35,6 +35,6 @@ links = "libbitshuffle"
     tokio = { version = "1.53.1",  optional = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time"]}
 
 [features]
-    default = ["async"]
+    default = [] #["async"]
     dispatcher = ["dep:reqwest"]
     async = ["dep:tokio"]

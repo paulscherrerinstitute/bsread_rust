@@ -243,11 +243,16 @@ fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, 
     Message::new_from_channel_map(id,TIMESTAMP_NOW, channels, data)
 }
 
-pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
-    fn create_sender(transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
+pub fn start_sender(bsread: Option<&Arc<Bsread>>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
+    fn create_sender(bsread: Option<Arc<Bsread>>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
         let ep = transport.endpoint().clone();
-        let bsread = Bsread::new()?;
-        let mut sender = Sender::new(bsread, socket_type, transport, block, None, None)?;
+
+        let bsread = match bsread {
+            None => {Bsread::new()?}
+            Some(bsread) => {bsread}
+        };
+        let mut sender = bsread.sender(socket_type, transport, block, None, None)?;
+
         sender.set_linger(0)?;
         sender.set_keepalive(30,10,3)?;
         sender.set_heartbeat(5000,15000,20000)?;
@@ -269,7 +274,13 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
                             Ok(id) => {
                                 //println!("Sent message Sender: {} ID: {}",   ep, id);
                             }
-                            Err(e) => {log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)}
+                            Err(e) => {
+                                if e.kind() == std::io::ErrorKind::WouldBlock {
+                                    log::debug!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: Would block", sender.last_pulse_id(), sender.transport().endpoint(), socket_type)
+                                } else {
+                                    log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)
+                                }
+                            }
                         }
                     }
                     Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.transport().endpoint(), socket_type, e)}
@@ -283,11 +294,15 @@ pub fn start_sender(transport:Transport, socket_type:SocketType, interval_ms:u64
         Ok(())
     }
     let endpoint = transport.endpoint();
+    let bs = match(bsread){
+        None => {None}
+        Some(bsread) => {Some(bsread.clone())}
+    };
     //let interrupted = Arc::clone(&SENDER_INTERRUPTED);
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            match create_sender(transport, socket_type, interval_ms, block, compression, timeout, flawed){
+            match create_sender(bs, transport, socket_type, interval_ms, block, compression, timeout, flawed){
                 Ok(_) => {}
                 Err(e) => {log::warn!("Error creating Sender [endpoint={}, socketType={:?}]: {:?}", endpoint, socket_type, e)}
             }
@@ -308,6 +323,11 @@ pub fn stop_senders(){
             log::warn!("Error: {:?}", e);
         }
     }
+}
+
+pub fn running_senders() -> usize {
+    let handles = SENDER_HANDLES.lock().unwrap();
+    handles.iter().filter(|handle| !handle.is_finished()).count()
 }
 
 pub fn assert_message_contents_ok(msg:&Message){
