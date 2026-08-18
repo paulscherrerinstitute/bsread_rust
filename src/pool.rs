@@ -87,7 +87,19 @@ Pool {
         }
     }
 
-    pub fn add_endpoint(&mut self, endpoint: &str, index:usize) -> IOResult<()> {
+    pub fn add_endpoint(&mut self, endpoint: &str, index: Option<usize>) -> IOResult<()> {
+        let index = match(index){
+            None => {
+                self.receivers
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, receiver)| receiver.connections())
+                    .map(|(i, _)| i as i32)
+                    .unwrap_or(-1) as usize
+            }
+            Some(index) => {index}
+        };
+
         if self.has_endpoint(endpoint) {
             if let Some(receiver) = self.endpoint_receiver(endpoint){
                 if self.receivers[index].index() == receiver.index() {
@@ -96,6 +108,10 @@ Pool {
             }
             return Err(IOError::new(ErrorKind::InvalidInput, "endpoint already exists"));
         }
+        if index >= self.receivers.len(){
+            return Err(IOError::new(ErrorKind::Other, format!("Invalid receiver index: {}", index)));
+        }
+
         self.receivers[index].add_endpoint(endpoint)?;
         let socket_monitor = &self.socket_monitor;
         if let Some(socket_monitor) = &socket_monitor {

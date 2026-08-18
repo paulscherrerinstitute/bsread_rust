@@ -652,8 +652,8 @@ fn pool_dynamic() ->  IOResult<()> {
     let mut pool = env.bsread.pool(vec![], SocketType::SUB, CONNECTION_MODE, 2)?;
     //pool.enable_monitoring()?;
     pool.connect()?;
-    pool.add_endpoint(&TXP_PUB.endpoint(),0)?;
-    pool.add_endpoint(&TXP_CMP.endpoint(),1)?;
+    pool.add_endpoint(&TXP_PUB.endpoint(),Some(0))?;
+    pool.add_endpoint(&TXP_CMP.endpoint(),Some(1))?;
     pool.enable_monitoring()?;
     pool.listen(on_message, Some(MESSAGE_COUNT))?;
     if CONNECTION_MODE == ConnectionMode::Individual {
@@ -682,6 +682,22 @@ fn pool_dynamic() ->  IOResult<()> {
     assert_rec(&pool.receivers()[0], None, Some(1));
     assert_eq!(pool.receivers()[0].message_count(), MESSAGE_COUNT);
     assert_eq!(pool.receivers()[1].message_count(), 0);
+    Ok(())
+}
+
+
+#[test]
+fn pool_auto_assign() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool(vec![], SocketType::SUB, CONNECTION_MODE, 2)?;
+    //pool.enable_monitoring()?;
+    pool.connect()?;
+    pool.add_endpoint(&TXP_PUB.endpoint(), None)?;
+    pool.add_endpoint(&TXP_CMP.endpoint(), None)?;
+    pool.add_endpoint(&TXP_IPC.endpoint(), None)?;
+    assert_eq!(pool.endpoint_receiver(&TXP_PUB.endpoint()).unwrap().index(), pool.receivers()[0].index());
+    assert_eq!(pool.endpoint_receiver(&TXP_CMP.endpoint()).unwrap().index(), pool.receivers()[1].index());
+    assert_eq!(pool.endpoint_receiver(&TXP_IPC.endpoint()).unwrap().index(), pool.receivers()[0].index());
     Ok(())
 }
 
@@ -1159,7 +1175,7 @@ fn pool_options() ->  IOResult<()> {
     pool.set_linger(0)?;
     pool.set_rcvhwm(10000)?;
     pool.connect();
-    pool.add_endpoint(&TXP_CMP.endpoint(), 1)?;
+    pool.add_endpoint(&TXP_CMP.endpoint(), Some(1))?;
     assert_eq!(pool.zmq_sockets()[0].get_linger().unwrap(), 0);
     assert_eq!(pool.zmq_sockets()[1].get_linger().unwrap(), 0);
     assert_eq!(pool.zmq_sockets()[0].get_rcvhwm().unwrap(), 10000);
