@@ -315,17 +315,16 @@ Pool {
         self.receivers[0].connection_mode()
     }
 
-    pub fn endpoints(&self) -> impl Iterator<Item = &String> {
+    pub fn endpoints(&self) -> impl Iterator<Item = String> {
         self.receivers
             .iter()
-            .filter_map(|r| r.endpoints().as_ref())
-            .flatten()
+            .flat_map(|r| r.endpoints())
     }
 
     pub fn connections(&self) -> usize {
         self.receivers
             .iter()
-            .map(|r| r.endpoints().as_ref().map_or(0, Vec::len))
+            .map(|r| r.connections())
             .sum()
     }
 
@@ -380,23 +379,13 @@ Pool {
     pub fn endpoint_receiver(&self, endpoint: &str) -> Option<&Receiver> {
         self.receivers
             .iter()
-            .find(|receiver| {
-                receiver
-                    .endpoints()
-                    .as_ref()
-                    .is_some_and(|endpoints| endpoints.iter().any(|e| e == endpoint))
-            })
+            .find(|receiver| receiver.endpoints().iter().any(|e| e == endpoint))
     }
 
     pub fn endpoint_receiver_mut(&mut self, endpoint: &str) -> Option<&mut Receiver> {
         self.receivers
             .iter_mut()
-            .find(|receiver| {
-                receiver
-                    .endpoints()
-                    .as_ref()
-                    .is_some_and(|endpoints| endpoints.iter().any(|e| e == endpoint))
-            })
+            .find(|receiver| receiver.endpoints().iter().any(|e| e == endpoint))
     }
 
 

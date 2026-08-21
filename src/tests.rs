@@ -729,6 +729,33 @@ fn pool_async() -> IOResult<()> {
 
 #[cfg(feature = "async")]
 #[test]
+fn pool_async_dyn() -> IOResult<()> {
+    let callback = |msg| async move {
+        println!("Async callback");
+        on_message(msg);
+    };
+    let env = TestEnvironment::new()?;
+    let mut pool = env.bsread.pool(Vec::new(), SocketType::SUB, CONNECTION_MODE, 2)?;
+    let runtime = new_tokio_runtime();
+    runtime.block_on(async {
+        let handle = runtime.handle().clone();
+        pool.start_async(callback, true, Some(handle)).unwrap();
+        pool.add_endpoint("tcp://0.0.0.0:10300", None).unwrap();
+        pool.add_endpoint("tcp://0.0.0.0:10301", None).unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(pool.is_running(), true);
+        pool.stop_async().await.unwrap();
+        assert_eq!(pool.is_running(), false);
+    });
+    print_stats_pool(&pool);
+    assert_pool(&pool);
+
+    Ok(())
+}
+
+
+#[cfg(feature = "async")]
+#[test]
 fn pool_async_endpoint_serial_executor() -> IOResult<()> {
     let callback = |msg| async move {
         println!("Async callback");
@@ -992,7 +1019,7 @@ fn forwarder() ->  IOResult<()> {
     //Asynchronous
     rxtx.fork(|rx| {log::info!("RTX Msg {}", rx.message.id())}, Some(MESSAGE_COUNT));
     rxtx.join()?;
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(Duration::from_millis(1000));
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
 

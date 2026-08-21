@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use zmq::{SocketType, SocketEvent, Context};
 use std::collections::HashMap;
 use std::thread;
+use serde::Serialize;
 use uuid::Uuid;
 use crate::IOResult;
 use crate::utils::app_name;
@@ -206,14 +207,14 @@ pub trait SocketConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum EndpointState {
     Connecting,
     Connected,
     Disconnected,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum EndpointDiag {
     Messages,
     Errors,
@@ -532,6 +533,7 @@ impl TrackedSocket {
             if let Err(e) = self.socket.disconnect(endpoint) {
                 log::error!("Error disonnecting endpoint {}: {}", endpoint, e);
             }
+            self.endpoints.retain(|e| e != endpoint);
         }
     }
 
