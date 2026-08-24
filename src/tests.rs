@@ -736,6 +736,7 @@ fn pool_async_dyn() -> IOResult<()> {
     };
     let env = TestEnvironment::new()?;
     let mut pool = env.bsread.pool(Vec::new(), SocketType::SUB, CONNECTION_MODE, 2)?;
+    pool.enable_monitoring()?;
     let runtime = new_tokio_runtime();
     runtime.block_on(async {
         let handle = runtime.handle().clone();
@@ -744,11 +745,18 @@ fn pool_async_dyn() -> IOResult<()> {
         pool.add_endpoint("tcp://0.0.0.0:10301", None).unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_eq!(pool.is_running(), true);
+        let ess = pool.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+
         pool.stop_async().await.unwrap();
         assert_eq!(pool.is_running(), false);
     });
     print_stats_pool(&pool);
     assert_pool(&pool);
+    if CONNECTION_MODE == ConnectionMode::Individual {
+        let ess = pool.endpoint_states();
+        println!("Endpoint states : {:?}", ess);
+    }
 
     Ok(())
 }

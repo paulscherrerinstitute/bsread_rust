@@ -583,11 +583,11 @@ impl Receiver{
     where
         F: Fn(ReceivedMessage) + Send + 'static,
     {
+        let bsread = self.bsread.clone();
         let endpoints = self.endpoints.clone();
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
-        let interrupted_context = Arc::clone(self.bsread.interrupted());
-        let interrupted_self = Arc::clone(&self.interrupted);
+        let interrupted = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
         let producer_fifo = self.fifo.clone();
         let producer_stats = Arc::clone(&self.stats);
@@ -600,8 +600,8 @@ impl Receiver{
         let handle = thread::Builder::new()
             .name(thread_name)
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                listen_task(endpoints, socket_type, connection_mode, callback, num_messages, producer_fifo, producer_stats,
-                            forwarder_config, interrupted_context, interrupted_self, raw, socket_monitor, tx_diag, rx_cmd)
+                listen_task(bsread, endpoints, socket_type, connection_mode, callback, num_messages, producer_fifo, producer_stats,
+                            forwarder_config, interrupted, raw, socket_monitor, tx_diag, rx_cmd)
             })
             .expect("Failed to spawn thread");
 
@@ -637,11 +637,11 @@ impl Receiver{
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.reset_counters();
+        let bsread = self.bsread.clone();
         let endpoints = self.endpoints.clone();
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
-        let interrupted_context = Arc::clone(self.bsread.interrupted());
-        let interrupted_self = Arc::clone(&self.interrupted);
+        let interrupted = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
         let producer_fifo =None;
         let producer_stats =self.stats.clone();
@@ -649,6 +649,7 @@ impl Receiver{
         let socket_monitor = self.socket_monitor.take();
         let tx_diag = self.tx_diag.clone();
         let rx_cmd = self.rx_cmd.clone();
+        let bsread = self.bsread.clone();
 
         let handle  =  match handle{
             None => {tokio::runtime::Handle::current()}
@@ -663,13 +664,12 @@ impl Receiver{
                     callback_handle.spawn(callback);
                 };
 
-                listen_task(endpoints, socket_type, connection_mode, cb,
+                listen_task(bsread, endpoints, socket_type, connection_mode, cb,
                             num_messages, producer_fifo, producer_stats,
-                            forwarder_config, interrupted_context, interrupted_self, raw,
+                            forwarder_config, interrupted, raw,
                             socket_monitor, tx_diag, rx_cmd)
             })
         } else {
-                //let shared_callback = Arc::new(Mutex::new(callback));
                 handle.spawn_blocking(move || {
                     let senders:Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<ReceivedMessage>>>>
                         = Arc::new(Mutex::new(HashMap::new()));
@@ -696,9 +696,9 @@ impl Receiver{
                         // ZMQ receiver thread is blocking, so use blocking_send
                         sender.blocking_send(msg).unwrap();
                     };
-                    listen_task(endpoints, socket_type, connection_mode, cb,
+                    listen_task(bsread, endpoints, socket_type, connection_mode, cb,
                                 num_messages, producer_fifo, producer_stats,
-                                forwarder_config, interrupted_context, interrupted_self,
+                                forwarder_config, interrupted,
                                 raw, socket_monitor, tx_diag, rx_cmd)
             })
         };
@@ -1039,6 +1039,7 @@ impl Receiver{
 }
 
 fn listen_task<F>(
+    bsread: Arc<Bsread>,
     endpoints: Arc<RwLock<Vec<String>>>,
     socket_type: SocketType,
     connection_mode: ConnectionMode,
@@ -1047,7 +1048,6 @@ fn listen_task<F>(
     producer_fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
     producer_stats: Arc<RwLock<Stats>>,
     forwarder_config: Option<ForwarderConfig>,
-    interrupted_context: Arc<AtomicBool>,
     interrupted_self: Arc<AtomicBool>,
     raw: bool,
     socket_monitor: Option<SocketMonitor>,
@@ -1057,11 +1057,6 @@ fn listen_task<F>(
 where
     F: Fn(ReceivedMessage) + Send + 'static,
 {
-    //let endpoints = endpoints.read().unwrap();
-    //let endpoints = (!endpoints.is_empty())
-    //    .then(|| endpoints.iter().map(String::as_str).collect());
-
-    let bsread = crate::Bsread::new_with_interrupted(interrupted_context).unwrap();
     let mut receiver = bsread.receiver(None, socket_type, connection_mode)?;
     receiver.fifo = producer_fifo;
     receiver.stats = producer_stats;
