@@ -365,6 +365,7 @@ struct MonitorEntry {
     endpoint: Option<String>,
     rec_index: u32,
     index: u32,
+    monitor_ep: String,
 }
 
 enum MonitorCommand {
@@ -391,6 +392,11 @@ impl SocketMonitor {
                                 let entry = monitors.remove(pos);
                                 if let Some(endpoint) = entry.endpoint {
                                      states.lock().unwrap().remove(&endpoint);
+                                     if let Err(err) = (entry.socket.disconnect(entry.monitor_ep.as_str())){
+                                         log::error!("Error disconnecting monitor socket for {}: {:?}", endpoint, err);
+                                     } else {
+                                         log::info!("Success disconnecting monitor socket for {}", endpoint);
+                                     }
                                 }
                             }
                         },
@@ -441,8 +447,8 @@ impl SocketMonitor {
         }
     }
 
-    pub fn add(&self,socket: zmq::Socket,endpoint: Option<String>, rec_index: u32,index: u32) {
-        if let Err(err) =  self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,rec_index,index})){
+    pub fn add(&self,socket: zmq::Socket,endpoint: Option<String>, rec_index: u32,index: u32, monitor_ep: String) {
+        if let Err(err) =  self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,rec_index,index, monitor_ep})){
             log::error!("Error adding socket monitoring: {}", err);
         }
     }
@@ -503,7 +509,7 @@ impl TrackedSocket {
         self.socket.monitor(&monitor_ep,zmq::SocketEvent::ALL as i32,)?;
         let mon = context.socket(zmq::PAIR)?;
         mon.connect(&monitor_ep)?;
-        monitor.add(mon, endpoint, self.rec_index, self.index);
+        monitor.add(mon, endpoint, self.rec_index, self.index, monitor_ep);
         self.monitoring = true;
         Ok(())
     }
@@ -512,12 +518,15 @@ impl TrackedSocket {
         if !self.monitoring {
             return Ok(());
         }
-        match self.socket.monitor("", 0){
+        //This is not working on zmq 0.10, as not treanslated into zmq_socket_monitor(socket, NULL, 0),
+        /*
+            match self.socket.monitor("", 0){
             Ok(_) => {}
             Err(e) => {
                 log::error!("Error disabling monitoring: {}", e);
             }
         }
+        */
         monitor.remove(self.index);
         self.monitoring = false;
 
