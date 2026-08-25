@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, PollItem, SocketEvent, SocketType};
 use std::time::{Duration, Instant};
@@ -16,15 +16,10 @@ use uuid::Uuid;
 use tokio::runtime::Handle;
 
 
-static RECEIVER_INDEX: Mutex<u32> = Mutex::new(0);
+static RECEIVER_INDEX: AtomicU32 = AtomicU32::new(0);
 fn index() -> u32{
-    unsafe {
-        let mut counter = RECEIVER_INDEX.lock().unwrap();
-        *counter += 1;
-        *counter
-    }
+    RECEIVER_INDEX.fetch_add(1, Ordering::Relaxed) + 1
 }
-
 
 struct Stats {
     counter_messages: u32,
@@ -91,8 +86,8 @@ impl ConnectionSockets {
         match self {
             ConnectionSockets::Shared { socket } => {}
             ConnectionSockets::Individual { sockets,  poll_endpoints, .. } => {
-               //poll_endpoints.clear();
-               // poll_endpoints.extend(sockets.keys().cloned());
+                //poll_endpoints.clear();
+                // poll_endpoints.extend(sockets.keys().cloned());
                 *poll_endpoints =  sockets.keys().cloned().collect(); //This has extra allocation comparing to the above, but avoid the inconsistent state.
             }
         }
@@ -122,155 +117,98 @@ enum ReceiverCommand {
     Disconnect {response: crossbeam_channel::Sender<IOResult<()>>,},
     AddEndpoint {endpoint: String,response: crossbeam_channel::Sender<IOResult<()>>,},
     RemoveEndpoint {endpoint: String, response: crossbeam_channel::Sender<IOResult<()>>,},
+    EnableMonitoring {monitor: SocketMonitor, response:crossbeam_channel::Sender<IOResult<()>>,},
+    SocketOptions {endpoint: String, response:crossbeam_channel::Sender<IOResult<SocketOptions>>,},
 }
 
-pub struct Receiver {
+#[derive(Debug, Clone)]
+pub struct ForwarderConfig {
+    socket_type: SocketType,
+    transport: Transport,
+    sndhwm: Option<i32>
+}
+
+impl ForwarderConfig {
+    pub fn new(socket_type: SocketType, transport: Transport, sndhwm: Option<i32>) -> Self {
+        Self { socket_type, transport, sndhwm }
+    }
+}
+
+struct Worker {
+    index: u32,
+    bsread: Arc<Bsread>,
+    connected: bool,
     sockets: ConnectionSockets,
     endpoints: Arc<RwLock<Vec<String>>>,
-    connected: bool,
     socket_type: SocketType,
+    connection_mode: ConnectionMode,
+    socket_options: Arc<Mutex<SocketOptions>>,
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
     id_buffer: HashMap<String, u64>,
-    check_mask: u64,
-    bsread: Arc<Bsread>,
-    fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
-    handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
-    #[cfg(feature = "async")]
-    async_handle: Option<tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
-    stats: Arc<RwLock<Stats>>,
-    index: u32,
+    socket_monitor: Option<SocketMonitor>,
+    tx_diag:crossbeam_channel::Sender<EndpointEvent>,
+    rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
+    interrupted: Arc<AtomicBool>,
     forwarder_config: Option<ForwarderConfig>,
     forwarder: Option<Sender>,
-    interrupted: Arc<AtomicBool>,
-    delivery_mode: DeliveryMode,
+    fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
+    stats: Arc<RwLock<Stats>>,
     raw: bool,
-    connection_mode: ConnectionMode,
-    socket_monitor: Option<SocketMonitor>,
-    tx_cmd:crossbeam_channel::Sender<ReceiverCommand>,
-    rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
-    tx_diag:crossbeam_channel::Sender<EndpointEvent>,
-    rx_diag:crossbeam_channel::Receiver<EndpointEvent>,
-    forked:bool,
-    socket_options: SocketOptions
+    check_mask: u64,
+    threaded: bool,
 }
 
-
-impl Receiver{
-    pub fn new(bsread: Arc<Bsread>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
-        let index =  index();
-        let mut sockets:ConnectionSockets = match connection_mode{
+impl Worker {
+    pub fn new(index: u32, bsread: Arc<Bsread>, endpoints: Arc<RwLock<Vec<String>>>, socket_type: SocketType, connection_mode: ConnectionMode,
+               socket_options: Arc<Mutex<SocketOptions>>, socket_monitor: Option<SocketMonitor>,
+               tx_diag: crossbeam_channel::Sender<EndpointEvent>, rx_cmd: crossbeam_channel::Receiver<ReceiverCommand>,
+               forwarder_config: Option<ForwarderConfig>, forwarder: Option<Sender>,
+               fifo: Option<Arc<FifoQueue<ReceivedMessage>>>, stats: Arc<RwLock<Stats>>,
+               interrupted: Arc<AtomicBool>, raw: bool, check_mask: u64, threaded: bool,
+    ) -> Self {
+        let sockets: ConnectionSockets = match connection_mode {
             ConnectionMode::Shared => {
-                ConnectionSockets::Shared {socket: TrackedSocket::new(&bsread.context(), socket_type, index)?}
+                ConnectionSockets::Shared { socket: TrackedSocket::new(&bsread.context(), socket_type, index).unwrap() }
             }
             ConnectionMode::Individual => {
-                ConnectionSockets::Individual {sockets: HashMap::new(),  poll_endpoints: Vec::new(), poll_ready_list: VecDeque::new()}
+                ConnectionSockets::Individual { sockets: HashMap::new(), poll_endpoints: Vec::new(), poll_ready_list: VecDeque::new() }
             }
         };
-        let endpoints = Arc::new(RwLock::new(endpoints
-            .unwrap_or_default()
-            .into_iter()
-            .map(str::to_string)
-            .collect()));
-        let stats = Arc::new(RwLock::new(Stats{counter_messages:0, counter_error:0, diagnostics:HashMap::new()}));
-        let delivery_mode = DeliveryMode::Inline;
-        let  interrupted = Arc::new(AtomicBool::new(false));
-        let (tx_diag, rx_diag) = crossbeam_channel::unbounded();
-        let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
-        let check_mask = CHECK_ALL;
-        let socket_options = SocketOptions::new();
 
-        Ok(Self { sockets, endpoints, connected:false, socket_type, header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(), check_mask,
-            bsread, fifo:None, handle:None,
-            stats, index,
-            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
-            socket_monitor:None, tx_cmd, rx_cmd, tx_diag,rx_diag, forked: false, socket_options,
-            #[cfg(feature = "async")]
-            async_handle:None,
-        })
-    }
-
-    pub fn to_string(& self,) -> String {
-        format!("Receiver {}" , self.index)
-    }
-
-
-    fn send_command<T>(&self,command: impl FnOnce(crossbeam_channel::Sender<IOResult<T>>) -> ReceiverCommand,) -> IOResult<T> {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        self.tx_cmd.send(command(tx))
-            .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",)})?;
-        rx.recv().map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread terminated",)})?
-    }
-
-    pub fn connect(&mut self) -> IOResult<()> {
-        if !self.delivery_mode.thraded() || self.forked {
-            log::info!("Connecting");
-            if !self.connected {
-                for endpoint in self.endpoints() {
-                    //TODO: Should break if one of the endpoints fail?
-                    self.connect_endpoint(&endpoint)?;
-                }
-                self.connected = true;
-            }
-            Ok(())
-        } else {
-            self.send_command(|response| {ReceiverCommand::Connect { response }})
+        let mut worker = Self {
+            index, bsread, connected: false, sockets, endpoints, socket_type, connection_mode,
+            header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(),
+            socket_options, socket_monitor:None, tx_diag, rx_cmd, interrupted, forwarder_config, forwarder,
+            fifo, stats, raw, check_mask, threaded
+        };
+        if let Some (socket_monitor) = socket_monitor{
+            worker.enable_monitoring(socket_monitor);
         }
+        worker
     }
 
-    pub fn disconnect(&mut self)  {
-        if !self.delivery_mode.thraded() || self.forked {
-            log::info!("Disconecting");
-            if self.connected {
-                self.connected = false;
-                //for socket in  self.sockets(){
-                //    socket.disconnect();
-                //}
-                for endpoint in self.endpoints() {
-                    //TODO: Should break if one of the endpoints fail?
-                    self.disconnect_endpoint(&endpoint);
-                }
-            }
-        } else {
-            self.send_command(|response| {ReceiverCommand::Disconnect { response }});
-        }
-    }
-
-    pub fn add_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
-        if !self.delivery_mode.thraded() || self.forked {
-            log::info!("Adding endpoint: {}", endpoint);
-            {
-                let mut endpoints = self.endpoints.write().unwrap();
-                let ep = endpoint.to_string();
-                if !endpoints.contains(&ep) {
-                    endpoints.push(ep);
-                }
-            }
-            if (self.connected) {
-                self.connect_endpoint(endpoint)?;
-            }
-            Ok(())
-        } else {
-            let endpoint = endpoint.to_string();
-            self.send_command(|response| {ReceiverCommand::AddEndpoint { endpoint, response }})
-        }
-    }
-
-    pub fn remove_endpoint(&mut self, endpoint: &str) {
-        if !self.delivery_mode.thraded() || self.forked {
-            log::info!("Removing endpoint: {}", endpoint);
-            if (self.connected) {
-                self.disconnect_endpoint(endpoint);
-            }
-            {
-                let mut endpoints = self.endpoints.write().unwrap();
-                endpoints.retain(|e| e != endpoint);
-                }
-            self.remove_stats(endpoint);
-        } else {
-            let endpoint = endpoint.to_string();
-            self.send_command(|response| {ReceiverCommand::RemoveEndpoint { endpoint, response }});
-
-        }
+    pub fn from_receiver(receiver: &mut Receiver) -> Self {
+        let index = receiver.index;
+        let bsread = receiver.bsread.clone();
+        let endpoints = receiver.endpoints.clone();
+        let socket_type = receiver.socket_type.clone();
+        let connection_mode = receiver.connection_mode.clone();
+        let interrupted = Arc::clone(&receiver.interrupted);
+        let forwarder_config = receiver.forwarder_config.clone();
+        let forwarder = receiver.forwarder.take();
+        let fifo = None;
+        let stats = receiver.stats.clone();
+        let raw = receiver.raw;
+        let socket_options = receiver.socket_options.clone();
+        let socket_monitor = receiver.socket_monitor.clone();
+        let tx_diag = receiver.tx_diag.clone();
+        let rx_cmd = receiver.rx_cmd.clone();
+        let check_mask = receiver.check_mask;
+        let threaded = false;
+        Worker::new(
+            index, bsread, endpoints, socket_type, connection_mode, socket_options, socket_monitor,
+            tx_diag, rx_cmd, forwarder_config, forwarder, fifo, stats, interrupted, raw, check_mask, threaded
+        )
     }
 
     pub fn endpoints(&self) ->  Vec<String> {
@@ -287,21 +225,20 @@ impl Receiver{
 
     fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
         let context = self.bsread.context();
-        let socket_type = self.socket_type();
-        let index = self.index;
+
         match &mut self.sockets {
             ConnectionSockets::Shared { socket } => {
                 socket.connect(endpoint)?
             }
-            ConnectionSockets::Individual { sockets, ..} => {
-                match sockets.get(endpoint){
+            ConnectionSockets::Individual { sockets, .. } => {
+                match sockets.get(endpoint) {
                     None => {
-                        let mut socket = TrackedSocket::new(context, socket_type, index)?;
+                        let mut socket = TrackedSocket::new(context, self.socket_type, self.index)?;
                         socket.connect(endpoint)?;
                         if let Some(socket_monitor) = &self.socket_monitor {
                             socket.enable_monitoring(self.bsread.context(), &socket_monitor, Some(endpoint.to_string()))?;
                         }
-                        self.socket_options.set(socket.socket())?;
+                        self.socket_options.lock().unwrap().set(socket.socket())?;
                         sockets.insert(endpoint.to_string(), socket);
                         self.sockets.update_poll_items();
                     }
@@ -314,7 +251,7 @@ impl Receiver{
         Ok(())
     }
 
-    fn disconnect_endpoint(&mut self, endpoint: &str)  {
+    fn disconnect_endpoint(&mut self, endpoint: &str) {
         match &mut self.sockets {
             ConnectionSockets::Shared { socket } => {
                 socket.disconnect_endpoint(endpoint);
@@ -335,174 +272,12 @@ impl Receiver{
         }
     }
 
-    pub fn forwarder(& self) -> &Option<Sender>{
-         &self.forwarder
-    }
-
-    pub fn set_forwarder(&mut self, forwarder_sender: sender::Sender) {
-        self.forwarder = Some(forwarder_sender);
-    }
-
-    pub fn set_forwarder_config(&mut self, forwarder_config: ForwarderConfig) {
-        self.forwarder_config = Some(forwarder_config);
-    }
-
-    pub fn set_raw(&mut self, raw:bool) {
-        self.raw = raw;
-    }
-    pub fn is_raw(&self) -> bool{
-        self.raw
-    }
-
-    fn process(&mut self, endpoint: &Option<String>, message_parts:Vec<Vec<u8>>) -> IOResult<Message> {
-        if let Some(sender) = self.forwarder.as_mut() {
-            match sender.forward(&message_parts) {
-                Ok(_) => (),
-                Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
-            }
+    fn set_header_buffer_size(&mut self, size: usize) {
+        if self.header_buffer.is_void() {
+            self.header_buffer = LimitedHashMap::new(size);
+        } else {
+            self.header_buffer.set_max_size(size);
         }
-        let message =parse_message(message_parts, endpoint, &mut self.header_buffer, self.raw);
-        match message {
-            Ok(message) => {
-                self.check_message(message, endpoint)
-            },
-            Err(e) => {
-                if (e.kind() == DECOMPRESSION_ERROR){
-                    self.send_diag(&endpoint, EndpointDiag::DecompressionError);
-                } else {
-                    self.send_diag(&endpoint, EndpointDiag::ParsingError);
-                }
-                return Err(e)
-            }
-        }
-    }
-    //self.send_diag(endpoint, EndpointDiag::NonPositiveId);
-
-    fn check_message(&mut self, message:Message,  endpoint: &Option<String>) -> IOResult<(Message)> {
-        let id = message.id();
-        if self.check_mask & CHECK_ID_POSITIVE != 0 {
-            if id <=0 {
-                self.send_diag(&endpoint, EndpointDiag::NonPositiveId);
-                return Err(IOError::new(ErrorKind::InvalidData,"Non positive ID",));
-            }
-        }
-
-        if self.check_mask & CHECK_ID_RANGE != 0 {
-            if let Ok(simulated_id) = current_id() {
-                let out_of_range = if self.check_mask & CHECK_ID_PAST_RANGE != 0 {
-                    id.abs_diff(simulated_id) > VALID_ID_RANGE
-                } else {
-                    id > simulated_id && (id - simulated_id) > VALID_ID_RANGE
-                };
-                if out_of_range {
-                    self.send_diag(&endpoint, EndpointDiag::OutOfRangeId);
-                    return Err(IOError::new(ErrorKind::InvalidData, "Out of range ID", ));
-                }
-            }
-        }
-
-        if self.check_mask & CHECK_ID_MONOTONIC != 0 {
-            if let Some(ep) = endpoint.clone() {
-                if let Some(last_id) = self.id_buffer.get(&ep){
-                    if *last_id > id{
-                        self.send_diag(&endpoint, EndpointDiag::DecreasingId);
-                        return Err(IOError::new(ErrorKind::InvalidData,"Decreasing ID"));
-                    } else if *last_id == id{
-                        self.send_diag(&endpoint, EndpointDiag::RepeatedId);
-                        return Err(IOError::new(ErrorKind::InvalidData,"Repeated ID"));
-                    }
-                }
-                self.id_buffer.insert(ep, id);
-            }
-        }
-        if message.header_changed() {
-            self.send_diag(&endpoint, EndpointDiag::HeaderChange);
-        }
-        Ok(message)
-    }
-
-
-    fn send_diag(&mut self, endpoint: &Option<String>, diag:EndpointDiag){
-        self.increse_stats(endpoint, diag);
-        if self.socket_monitor.is_some() {
-            if let Some(ep) = endpoint {
-                self.tx_diag.send(EndpointEvent::Diagnostic(ep.clone(), diag));
-            }
-        }
-    }
-
-
-    fn _receive(&mut self) -> (Option<String>, IOResult<Vec<Vec<u8>>>) {
-        match &mut self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                (None, socket.receive())
-            }
-            ConnectionSockets::Individual { sockets, poll_endpoints, poll_ready_list }  => {
-                if poll_ready_list.is_empty(){
-                    let mut poll_items = Vec::with_capacity(poll_endpoints.len());
-                    for endpoint in poll_endpoints.iter() {
-                        if let Some(socket) = sockets.get(endpoint) {
-                            poll_items.push(socket.socket().as_poll_item(zmq::POLLIN));
-                        } else {
-                            log::error!("Poll endpoint not found in sockets, updating: {}", endpoint);
-                            self.sockets.update_poll_items();
-                            return (None,Err(IOError::new(ErrorKind::Other,"Poll endpoint not found")),);
-                        }
-                    }
-                    //In same thread receive is blocking.When forked, must check commanfd
-                    let timeout = if self.forked {10} else {-1};
-                    if let Err(e) = zmq::poll(& mut poll_items, timeout) {
-                        return (None, Err(e.into()));
-                    }
-                    for (idx, item) in poll_items.iter().enumerate() {
-                        if item.is_readable() {
-                            poll_ready_list.push_back(poll_endpoints[idx].clone());
-                        }
-                    }
-                }
-
-                if let Some(endpoint) = poll_ready_list.pop_front() {
-                    if let Some(socket) = sockets.get(&endpoint) {
-                        return (Some(endpoint), socket.receive());
-                    };
-                }
-
-                (None,Err(IOError::new(ErrorKind::TimedOut,"No socket was readable")),)
-            }
-        }
-    }
-
-    pub fn receive(&mut self) -> IOResult<ReceivedMessage> {
-        if self.connections() ==0 {
-            return Err(IOError::new(ErrorKind::NotConnected,"No connected endpoint"));
-        }
-        let (endpoint, message_parts) = self._receive();
-
-
-        let message_parts = message_parts.map_err(|e| {
-            if e.kind() != ErrorKind::TimedOut {
-                //self.stats.lock().unwrap().increase_errors();
-                //TODO: Should we count socket errors?
-                self.send_diag(&endpoint, EndpointDiag::SocketError);
-            }
-            e
-        })?;
-
-        let message = self.process(&endpoint, message_parts);
-        match message {
-            Ok(msg) => {
-                self.stats.write().unwrap().increase_messages();
-                self.increse_stats(&endpoint,  EndpointDiag::Messages);
-                Ok(ReceivedMessage{endpoint, message:msg})
-            }
-            Err(e) => {
-                log::trace!("Receiver Error: {}", e);
-                self.stats.write().unwrap().increase_errors();
-                self.increse_stats(&endpoint,  EndpointDiag::Errors);
-                Err(IOError::new(e.kind(), e))
-            }
-        }
-
     }
 
     //Synchronous Mode: blocking, callback in same thread
@@ -510,12 +285,9 @@ impl Receiver{
     where
         F: Fn(ReceivedMessage),
     {
-        if !self.forked {
-            self.delivery_mode = DeliveryMode::Inline;
-        }
         self.reset_counters();
         if let Some(cfg) = self.forwarder_config.as_mut() {
-            match Sender::new(self.bsread.clone(), cfg.socket_type, cfg.transport.clone(), None, None, None,) {
+            match Sender::new(self.bsread.clone(), cfg.socket_type, cfg.transport.clone(), None, None, None, ) {
                 Ok(mut sender) => {
                     if let Err(e) = sender.start() {
                         log::warn!("Error binding forwarder endpoint {}: {}",cfg.transport.endpoint(), e);
@@ -536,7 +308,7 @@ impl Receiver{
         }
         self.connect()?;
         loop {
-            let message= self.receive();
+            let message = self.receive();
             if let Ok(msg) = message {
                 match &self.fifo {
                     None => {
@@ -559,7 +331,7 @@ impl Receiver{
                         let result = self.connect();
                         let _ = response.send(result);
                     }
-                    ReceiverCommand::Disconnect {response } => {
+                    ReceiverCommand::Disconnect { response } => {
                         self.disconnect();
                         let _ = response.send(Ok(()));
                     }
@@ -571,6 +343,18 @@ impl Receiver{
                         self.remove_endpoint(&endpoint);
                         let _ = response.send(Ok(()));
                     }
+                    ReceiverCommand::EnableMonitoring { monitor, response } => {
+                        let _ = response.send(self.enable_monitoring(monitor));
+                    }
+
+                    ReceiverCommand::SocketOptions { endpoint, response } => {
+                        let options = if let Some(socket) = self.socket(endpoint.as_str()){
+                            Ok(socket.options())
+                        } else {
+                            Err(IOError::new(ErrorKind::InvalidData, "Invalid endpoint", ))
+                        };
+                        let _ = response.send(options);
+                    }
                 }
             }
         }
@@ -578,30 +362,572 @@ impl Receiver{
         Ok(())
     }
 
+    fn process(&mut self, endpoint: &Option<String>, message_parts: Vec<Vec<u8>>) -> IOResult<Message> {
+        if let Some(sender) = self.forwarder.as_mut() {
+            match sender.forward(&message_parts) {
+                Ok(_) => (),
+                Err(e) => log::warn!("Error forwarding message to {}: {}", sender.endpoint(), e),
+            }
+        }
+        let message = parse_message(message_parts, endpoint, &mut self.header_buffer, self.raw);
+        match message {
+            Ok(message) => {
+                self.check_message(message, endpoint)
+            },
+            Err(e) => {
+                if (e.kind() == DECOMPRESSION_ERROR) {
+                    self.send_diag(&endpoint, EndpointDiag::DecompressionError);
+                } else {
+                    self.send_diag(&endpoint, EndpointDiag::ParsingError);
+                }
+                return Err(e)
+            }
+        }
+    }
+    //self.send_diag(endpoint, EndpointDiag::NonPositiveId);
+
+    fn check_message(&mut self, message: Message, endpoint: &Option<String>) -> IOResult<(Message)> {
+        let id = message.id();
+        if self.check_mask & CHECK_ID_POSITIVE != 0 {
+            if id <= 0 {
+                self.send_diag(&endpoint, EndpointDiag::NonPositiveId);
+                return Err(IOError::new(ErrorKind::InvalidData, "Non positive ID", ));
+            }
+        }
+
+        if self.check_mask & CHECK_ID_RANGE != 0 {
+            if let Ok(simulated_id) = current_id() {
+                let out_of_range = if self.check_mask & CHECK_ID_PAST_RANGE != 0 {
+                    id.abs_diff(simulated_id) > VALID_ID_RANGE
+                } else {
+                    id > simulated_id && (id - simulated_id) > VALID_ID_RANGE
+                };
+                if out_of_range {
+                    self.send_diag(&endpoint, EndpointDiag::OutOfRangeId);
+                    return Err(IOError::new(ErrorKind::InvalidData, "Out of range ID", ));
+                }
+            }
+        }
+
+        if self.check_mask & CHECK_ID_MONOTONIC != 0 {
+            if let Some(ep) = endpoint.clone() {
+                if let Some(last_id) = self.id_buffer.get(&ep) {
+                    if *last_id > id {
+                        self.send_diag(&endpoint, EndpointDiag::DecreasingId);
+                        return Err(IOError::new(ErrorKind::InvalidData, "Decreasing ID"));
+                    } else if *last_id == id {
+                        self.send_diag(&endpoint, EndpointDiag::RepeatedId);
+                        return Err(IOError::new(ErrorKind::InvalidData, "Repeated ID"));
+                    }
+                }
+                self.id_buffer.insert(ep, id);
+            }
+        }
+        if message.header_changed() {
+            self.send_diag(&endpoint, EndpointDiag::HeaderChange);
+        }
+        Ok(message)
+    }
+
+
+    fn send_diag(&mut self, endpoint: &Option<String>, diag: EndpointDiag) {
+        self.increse_stats(endpoint, diag);
+        if self.socket_monitor.is_some() {
+            if let Some(ep) = endpoint {
+                self.tx_diag.send(EndpointEvent::Diagnostic(ep.clone(), diag));
+            }
+        }
+    }
+
+
+    fn _receive(&mut self) -> (Option<String>, IOResult<Vec<Vec<u8>>>) {
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                (None, socket.receive())
+            }
+            ConnectionSockets::Individual { sockets, poll_endpoints, poll_ready_list } => {
+                if poll_ready_list.is_empty() {
+                    let mut poll_items = Vec::with_capacity(poll_endpoints.len());
+                    for endpoint in poll_endpoints.iter() {
+                        if let Some(socket) = sockets.get(endpoint) {
+                            poll_items.push(socket.socket().as_poll_item(zmq::POLLIN));
+                        } else {
+                            log::error!("Poll endpoint not found in sockets, updating: {}", endpoint);
+                            self.sockets.update_poll_items();
+                            return (None, Err(IOError::new(ErrorKind::Other, "Poll endpoint not found")),);
+                        }
+                    }
+                    //In same thread receive is blocking.When forked, must check commands.
+                    let timeout = if self.threaded { 10 } else { -1 };
+                    if let Err(e) = zmq::poll(&mut poll_items, timeout) {
+                        return (None, Err(e.into()));
+                    }
+                    for (idx, item) in poll_items.iter().enumerate() {
+                        if item.is_readable() {
+                            poll_ready_list.push_back(poll_endpoints[idx].clone());
+                        }
+                    }
+                }
+
+                if let Some(endpoint) = poll_ready_list.pop_front() {
+                    if let Some(socket) = sockets.get(&endpoint) {
+                        return (Some(endpoint), socket.receive());
+                    };
+                }
+
+                (None, Err(IOError::new(ErrorKind::TimedOut, "No socket was readable")),)
+            }
+        }
+    }
+
+    fn receive(&mut self) -> IOResult<ReceivedMessage> {
+
+        if self.connections() == 0 {
+            return Err(IOError::new(ErrorKind::NotConnected, "No connected endpoint"));
+        }
+        let (endpoint, message_parts) = self._receive();
+
+
+        let message_parts = message_parts.map_err(|e| {
+            if e.kind() != ErrorKind::TimedOut {
+                //TODO: Should we count socket errors?
+                self.send_diag(&endpoint, EndpointDiag::SocketError);
+            }
+            e
+        })?;
+
+        let message = self.process(&endpoint, message_parts);
+        match message {
+            Ok(msg) => {
+                self.stats.write().unwrap().increase_messages();
+                self.increse_stats(&endpoint, EndpointDiag::Messages);
+                Ok(ReceivedMessage { endpoint, message: msg })
+            }
+            Err(e) => {
+                log::trace!("Receiver Error: {}", e);
+                self.stats.write().unwrap().increase_errors();
+                self.increse_stats(&endpoint, EndpointDiag::Errors);
+                Err(IOError::new(e.kind(), e))
+            }
+        }
+    }
+
+    fn connect(&mut self) -> IOResult<()> {
+        log::info!("Connecting");
+        if !self.connected {
+            for endpoint in self.endpoints() {
+                //TODO: Should break if one of the endpoints fail?
+                self.connect_endpoint(&endpoint)?;
+            }
+            self.connected = true;
+        }
+        Ok(())
+    }
+
+    fn disconnect(&mut self) {
+        log::info!("Disconecting");
+        if self.connected {
+            self.connected = false;
+            //for socket in  self.sockets(){
+            //    socket.disconnect();
+            //}
+            for endpoint in self.endpoints() {
+                //TODO: Should break if one of the endpoints fail?
+                self.disconnect_endpoint(&endpoint);
+            }
+        }
+    }
+
+    fn add_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
+        log::info!("Adding endpoint: {}", endpoint);
+        {
+            let mut endpoints = self.endpoints.write().unwrap();
+            let ep = endpoint.to_string();
+            if !endpoints.contains(&ep) {
+                endpoints.push(ep);
+            }
+        }
+        if (self.connected) {
+            self.connect_endpoint(endpoint)?;
+        }
+        Ok(())
+    }
+
+    fn remove_endpoint(&mut self, endpoint: &str) {
+        log::info!("Removing endpoint: {}", endpoint);
+        if (self.connected) {
+            self.disconnect_endpoint(endpoint);
+        }
+        {
+            let mut endpoints = self.endpoints.write().unwrap();
+            endpoints.retain(|e| e != endpoint);
+        }
+        self.remove_stats(endpoint);
+    }
+
+    fn connections(&self) -> usize {
+        if let Ok(mut endpoints) =self.endpoints.read() {
+            endpoints.len()
+        } else {
+            0
+        }
+    }
+
+    fn reset_counters(& mut self) {
+        if let Ok(mut stats) = self.stats.write() {
+            stats.reset();
+        }
+    }
+
+    fn message_count(&self) -> u32 {
+        if let Ok(stats) = self.stats.read() {
+            stats.counter_messages
+        } else {
+            0
+        }
+    }
+
+    fn is_interrupted(&self) ->bool {
+        self.interrupted.load(Ordering::Relaxed) || self.bsread.is_interrupted()
+    }
+
+    pub fn stop_forwarder(&mut self) -> IOResult<()> {
+        //Only handle lifecycle of forwarder created with forward_config
+        if let Some(forwarder_config) = self.forwarder_config.as_mut() {
+            if let Some(sender) = self.forwarder.as_mut() {
+                sender.stop()
+            }
+        }
+        Ok(())
+    }
+
+
+    pub fn socket(& mut self, endpoint: &str) -> Option<&mut TrackedSocket>{
+        match &mut  self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                Some(socket)
+            }
+            ConnectionSockets::Individual { sockets, ..} => {
+                sockets.get_mut(endpoint)
+            }
+        }
+    }
+
+    pub fn sockets(&mut self) -> Vec<&mut TrackedSocket> {
+        match &mut self.sockets {
+            ConnectionSockets::Shared { socket } => {
+                vec![socket]
+            }
+            ConnectionSockets::Individual { sockets, .. } => {
+                sockets.values_mut().collect()
+            }
+        }
+    }
+    fn increse_stats(& mut self, endpoint: &Option<String>, diag:EndpointDiag){
+        let ep: &str = endpoint.as_deref().unwrap_or("");
+        //*self.stats.lock().unwrap().diagnostics.entry(ep.clone()).or_insert( HashMap::new()).entry(diag).or_insert(0) += 1;
+        //Only clone endpoint if entry is absent
+        let mut stats = self.stats.write().unwrap();
+        let map = if let Some(map) = stats.diagnostics.get_mut(ep) {
+            map
+        } else {
+            stats.diagnostics.entry(ep.to_string()).or_insert_with(HashMap::new)
+        };
+        *map.entry(diag).or_insert(0) += 1;
+    }
+
+    fn remove_stats(& mut self, endpoint: &str){
+        let mut stats = self.stats.write().unwrap();
+        stats.diagnostics.remove(endpoint);
+    }
+
+    pub fn enable_monitoring(& mut self, socket_monitor: SocketMonitor) -> IOResult<()> {
+        if self.socket_monitor.is_none(){ ;
+            match &mut self.sockets {
+                ConnectionSockets::Shared { socket } => {
+                    //socket.enable_monitoring(self.bsread.context())
+                    socket.enable_monitoring(self.bsread.context(), &socket_monitor, None)?;
+
+                }
+                ConnectionSockets::Individual { sockets, ..} => {
+                    for (endpoint, socket) in sockets.iter_mut() {
+                        //socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
+                        socket.enable_monitoring(self.bsread.context(),  &socket_monitor, Some(endpoint.clone()))?;
+                    }
+                }
+            }
+            self.socket_monitor = Some(socket_monitor)
+        }
+        Ok(())
+    }
+
+    fn launch<F>(
+        bsread: Arc<Bsread>,
+        index: u32,
+        endpoints: Arc<RwLock<Vec<String>>>,
+        socket_type: SocketType,
+        connection_mode: ConnectionMode,
+        callback: F,
+        num_messages: Option<u32>,
+        fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
+        stats: Arc<RwLock<Stats>>,
+        forwarder_config: Option<ForwarderConfig>,
+        interrupted: Arc<AtomicBool>,
+        raw: bool,
+        socket_options: Arc<Mutex<SocketOptions>>,
+        socket_monitor: Option<SocketMonitor>,
+        tx_diag: crossbeam_channel::Sender<EndpointEvent>,
+        rx_cmd: crossbeam_channel::Receiver<ReceiverCommand>,
+        check_mask: u64
+    ) -> Result<(), Box<dyn Error + Send + Sync>>
+    where
+        F: Fn(ReceivedMessage) + Send + 'static,
+    {
+        let mut worker = Worker::new(
+            index, bsread, endpoints, socket_type, connection_mode, socket_options, socket_monitor,
+            tx_diag, rx_cmd, forwarder_config, None, fifo, stats, interrupted, raw, check_mask, true
+        );
+        worker
+            .listen(callback, num_messages)
+            .map_err(|e| format!("{}|{}", e.kind(), e).into())
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.stop_forwarder();
+        self.sockets.clear();
+        self.socket_monitor = None;
+
+    }
+}
+
+
+pub struct Receiver {
+    endpoints: Arc<RwLock<Vec<String>>>,
+    socket_type: SocketType,
+    check_mask: u64,
+    bsread: Arc<Bsread>,
+    fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
+    handle: Option<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
+    #[cfg(feature = "async")]
+    async_handle: Option<tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>>,
+    stats: Arc<RwLock<Stats>>,
+    index: u32,
+    forwarder_config: Option<ForwarderConfig>,
+    forwarder: Option<Sender>,
+    interrupted: Arc<AtomicBool>,
+    delivery_mode: DeliveryMode,
+    raw: bool,
+    connection_mode: ConnectionMode,
+    socket_monitor: Option<SocketMonitor>,
+    tx_cmd:crossbeam_channel::Sender<ReceiverCommand>,
+    rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
+    tx_diag:crossbeam_channel::Sender<EndpointEvent>,
+    rx_diag:crossbeam_channel::Receiver<EndpointEvent>,
+    forked:bool,
+    socket_options: Arc<Mutex<SocketOptions>>,
+    worker: Option<Worker>,
+}
+
+
+impl Receiver{
+    pub fn new(bsread: Arc<Bsread>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
+        let index =  index();
+        let endpoints = Arc::new(RwLock::new(endpoints
+            .unwrap_or_default()
+            .into_iter()
+            .map(str::to_string)
+            .collect()));
+        let stats = Arc::new(RwLock::new(Stats{counter_messages:0, counter_error:0, diagnostics:HashMap::new()}));
+        let delivery_mode = DeliveryMode::Inline;
+        let  interrupted = Arc::new(AtomicBool::new(false));
+        let (tx_diag, rx_diag) = crossbeam_channel::unbounded();
+        let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
+        let check_mask = CHECK_ALL;
+        let socket_options =Arc::new( Mutex::new(SocketOptions::new()));
+
+        Ok(Self { endpoints, socket_type, check_mask,
+            bsread, fifo:None, handle:None,
+            stats, index,
+            forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
+            socket_monitor:None, tx_cmd, rx_cmd, tx_diag,rx_diag, forked: false, socket_options,
+            #[cfg(feature = "async")]
+            async_handle:None, worker:None
+        })
+    }
+
+    pub fn to_string(& self,) -> String {
+        format!("Receiver {}" , self.index)
+    }
+
+
+    fn send_command<T>(&self,command: impl FnOnce(crossbeam_channel::Sender<IOResult<T>>) -> ReceiverCommand,) -> IOResult<T> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.tx_cmd.send(command(tx))
+            .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",)})?;
+        rx.recv().map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread terminated",)})?
+    }
+
+    pub fn connect(&mut self) -> IOResult<()> {
+        if self.delivery_mode.thraded(){
+            self.send_command(|response| {ReceiverCommand::Connect { response }})
+        } else {
+            self.create_worker().connect()
+        }
+    }
+
+    pub fn disconnect(&mut self)  {
+        if let Some(mut worker) = self.worker.as_mut() {
+            worker.disconnect();
+        } else if self.delivery_mode.thraded(){
+            self.send_command(|response| {ReceiverCommand::Disconnect { response }});
+        }
+    }
+
+    pub fn add_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
+        if let Some(mut worker) = self.worker.as_mut() {
+            worker.add_endpoint(endpoint)
+        } else if self.delivery_mode.thraded(){
+            let endpoint = endpoint.to_string();
+            self.send_command(|response| {ReceiverCommand::AddEndpoint { endpoint, response }})
+        } else {
+            let mut endpoints = self.endpoints.write().unwrap();
+            let ep = endpoint.to_string();
+            if !endpoints.contains(&ep) {
+                endpoints.push(ep);
+            }
+            Ok(())
+        }
+    }
+
+    pub fn remove_endpoint(&mut self, endpoint: &str) {
+        if let Some(mut worker) = self.worker.as_mut() {
+            worker.remove_endpoint(endpoint)
+        } else if self.delivery_mode.thraded(){
+            let endpoint = endpoint.to_string();
+            self.send_command(|response| {ReceiverCommand::RemoveEndpoint { endpoint, response }});
+        } else {
+            let mut endpoints = self.endpoints.write().unwrap();
+            endpoints.retain(|e| e != endpoint);
+        }
+    }
+
+    pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
+        if self.socket_monitor.is_none() {
+            let socket_monitor = SocketMonitor::new(self.tx_diag.clone());
+            self.enable_shared_monitoring(&socket_monitor);
+        }
+        Ok(self.rx_diag.clone())
+    }
+
+    pub fn enable_shared_monitoring(&mut self, monitor: &SocketMonitor)-> IOResult<()> {
+        if self.socket_monitor.is_none() {
+            self.socket_monitor = Some(monitor.clone());
+            let monitor =monitor.clone();
+            if let Some(mut worker) = self.worker.as_mut() {
+                worker.enable_monitoring(monitor);
+            } else if self.delivery_mode.thraded() {
+                self.send_command(|response| { ReceiverCommand::EnableMonitoring { monitor, response } });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn socket_options(& mut self, endpoint: &str) -> IOResult<SocketOptions>{
+        if let Some(mut worker) = self.worker.as_mut() {
+            Ok(worker.socket(endpoint).ok_or(IOError::new(std::io::ErrorKind::InvalidData, "Invalid endpoint"))?.options())
+        } else if self.delivery_mode.thraded() {
+            let endpoint = endpoint.to_string();
+            self.send_command(|response| { ReceiverCommand::SocketOptions { endpoint, response } })
+        } else {
+            Err(IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",))
+        }
+    }
+
+
+    pub fn endpoints(&self) ->  Vec<String> {
+        self.endpoints.read().unwrap().clone()
+    }
+
+    pub fn has_endpoint(&self, endpoint: &str) -> bool {
+        self.endpoints
+            .read()
+            .unwrap()
+            .iter()
+            .any(|e| e == endpoint)
+    }
+
+    pub fn forwarder(& self) -> &Option<Sender>{
+        &self.forwarder
+    }
+
+    pub fn set_forwarder(&mut self, forwarder_sender: sender::Sender) {
+        self.forwarder = Some(forwarder_sender);
+    }
+
+    pub fn set_forwarder_config(&mut self, forwarder_config: ForwarderConfig) {
+        self.forwarder_config = Some(forwarder_config);
+    }
+
+    pub fn set_raw(&mut self, raw:bool) {
+        self.raw = raw;
+    }
+    pub fn is_raw(&self) -> bool{
+        self.raw
+    }
+
+    fn create_worker(& mut self) -> &mut Worker {
+        self.delivery_mode = DeliveryMode::Inline;
+        if self.worker.is_none() {
+            let worker = Worker::from_receiver(self);
+            self.worker = Some(worker);
+        }
+        self.worker.as_mut().expect("Worker was just initialized")
+    }
+
+    //Synchronous Mode: blocking, callback in same thread
+    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
+    where
+        F: Fn(ReceivedMessage),
+    {
+        self.create_worker().listen(callback, num_messages)
+    }
+
+    pub fn receive(&mut self) -> IOResult<ReceivedMessage> {
+        let worker= self.create_worker();
+        worker.connect();
+        worker.receive()
+    }
+
     //Threaded Mode: non-blocking, callback in another thread
     pub fn fork<F>(&mut self, callback: F, num_messages: Option<u32>)
     where
         F: Fn(ReceivedMessage) + Send + 'static,
     {
+        self.worker = None;
+        let index=self.index;
         let bsread = self.bsread.clone();
         let endpoints = self.endpoints.clone();
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
         let interrupted = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
-        let producer_fifo = self.fifo.clone();
-        let producer_stats = Arc::clone(&self.stats);
+        let fifo = self.fifo.clone();
+        let stats = Arc::clone(&self.stats);
         let raw = self.raw;
         let thread_name = self.to_string();
-        let socket_monitor = self.socket_monitor.take();
+        let socket_options = self.socket_options.clone();
         let tx_diag = self.tx_diag.clone();
         let rx_cmd = self.rx_cmd.clone();
+        let check_mask = self.check_mask;
+        let socket_monitor = self.socket_monitor.clone();
 
         let handle = thread::Builder::new()
             .name(thread_name)
             .spawn(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                listen_task(bsread, endpoints, socket_type, connection_mode, callback, num_messages, producer_fifo, producer_stats,
-                            forwarder_config, interrupted, raw, socket_monitor, tx_diag, rx_cmd)
+                Worker::launch(bsread, index, endpoints, socket_type, connection_mode, callback, num_messages, fifo, stats,
+                               forwarder_config, interrupted, raw, socket_options, socket_monitor, tx_diag, rx_cmd, check_mask)
             })
             .expect("Failed to spawn thread");
 
@@ -636,20 +962,22 @@ impl Receiver{
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        self.reset_counters();
+        self.worker = None;
+        let index =self.index;
         let bsread = self.bsread.clone();
         let endpoints = self.endpoints.clone();
         let socket_type = self.socket_type.clone();
         let connection_mode = self.connection_mode.clone();
         let interrupted = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
-        let producer_fifo =None;
-        let producer_stats =self.stats.clone();
+        let fifo =None;
+        let stats =self.stats.clone();
         let raw = self.raw;
-        let socket_monitor = self.socket_monitor.take();
+        let socket_options = self.socket_options.clone();
+        let socket_monitor = self.socket_monitor.clone();
         let tx_diag = self.tx_diag.clone();
         let rx_cmd = self.rx_cmd.clone();
-        let bsread = self.bsread.clone();
+        let check_mask = self.check_mask;
 
         let handle  =  match handle{
             None => {tokio::runtime::Handle::current()}
@@ -658,48 +986,49 @@ impl Receiver{
         let callback_handle = handle.clone();
 
         let join_handle = if concurrent {
-             handle.spawn_blocking(move || {
+            handle.spawn_blocking(move || {
                 let cb = move |msg: ReceivedMessage| {
                     let callback = callback(msg);
                     callback_handle.spawn(callback);
                 };
 
-                listen_task(bsread, endpoints, socket_type, connection_mode, cb,
-                            num_messages, producer_fifo, producer_stats,
-                            forwarder_config, interrupted, raw,
-                            socket_monitor, tx_diag, rx_cmd)
+                Worker::launch(bsread, index, endpoints, socket_type, connection_mode, cb,
+                               num_messages, fifo, stats,
+                               forwarder_config, interrupted, raw,
+                               socket_options, socket_monitor, tx_diag, rx_cmd, check_mask)
             })
         } else {
-                handle.spawn_blocking(move || {
-                    let senders:Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<ReceivedMessage>>>>
-                        = Arc::new(Mutex::new(HashMap::new()));
-                    let senders_cb = senders.clone();
-                    let runtime = callback_handle.clone();
-                    let callback = Arc::new(callback);
-                    let cb = move |msg: ReceivedMessage| {
-                        let endpoint = msg.endpoint.clone().unwrap_or_default();
-                        let sender = {
-                            let mut senders = senders_cb.lock().unwrap();
-                            senders.entry(endpoint).or_insert_with(|| {
-                                    let (tx, mut rx) =
-                                        tokio::sync::mpsc::channel::<ReceivedMessage>(1000);
-                                    let callback = callback.clone();
-                                    runtime.spawn(async move {
-                                        while let Some(msg) = rx.recv().await {
-                                            callback(msg).await;
-                                        }
-                                    });
-                                    tx
-                                })
-                                .clone()
-                        };
-                        // ZMQ receiver thread is blocking, so use blocking_send
-                        sender.blocking_send(msg).unwrap();
+            //let shared_callback = Arc::new(Mutex::new(callback));
+            handle.spawn_blocking(move || {
+                let senders:Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<ReceivedMessage>>>>
+                    = Arc::new(Mutex::new(HashMap::new()));
+                let senders_cb = senders.clone();
+                let runtime = callback_handle.clone();
+                let callback = Arc::new(callback);
+                let cb = move |msg: ReceivedMessage| {
+                    let endpoint = msg.endpoint.clone().unwrap_or_default();
+                    let sender = {
+                        let mut senders = senders_cb.lock().unwrap();
+                        senders.entry(endpoint).or_insert_with(|| {
+                            let (tx, mut rx) =
+                                tokio::sync::mpsc::channel::<ReceivedMessage>(1000);
+                            let callback = callback.clone();
+                            runtime.spawn(async move {
+                                while let Some(msg) = rx.recv().await {
+                                    callback(msg).await;
+                                }
+                            });
+                            tx
+                        })
+                            .clone()
                     };
-                    listen_task(bsread, endpoints, socket_type, connection_mode, cb,
-                                num_messages, producer_fifo, producer_stats,
-                                forwarder_config, interrupted,
-                                raw, socket_monitor, tx_diag, rx_cmd)
+                    // ZMQ receiver thread is blocking, so use blocking_send
+                    sender.blocking_send(msg).unwrap();
+                };
+                Worker::launch(bsread, index, endpoints, socket_type, connection_mode, cb,
+                               num_messages, fifo, stats,
+                               forwarder_config, interrupted, raw,
+                               socket_options, socket_monitor, tx_diag, rx_cmd, check_mask)
             })
         };
         self.delivery_mode = DeliveryMode::Async;
@@ -735,8 +1064,6 @@ impl Receiver{
             return Err(IOError::new(ErrorKind::AlreadyExists, "Receiver already started"));
         }
         self.fifo = Some(Arc::new(FifoQueue::new(buffer_size)));
-        self.reset_counters();
-
         fn callback(_: ReceivedMessage) -> () {}
         self.fork(callback, None);
         self.delivery_mode = DeliveryMode::Buffered;
@@ -813,6 +1140,7 @@ impl Receiver{
     pub fn connections(&self) -> usize {
         self.endpoints.read().unwrap().len()
     }
+
     pub fn available(&self) -> u32 {
         if let Some(fifo) = &self.fifo {
             fifo.available_count() as u32
@@ -829,24 +1157,9 @@ impl Receiver{
         }
     }
 
-    fn increse_stats(& mut self, endpoint: &Option<String>, diag:EndpointDiag){
-        let ep: &str = endpoint.as_deref().unwrap_or("");
-        //*self.stats.lock().unwrap().diagnostics.entry(ep.clone()).or_insert( HashMap::new()).entry(diag).or_insert(0) += 1;
-        //Only clone endpoint if entry is absent
-        let mut stats = self.stats.write().unwrap();
-        let map = if let Some(map) = stats.diagnostics.get_mut(ep) {
-            map
-        } else {
-            stats.diagnostics.entry(ep.to_string()).or_insert_with(HashMap::new)
-        };
-        *map.entry(diag).or_insert(0) += 1;
+    pub fn reset_counters(& mut self) {
+        self.stats.write().unwrap().reset()
     }
-
-    fn remove_stats(& mut self, endpoint: &str){
-        let mut stats = self.stats.write().unwrap();
-        stats.diagnostics.remove(endpoint);
-    }
-
     pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>>{
         self.stats.read().unwrap().diagnostics.clone()
     }
@@ -873,101 +1186,20 @@ impl Receiver{
     }
 
     pub fn message_count(&self) -> u32 {
-        self.stats.read().unwrap().counter_messages
+        if let Ok(stats) = self.stats.read() {
+            stats.counter_messages
+        } else {
+            0
+        }
     }
 
     pub fn error_count(&self) -> u32 {
-        self.stats.read().unwrap().counter_error
-    }
-
-    pub fn reset_counters(& mut self) {
-        self.stats.write().unwrap().reset()
-    }
-
-    fn set_header_buffer_size(&mut self, size:usize) {
-        if self.header_buffer.is_void() {
-            self.header_buffer = LimitedHashMap::new(size);
+        if let Ok(stats) = self.stats.read() {
+            stats.counter_error
         } else {
-            self.header_buffer.set_max_size(size);
+            0
         }
     }
-
-    pub fn stop_forwarder(&mut self) -> IOResult<()> {
-        //Only handle lifecycle of forwarder created with forward_config
-        if let Some(forwarder_config) = self.forwarder_config.as_mut() {
-            if let Some(sender) = self.forwarder.as_mut() {
-                sender.stop()
-            }
-        }
-        Ok(())
-    }
-
-    pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
-        if self.socket_monitor.is_none(){
-            let  socket_monitor = SocketMonitor::new(self.tx_diag.clone());
-            match &mut self.sockets {
-                ConnectionSockets::Shared { socket } => {
-                    //socket.enable_monitoring(self.bsread.context())
-                    socket.enable_monitoring(self.bsread.context(), &socket_monitor, None)?;
-
-                }
-                ConnectionSockets::Individual { sockets, ..} => {
-                    for (endpoint, socket) in sockets.iter_mut() {
-                        //socket.enable_monitoring(self.bsread.context(),self.tx.clone(),Some(endpoint.clone()))?;
-                        socket.enable_monitoring(self.bsread.context(),  &socket_monitor, Some(endpoint.clone()))?;
-                    }
-                }
-            }
-            self.socket_monitor =Some(socket_monitor);
-        }
-        Ok(self.rx_diag.clone())
-    }
-
-    pub fn enable_shared_monitoring(& mut self, socket_monitor: &SocketMonitor)-> IOResult<()> {
-        match &mut self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                socket.enable_monitoring(self.bsread.context(), &socket_monitor, None)?;
-
-            }
-            ConnectionSockets::Individual { sockets, ..} => {
-                for (endpoint, socket) in sockets.iter_mut() {
-                    socket.enable_monitoring(self.bsread.context(),  &socket_monitor, Some(endpoint.clone()))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn disable_shared_monitoring(& mut self, socket_monitor: &SocketMonitor)-> IOResult<()> {
-        match &mut self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                socket.disable_monitoring( &socket_monitor)?;
-
-            }
-            ConnectionSockets::Individual { sockets, ..} => {
-                for (endpoint, socket) in sockets.iter_mut() {
-                    socket.disable_monitoring(  &socket_monitor)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn enable_shared_monitoring_socket(& mut self, socket_monitor: &SocketMonitor,  endpoint:&str)-> IOResult<()> {
-        let context = self.bsread.context().clone();
-        if let Some(socket) = self.socket(endpoint) {
-            socket.enable_monitoring(&context,  &socket_monitor, Some(endpoint.to_string()))?;
-        }
-        Ok(())
-    }
-
-    pub fn disable_shared_monitoring_socket(& mut self, socket_monitor: &SocketMonitor,  endpoint:&str)-> IOResult<()> {
-        if let Some(socket) = self.socket(endpoint) {
-            socket.disable_monitoring(&socket_monitor)?;
-        }
-        Ok(())
-    }
-
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
         match &self.socket_monitor{
@@ -990,131 +1222,62 @@ impl Receiver{
         self.check_mask = self.check_mask & !check;
     }
 
-    pub fn socket(& mut self, endpoint: &str) -> Option<&mut TrackedSocket>{
-        match &mut  self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                Some(socket)
-            }
-            ConnectionSockets::Individual { sockets, ..} => {
-                sockets.get_mut(endpoint)
-            }
-        }
-    }
-    fn ref_socket(& self) -> Option <&TrackedSocket>{
-        match &self.sockets {
-            ConnectionSockets::Shared { socket } => {Some(socket)}
-            ConnectionSockets::Individual {sockets, ..} => {
-                if (sockets.is_empty()){
-                     return None;
-                }
-                sockets.values().next()
-            }
-        }
-    }
-
-    pub fn sockets(&mut self) -> Vec<&mut TrackedSocket> {
-        match &mut self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                vec![socket]
-            }
-            ConnectionSockets::Individual { sockets, .. } => {
-                sockets.values_mut().collect()
-            }
-        }
-    }
     pub fn socket_type(&self) -> SocketType {
         self.socket_type
     }
 
-    pub fn transport(&self) -> Option<Transport> {
-        match (self.ref_socket()){
-            None => {
-                None
-            }
-            Some(socket) => {
-                socket.transport()
-            }
-        }
-    }
-}
-
-fn listen_task<F>(
-    bsread: Arc<Bsread>,
-    endpoints: Arc<RwLock<Vec<String>>>,
-    socket_type: SocketType,
-    connection_mode: ConnectionMode,
-    callback: F,
-    num_messages: Option<u32>,
-    producer_fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
-    producer_stats: Arc<RwLock<Stats>>,
-    forwarder_config: Option<ForwarderConfig>,
-    interrupted_self: Arc<AtomicBool>,
-    raw: bool,
-    socket_monitor: Option<SocketMonitor>,
-    tx_diag: crossbeam_channel::Sender<EndpointEvent>,
-    rx_cmd: crossbeam_channel::Receiver<ReceiverCommand>,
-) -> Result<(), Box<dyn Error + Send + Sync>>
-where
-    F: Fn(ReceivedMessage) + Send + 'static,
-{
-    let mut receiver = bsread.receiver(None, socket_type, connection_mode)?;
-    receiver.fifo = producer_fifo;
-    receiver.stats = producer_stats;
-    receiver.interrupted = interrupted_self;
-    receiver.forwarder_config = forwarder_config;
-    receiver.raw = raw;
-    receiver.socket_monitor = socket_monitor;
-    receiver.tx_diag = tx_diag;
-    receiver.rx_cmd = rx_cmd;
-    receiver.forked = true;
-    receiver.endpoints = endpoints;
-    receiver
-        .listen(callback, num_messages)
-        .map_err(|e| format!("{}|{}", e.kind(), e).into())
 }
 
 impl SocketConfig for Receiver {
-    fn zmq_sockets(&self) -> Vec<&zmq::Socket> {
-        match &self.sockets {
-            ConnectionSockets::Shared { socket } => {
-                vec![socket.socket()]
-            }
-            ConnectionSockets::Individual { sockets, .. } => {
-                sockets
-                    .values()
-                    .map(|socket| socket.socket())
-                    .collect()
+    fn socket(&self) -> Option<&zmq::Socket> {
+        match self.worker.as_ref(){
+            None => {None}
+            Some(worker) => {
+                match &worker.sockets {
+                    ConnectionSockets::Shared { socket } => {
+                        Some(&socket.socket())
+                    }
+                    ConnectionSockets::Individual { sockets, .. } => {
+                        None
+                    }
+                }
             }
         }
+
     }
 
     fn set_linger(&mut self, value: i32) -> IOResult<()> {
-        self.socket_options.linger = Some(value);
-        self.set_options(&self.socket_options)?;
+        let mut socket_options = self.socket_options.lock().unwrap();
+        socket_options.linger = Some(value);
+        self.set_options(&socket_options)?;
         Ok(())
     }
 
     fn set_rcvhwm(&mut self, value: i32)-> IOResult<()> {
-        self.socket_options.rcvhwm = Some(value);
-        self.set_options(&self.socket_options)?;
+        let mut socket_options = self.socket_options.lock().unwrap();
+        socket_options.rcvhwm = Some(value);
+        self.set_options(&socket_options)?;
         Ok(())
     }
 
     fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
-        self.socket_options.sndhwm = Some(value);
-        self.set_options(&self.socket_options)?;
+        let mut socket_options = self.socket_options.lock().unwrap();
+        socket_options.sndhwm = Some(value);
+        self.set_options(&socket_options)?;
         Ok(())
     }
 
     fn set_keepalive(&mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
-        self.socket_options.keepalive = Some(KeepAlive { idle, intvl, cnt});
-        self.set_options(&self.socket_options)?;
+        let mut socket_options = self.socket_options.lock().unwrap();
+        socket_options.keepalive = Some(KeepAlive { idle, intvl, cnt});
+        self.set_options(&socket_options)?;
         Ok(())
     }
 
     fn set_heartbeat(&mut self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
-        self.socket_options.heartbeat = Some(Heartbeat { ivl, timeout, ttl});
-        self.set_options(&self.socket_options)?;
+        let mut socket_options = self.socket_options.lock().unwrap();
+        socket_options.heartbeat = Some(Heartbeat { ivl, timeout, ttl});
+        self.set_options(&socket_options)?;
         Ok(())
     }
 }
@@ -1148,25 +1311,7 @@ fn error_kind_from_str(s: &str) -> ErrorKind {
 
 impl Drop for Receiver {
     fn drop(&mut self) {
-        self.stop_forwarder();
-        self.sockets.clear();
-        if let Some(socket_monitor) = &self.socket_monitor {
-            socket_monitor.shutdown();
-            self.socket_monitor = None;
-        }
+        self.socket_monitor = None;
     }
 }
 
-
-#[derive(Debug, Clone)]
-pub struct ForwarderConfig {
-    socket_type: SocketType,
-    transport: Transport,
-    sndhwm: Option<i32>
-}
-
-impl ForwarderConfig {
-    pub fn new(socket_type: SocketType, transport: Transport, sndhwm: Option<i32>) -> Self {
-        Self { socket_type, transport, sndhwm }
-    }
-}

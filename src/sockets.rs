@@ -2,9 +2,11 @@ use std::sync::{Arc, Mutex};
 use zmq::{SocketType, SocketEvent, Context};
 use std::collections::HashMap;
 use std::thread;
+use md5::digest::consts::P1;
 use serde::Serialize;
 use uuid::Uuid;
-use crate::IOResult;
+use crate::{IOResult, Receiver};
+use std::sync::atomic::{AtomicU32, Ordering};
 use crate::utils::app_name;
 
 #[derive(Clone, Debug)]
@@ -77,17 +79,21 @@ impl Transport {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct KeepAlive {
     pub idle: i32,
     pub intvl: i32,
     pub cnt: i32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Heartbeat {
     pub ivl: i32,
     pub timeout: i32,
     pub ttl: i32,
 }
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SocketOptions{
     pub linger : Option<i32>,
     pub rcvhwm : Option<i32>,
@@ -101,6 +107,32 @@ impl SocketOptions {
     pub fn new() -> Self {
         Self{linger:None, rcvhwm:None, sndhwm:None, keepalive:None, heartbeat:None}
     }
+
+    pub fn get(socket: &zmq::Socket) -> Self {
+        let linger = socket.get_linger().ok();
+        let rcvhwm = socket.get_rcvhwm().ok();
+        let sndhwm = socket.get_sndhwm().ok();
+
+        let keepalive = if let Ok(ka) = socket.get_tcp_keepalive() && ka>0{
+            Some(KeepAlive{ idle:socket.get_tcp_keepalive_idle().ok().unwrap_or(0),
+                            intvl:socket.get_tcp_keepalive_intvl().ok().unwrap_or(0),
+                            cnt: socket.get_tcp_keepalive_cnt().ok().unwrap_or(0)})
+        } else {
+            None
+        };
+
+        let hb  = socket.get_heartbeat_ivl().unwrap_or(0);
+        let heartbeat = if hb>0{
+            Some (Heartbeat { ivl: hb,
+                              timeout: socket.get_heartbeat_timeout().ok().unwrap_or(0),
+                              ttl:socket.get_heartbeat_ttl().ok().unwrap_or(0),
+            })
+        } else {
+            None
+        };
+        Self{linger, rcvhwm, sndhwm, keepalive, heartbeat}
+    }
+
     pub fn set(self:& SocketOptions, socket: &zmq::Socket) -> IOResult<()>{
         if let Some(linger) = self.linger {
             socket.set_linger(linger)?;
@@ -164,43 +196,43 @@ fn is_socket_ipc(socket: &zmq::Socket) -> bool {
 }
 
 pub trait SocketConfig {
-    fn zmq_sockets(&self) -> Vec<&zmq::Socket>;
+    fn socket(&self) ->  Option<&zmq::Socket>;
     fn set_options(&self, options: &SocketOptions) -> IOResult<()>{
-        for socket in self.zmq_sockets() {
+        if let Some(socket) = self.socket() {
             options.set(socket)?;
         }
         Ok(())
     }
     fn set_linger(&mut self, value: i32) -> IOResult<()> {
-        for socket in self.zmq_sockets() {
+        if let Some(socket) = self.socket() {
             set_socket_linger(socket, value)?;
         }
         Ok(())
     }
 
     fn set_rcvhwm(&mut self, value: i32)-> IOResult<()> {
-        for socket in self.zmq_sockets() {
+        if let Some(socket) = self.socket() {
             set_socket_rcvhwm(socket, value)?;
         }
         Ok(())
     }
 
     fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
-        for socket in self.zmq_sockets() {
+        if let Some(socket) = self.socket() {
             set_socket_sndhwm(socket, value)?;
         }
         Ok(())
     }
 
     fn set_keepalive(& mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
-        for socket in self.zmq_sockets() {
+        if let Some(socket) = self.socket() {
             set_socket_keepalive(socket, idle, intvl, cnt)?;
         }
         Ok(())
     }
 
     fn set_heartbeat(& mut self, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
-        for socket in self.zmq_sockets() {
+        if let Some(socket) = self.socket() {
             set_socket_heartbeat(socket, ivl, timeout, ttl)?;
         }
         Ok(())
@@ -325,6 +357,7 @@ pub fn _monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, Endp
 pub struct SocketMonitor {
     cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
     endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,
+    lifetime: Arc<()>,
 }
 
 struct MonitorEntry {
@@ -361,7 +394,10 @@ impl SocketMonitor {
                                 }
                             }
                         },
-                        MonitorCommand::Shutdown => return,
+                        MonitorCommand::Shutdown => {
+                            log::info!("Finishing socket monitor");
+                            return;
+                        },
                     }
                 }
                 if monitors.is_empty() {
@@ -373,20 +409,23 @@ impl SocketMonitor {
                     .iter()
                     .map(|m| m.socket.as_poll_item(zmq::POLLIN))
                     .collect();
-                zmq::poll(&mut items, 100).unwrap();
-                let mut states = states.lock().unwrap();
-                for (idx, item) in items.iter().enumerate() {
-                    if item.is_readable() {
-                        let monitor = &monitors[idx];
-                        if let Ok((_event, endpoint_event)) =decode_monitor_event(&monitor.socket, monitor.rec_index, monitor.index) {
-                            if let Some(event) = endpoint_event {
-                                if let EndpointEvent::State(ep, state) = &event {
-                                    let endpoint = monitor.endpoint.clone().unwrap_or_else(|| ep.to_string());
-                                    if states.get(&endpoint) != Some(state){
-                                        states.insert(endpoint, state.clone());
-                                        let _ = tx.send(event);
+                if let Err(err) = zmq::poll(&mut items, 100) {
+                    log::error!("Error polling socket monitor channels: {:?}", err);
+                    return;
+                } else {
+                    let mut states = states.lock().unwrap();
+                    for (idx, item) in items.iter().enumerate() {
+                        if item.is_readable() {
+                            let monitor = &monitors[idx];
+                            if let Ok((_event, endpoint_event)) = decode_monitor_event(&monitor.socket, monitor.rec_index, monitor.index) {
+                                if let Some(event) = endpoint_event {
+                                    if let EndpointEvent::State(ep, state) = &event {
+                                        let endpoint = monitor.endpoint.clone().unwrap_or_else(|| ep.to_string());
+                                        if states.get(&endpoint) != Some(state) {
+                                            states.insert(endpoint, state.clone());
+                                            let _ = tx.send(event);
+                                        }
                                     }
-
                                 }
                             }
                         }
@@ -394,22 +433,28 @@ impl SocketMonitor {
                 }
             }
         });
-        Self {endpoint_states, cmd_tx,}
+    Self {endpoint_states, cmd_tx, lifetime: Arc::new(())}
     }
     pub fn shutdown(&self) {
-        self.cmd_tx.send(MonitorCommand::Shutdown).unwrap();
+        if let Err(err) = self.cmd_tx.send(MonitorCommand::Shutdown){
+            log::error!("Error shutting down socket monitoring: {}", err);
+        }
     }
 
     pub fn add(&self,socket: zmq::Socket,endpoint: Option<String>, rec_index: u32,index: u32) {
-        self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,rec_index,index})).unwrap();
+        if let Err(err) =  self.cmd_tx.send(MonitorCommand::Add(MonitorEntry {socket,endpoint,rec_index,index})){
+            log::error!("Error adding socket monitoring: {}", err);
+        }
     }
 
     pub fn remove(&self,index: u32) {
-        self.cmd_tx.send(MonitorCommand::Remove(index)).unwrap();
+        if let Err(err) = self.cmd_tx.send(MonitorCommand::Remove(index)){
+            log::error!("Error removing socket monitoring: {}", err);
+        }
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        let mut map = self.endpoint_states.lock().unwrap();
+        let mut map = self.endpoint_states.lock().ok()?;
         map.get(endpoint).copied()
     }
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
@@ -419,13 +464,19 @@ impl SocketMonitor {
 }
 
 
-static SOCKET_INDEX: Mutex<u32> = Mutex::new(0);
-fn index() -> u32{
-    unsafe {
-        let mut counter = SOCKET_INDEX.lock().unwrap();
-        *counter += 1;
-        *counter
+impl Drop for SocketMonitor {
+    fn drop(&mut self) {
+        let clones = Arc::strong_count(&self.lifetime);
+        if clones == 1 {
+            self.shutdown();
+        }
     }
+}
+
+
+static SOCKET_INDEX: AtomicU32 = AtomicU32::new(0);
+fn index() -> u32{
+    SOCKET_INDEX.fetch_add(1, Ordering::Relaxed) + 1
 }
 
 pub struct TrackedSocket {
@@ -480,6 +531,7 @@ impl TrackedSocket {
     pub fn subscribe(&mut self, topic: &str, endpoint: &str) -> IOResult<()> {
         if let Err(e) = self.socket.set_subscribe(topic.as_bytes()) {
             log::error!("Error subscribing topic {} in endpoint {}: {}", topic, endpoint, e);
+            log::error!("Error subscribing topic {} in endpoint {}: {}", topic, endpoint, e);
             return Err(e.into());
         }
         Ok(())
@@ -495,10 +547,10 @@ impl TrackedSocket {
             }
             if socket_type == SocketType::SUB {
                 if self.topics.is_empty() {
-                    self.subscribe("", endpoint).unwrap();
+                    self.subscribe("", endpoint)?;
                 } else {
                     for topic in &self.topics.clone() {
-                        self.subscribe(topic, endpoint).unwrap();
+                        self.subscribe(topic, endpoint)?;
                     }
                 }
             }
@@ -541,6 +593,8 @@ impl TrackedSocket {
         for endpoint in self.endpoints.clone(){
             self.disconnect_endpoint(endpoint.as_str());
         }
+
+        self.endpoints.clear();
     }
     pub fn receive(&self) -> IOResult<Vec<Vec<u8>>> {
         match self.socket.recv_multipart(0){
@@ -555,14 +609,17 @@ impl TrackedSocket {
 
     pub fn transport(&self) -> Option<Transport> {
         if let Some(endpoint) = self.endpoint(0) {
-            return Some(Transport::from_endpoint(endpoint.as_str()).unwrap())
+            Transport::from_endpoint(endpoint.as_str()).ok()
+        } else {
+            None
         }
-        None
     }
 
     pub fn index(&self) -> u32{
         self.index
     }
+
+    pub fn options(&self) -> SocketOptions {SocketOptions::get(self.socket())}
 
 }
 

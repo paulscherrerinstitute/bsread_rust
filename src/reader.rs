@@ -61,13 +61,13 @@ pub const READER_ABF32: fn(&mut Cursor<&Vec<u8>>, &mut [f32]) -> IOResult<()> = 
 pub const READER_ABF64: fn(&mut Cursor<&Vec<u8>>, &mut [f64]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [f64]| { cursor.read_f64_into::<BigEndian>(arr) };
 pub const READER_ABOOL: fn(&mut Cursor<&Vec<u8>>, &mut [bool]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [bool]| {
     for i in 0..arr.len() {
-        arr[i] = READER_BOOL(cursor).unwrap();
+        arr[i] = READER_BOOL(cursor)?;
     }
     return Ok(());
 };
 pub const READER_ASTRING: fn(&mut Cursor<&Vec<u8>>, &mut [String]) -> IOResult<()> = |cursor: &mut Cursor<&Vec<u8>>, arr: &mut [String]| {
     for i in 0..1 { //arr.len() {
-        arr[i] = READER_STRING(cursor).unwrap();
+        arr[i] = READER_STRING(cursor)?;
     }
     return Ok(());
 };

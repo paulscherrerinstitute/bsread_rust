@@ -108,7 +108,10 @@ pub fn request_stream(channels: Vec<ChannelDescription>, stream_type: Option<Str
     }
 
     let json: serde_json::Value = response.json().map_err(|e: ReqwestError|IOError::new(ErrorKind::InvalidData, e.to_string().as_str()))?;
-    let endpoint = json["stream"].as_str().unwrap().to_string();
+    let endpoint = json["stream"]
+        .as_str()
+        .ok_or_else(|| IOError::new(ErrorKind::InvalidData,"Missing or invalid 'stream' field in response",))?
+        .to_string();
     log::info!("Created stream : {}", endpoint);
     Ok(DispatcherStream{endpoint})
 }

@@ -79,9 +79,6 @@ Pool {
         if self.connected {
             self.connected = false;
             for receiver in &mut self.receivers {
-                if let Some(socket_monitor) = &self.socket_monitor {
-                    receiver.disable_shared_monitoring(socket_monitor);
-                }
                 receiver.disconnect();
             }
         }
@@ -113,19 +110,11 @@ Pool {
         }
 
         self.receivers[index].add_endpoint(endpoint)?;
-        let socket_monitor = &self.socket_monitor;
-        if let Some(socket_monitor) = &socket_monitor {
-            self.receivers[index].enable_shared_monitoring_socket(socket_monitor, endpoint);
-        }
         Ok(())
     }
 
     pub fn remove_endpoint(&mut self, endpoint: &str) {
-        let socket_monitor = self.socket_monitor.clone();
         if let Some(receiver) = self.endpoint_receiver_mut(endpoint) {
-            if let Some(sm) = &socket_monitor {
-                receiver.disable_shared_monitoring_socket(&sm, endpoint);
-            }
             receiver.remove_endpoint(endpoint);
         }
     }
@@ -429,19 +418,6 @@ Pool {
         }
     }
 
-    pub fn socket(& mut self, endpoint: &str) -> Option<&mut TrackedSocket>{
-        self.endpoint_receiver_mut(endpoint)
-            .map_or(None, |receiver| receiver.socket(endpoint))
-    }
-
-    pub fn sockets(&mut self) -> Vec<&mut TrackedSocket> {
-        let mut sockets = Vec::new();
-        for receiver in &mut self.receivers {
-            sockets.extend(receiver.sockets());
-        }
-        sockets
-    }
-
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
         if self.socket_monitor.is_none(){
             let  socket_monitor = SocketMonitor::new(self.tx.clone());
@@ -457,12 +433,8 @@ Pool {
 
 
 impl SocketConfig for Pool {
-    fn zmq_sockets(&self) -> Vec<&zmq::Socket> {
-        let mut sockets = Vec::new();
-        for receiver in &self.receivers {
-            sockets.extend(receiver.zmq_sockets());
-        }
-        sockets
+    fn socket(&self) -> Option<&zmq::Socket> {
+        None
     }
 
     fn set_linger(&mut self, value: i32) -> IOResult<()> {
@@ -505,9 +477,6 @@ impl SocketConfig for Pool {
 impl Drop for Pool {
     fn drop(&mut self) {
         self.stop();
-        if let Some(socket_monitor) = &self.socket_monitor {
-            socket_monitor.shutdown();
-            self.socket_monitor = None;
-        }
+        self.socket_monitor = None;
     }
 }

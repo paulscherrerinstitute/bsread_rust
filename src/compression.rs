@@ -32,9 +32,13 @@ unsafe extern "C" {
 fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, String> {
     let elem_size = elem_size;
     let mut c =  Cursor::new(input);
-    let size_out =   c.read_u64::<BigEndian>().unwrap() as usize;
+    let size_out = c
+        .read_u64::<BigEndian>()
+        .map_err(|e| format!("Failed to read output size: {}", e))? as usize;
     let elements = size_out/elem_size;
-    let block_size =c.read_u32::<BigEndian>().unwrap();
+    let block_size = c
+        .read_u32::<BigEndian>()
+        .map_err(|e| format!("Failed to read block size: {}", e))?;
     let block_size = block_size / (elem_size as u32);
     let blob = &input[12..];
     let mut output = vec![0u8; size_out];
@@ -72,8 +76,13 @@ fn  bshuf_trans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, S
         bshuf_compress_lz4_bound(elements, elem_size, block_size)
     };
     let mut output = vec![0u8; output_bound+12];
-    (&mut output[0..8]).write_u64::<BigEndian>((elements*elem_size)  as u64).unwrap();
-    (&mut output[8..12]).write_u32::<BigEndian>((block_size*elem_size) as u32).unwrap();
+    (&mut output[0..8])
+        .write_u64::<BigEndian>((elements * elem_size) as u64)
+        .map_err(|e| e.to_string())?;
+
+    (&mut output[8..12])
+        .write_u32::<BigEndian>((block_size * elem_size) as u32)
+        .map_err(|e| e.to_string())?;
 
     let blob_out = &mut output[12..];
     let ret  = unsafe {

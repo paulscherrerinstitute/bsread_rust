@@ -207,8 +207,8 @@ impl Sender {
 }
 
 impl SocketConfig for Sender {
-    fn zmq_sockets(&self) -> Vec<&zmq::Socket>{
-        vec![&self.socket]
+    fn socket(&self) -> Option<&zmq::Socket>{
+        Some(&self.socket)
     }
 
 }

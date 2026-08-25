@@ -82,7 +82,7 @@ fn parse_channels(data_header: &HashMap<String, JsonValue>, raw: bool) -> IOResu
         // Ensure each item is a map with string keys and string values
         let channel_data = item.as_object().
             ok_or(IOError::new(ErrorKind::InvalidInput,"Invalid format: is not an object"))?;
-        let channel = parse_channel(channel_data, raw).unwrap();
+        let channel = parse_channel(channel_data, raw)?;
         //channels.insert(name, channel);
         channels.push(channel);
     }
@@ -136,8 +136,8 @@ fn parse_channel_data(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTra
         Ok(ChannelData { value: Value::AU8(data.clone()), timestamp: timestamp })
     } else {
         let mut cursor = Cursor::new(data);
-        let value = channel.read(&mut cursor);
-        Ok(ChannelData { value: value.unwrap(), timestamp: timestamp })
+        let value = channel.read(&mut cursor)?;
+        Ok(ChannelData { value, timestamp })
     }
 }
 
@@ -231,15 +231,16 @@ fn dh_compression(main_header: &HashMap<String, JsonValue>) -> IOResult<Compress
 }
 
 fn timestamp(main_header: &HashMap<String, JsonValue>) -> (u64, u64) {
-    match main_header.get("global_timestamp") {
-        None => { (0, 0) }
-        Some(v) => {
-            let m = v.as_object();
-            let ns = m.unwrap().get("ns").unwrap().as_u64().unwrap();
-            let sec = m.unwrap().get("sec").unwrap().as_u64().unwrap();
-            (sec, ns)
-        }
-    }
+    main_header
+        .get("global_timestamp")
+        .and_then(|v| v.as_object())
+        .and_then(|m| {
+            Some((
+                m.get("sec")?.as_u64()?,
+                m.get("ns")?.as_u64()?,
+            ))
+        })
+        .unwrap_or((0, 0))
 }
 
 impl Message {
@@ -411,7 +412,7 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last
             Compression::None => { &blob }
         };
         let data_header = decode_json(json)?;
-        let channels = parse_channels(&data_header, raw).unwrap();
+        let channels = parse_channels(&data_header, raw)?;
         (data_header, channels, true)
     };
 
