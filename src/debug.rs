@@ -143,8 +143,8 @@ pub fn print_stats_rec(rec: &Receiver) -> () {
     println!("\tConnections: {}", rec.connections());
     println!("\tAvailable: {}", rec.available());
     println!("\tDropped: {}", rec.dropped());
-    println!("\tMessage Count: {}", rec.message_count());
-    println!("\tError Count: {}", rec.error_count());
+    println!("\tMessage Count: {}", rec.messages());
+    println!("\tError Count: {}", rec.errors());
     let diags = rec.diagnostics();
     for endpoint in diags.keys() {
         println!("\tEndpoint Diagnostics: {}", endpoint);
@@ -166,8 +166,8 @@ pub fn print_stats_pool(pool: &Pool) -> () {
     println!("\tConnections: {}", pool.connections());
     println!("\tAvailable: {}", pool.available());
     println!("\tDropped: {}", pool.dropped());
-    println!("\tMessage Count: {}", pool.message_count());
-    println!("\tError Count: {}", pool.error_count());
+    println!("\tMessage Count: {}", pool.messages());
+    println!("\tError Count: {}", pool.errors());
     let diags = pool.diagnostics();
     for endpoint in diags.keys() {
         println!("\tEndpoint Diagnostics: {}", endpoint);

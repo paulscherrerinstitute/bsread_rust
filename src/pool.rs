@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use crate::*;
-use crate::receiver::{ConnectionMode, Receiver};
+use crate::receiver::{AsyncExecution, ConnectionMode, Receiver};
 use crate::bsread::Bsread;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
@@ -17,8 +17,6 @@ pub struct Pool {
     bsread: Arc<Bsread>,
     receivers: Vec<Receiver>,
     socket_monitor: Option<SocketMonitor>,
-    tx:crossbeam_channel::Sender<EndpointEvent>,
-    rx:crossbeam_channel::Receiver<EndpointEvent>,
 }
 
 impl
@@ -37,8 +35,7 @@ Pool {
                 index = 0;
             }
         }
-        let (tx, rx) = crossbeam_channel::unbounded();
-        Ok(Self { socket_type, threads, connected:false, bsread,  receivers, socket_monitor:None, tx,rx})
+        Ok(Self { socket_type, threads, connected:false, bsread,  receivers, socket_monitor:None})
     }
 
     //Endpoints manually set grouped per thread
@@ -58,8 +55,7 @@ Pool {
                 index = 0;
             }
         }
-        let (tx, rx) = crossbeam_channel::unbounded();
-        Ok(Self { socket_type, threads, connected: false, bsread,  receivers, socket_monitor:None, tx,rx})
+        Ok(Self { socket_type, threads, connected: false, bsread,  receivers, socket_monitor:None})
     }
 
     pub fn connect(&mut self) -> IOResult<()> {
@@ -152,7 +148,7 @@ Pool {
                     callback(rx);
                 }
                 if let Some(n) = num_messages {
-                    if self.message_count() >= n {
+                    if self.messages() >= n {
                         return Ok(())
                     }
                 }
@@ -239,7 +235,7 @@ Pool {
     }
 
     #[cfg(feature = "async")]
-    pub fn start_async<F, Fut>(&mut self, callback: F, concurrent:bool, handle: Option<tokio::runtime::Handle>) -> IOResult<()>
+    pub fn start_async<F, Fut>(&mut self, callback: F, execution:AsyncExecution, handle: Option<tokio::runtime::Handle>) -> IOResult<()>
     where
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
@@ -255,7 +251,7 @@ Pool {
             receiver.start_async( move |msg| {
                 let callback = callback_clone.lock().unwrap();
                 callback(msg)
-            }, None, concurrent, Some(receiver_handle));
+            }, None, execution, Some(receiver_handle));
         }
         Ok(())
     }
@@ -324,24 +320,24 @@ Pool {
             .sum()
     }
 
+    pub fn messages(&self) -> u32 {
+        self.receivers
+            .iter()
+            .map(|r| r.messages())
+            .sum()
+    }
+
+    pub fn errors(&self) -> u32 {
+        self.receivers
+            .iter()
+            .map(|r| r.errors())
+            .sum()
+    }
+
     pub fn dropped(&self) -> u32 {
         self.receivers
             .iter()
             .map(|r| r.dropped())
-            .sum()
-    }
-
-    pub fn message_count(&self) -> u32 {
-        self.receivers
-            .iter()
-            .map(|r| r.message_count())
-            .sum()
-    }
-
-    pub fn error_count(&self) -> u32 {
-        self.receivers
-            .iter()
-            .map(|r| r.error_count())
             .sum()
     }
 
@@ -420,13 +416,16 @@ Pool {
 
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
         if self.socket_monitor.is_none(){
-            let  socket_monitor = SocketMonitor::new(self.tx.clone());
+            let  socket_monitor = SocketMonitor::new();
             for receiver in &mut self.receivers {
                 receiver.enable_shared_monitoring(&socket_monitor);
             }
             self.socket_monitor =Some(socket_monitor);
         }
-        Ok(self.rx.clone())
+        match self.socket_monitor.as_ref() {
+            None => {Err(IOError::new(std::io::ErrorKind::BrokenPipe,"Socket monitor is none",))},
+            Some(socket_monitor) => {Ok(socket_monitor.diag_rx())}
+        }
     }
 
 }

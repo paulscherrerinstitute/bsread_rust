@@ -22,6 +22,7 @@ use lazy_static::lazy_static;
 use log::SetLoggerError;
 use num_traits::{AsPrimitive, ToPrimitive};
 use std::sync::Once;
+use crate::receiver::AsyncExecution;
 use crate::sockets::KeepAlive;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
@@ -119,13 +120,13 @@ fn assert_rec(rec : &Receiver, min_msg_count: Option<u32>, connections: Option<u
     assert_eq!(rec.dropped(),0);
     match min_msg_count{
         None => {
-            assert_eq!(rec.message_count(),MESSAGE_COUNT);
+            assert_eq!(rec.messages(), MESSAGE_COUNT);
         }
         Some(count) => {
-            assert!(rec.message_count() >= count);
+            assert!(rec.messages() >= count);
         }
     }
-    assert_eq!(rec.error_count(),0);
+    assert_eq!(rec.errors(), 0);
     let diags = rec.diagnostics();
     for endpoint in rec.diagnostics_endpoints() {
         match CONNECTION_MODE{
@@ -302,7 +303,7 @@ fn run_async() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), true, Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Concurrent, Some(handle));
         rec.join_async().await.unwrap();
     });
     //thread::sleep(Duration::from_millis(2000));
@@ -311,12 +312,12 @@ fn run_async() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), true,  Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Concurrent,  Some(handle));
         tokio::time::sleep(Duration::from_millis(500)).await;
         rec.interrupt();
         rec.join_async().await.unwrap();
     });
-    let messages = rec.message_count();
+    let messages = rec.messages();
     if messages==0 || messages >= MESSAGE_COUNT{
         panic!("Interrupted receiver received {} messages", messages);
     }
@@ -338,7 +339,7 @@ fn run_async_() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), true, Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Concurrent, Some(handle));
         rec.join_async().await.unwrap();
     });
     //thread::sleep(Duration::from_millis(2000));
@@ -347,12 +348,12 @@ fn run_async_() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), true,  Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Concurrent,  Some(handle));
         tokio::time::sleep(Duration::from_millis(500)).await;
         rec.interrupt();
         rec.join_async().await.unwrap();
     });
-    let messages = rec.message_count();
+    let messages = rec.messages();
     if messages==0 || messages >= MESSAGE_COUNT{
         panic!("Interrupted receiver received {} messages", messages);
     }
@@ -374,7 +375,7 @@ fn run_async_endpoint_serial_executor() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), false, Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Ordered {capacity:100, blocking:false}, Some(handle));
         rec.join_async().await.unwrap();
     });
     //thread::sleep(Duration::from_millis(2000));
@@ -590,10 +591,11 @@ fn pool_monitoring() ->  IOResult<()> {
     let mut done2 = false;
 
     //Waiting for connected state using events
-    while(true){
+    loop{
         let ev = event_receiver.recv_timeout(Duration::from_millis(server_lifetime)).unwrap();
+        println!("Received event: {:?}" , ev);
+
         if ev.endpoint() == endpoint1 {
-            println!("Received event: {:?}" , ev);
             if let EndpointEvent::State(ep, state) = &ev {
                 if *state == EndpointState::Connected {
                     done1 = true;
@@ -601,7 +603,6 @@ fn pool_monitoring() ->  IOResult<()> {
             }
         }
         if ev.endpoint() == endpoint2 {
-            println!("Received event: {:?}" , ev);
             if let EndpointEvent::State(ep, state) = &ev {
                 if *state == EndpointState::Connected {
                     done2 = true;
@@ -674,8 +675,8 @@ fn pool_dynamic() ->  IOResult<()> {
     }
     print_stats_pool(&pool);
     assert_rec(&pool.receivers()[0], None, Some(1));
-    assert_eq!(pool.receivers()[0].message_count(), MESSAGE_COUNT);
-    assert_eq!(pool.receivers()[1].message_count(), 0);
+    assert_eq!(pool.receivers()[0].messages(), MESSAGE_COUNT);
+    assert_eq!(pool.receivers()[1].messages(), 0);
     Ok(())
 }
 
@@ -708,7 +709,7 @@ fn pool_async() -> IOResult<()> {
     pool.enable_monitoring();
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        pool.start_async(callback, true, Some(handle)).unwrap();
+        pool.start_async(callback, AsyncExecution::Concurrent, Some(handle)).unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_eq!(pool.is_running(), true);
         pool.stop_async().await.unwrap();
@@ -735,7 +736,7 @@ fn pool_async_dyn() -> IOResult<()> {
     let runtime = new_tokio_runtime();
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        pool.start_async(callback, true, Some(handle)).unwrap();
+        pool.start_async(callback, AsyncExecution::Concurrent, Some(handle)).unwrap();
         pool.add_endpoint("tcp://0.0.0.0:10300", None).unwrap();
         pool.add_endpoint("tcp://0.0.0.0:10301", None).unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -771,7 +772,7 @@ fn pool_async_endpoint_serial_executor() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        pool.start_async(callback, false, Some(handle)).unwrap();
+        pool.start_async(callback, AsyncExecution::Ordered {capacity:100, blocking:false}, Some(handle)).unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_eq!(pool.is_running(), true);
         pool.stop_async().await.unwrap();
@@ -1232,10 +1233,10 @@ fn receiver_monitoring() ->  IOResult<()> {
     rec.connect()?;
 
     //Waiting for connected state using events
-    while(true){
+    loop{
         let ev = event_receiver.recv_timeout(Duration::from_millis(server_lifetime)).unwrap();
+        println!("Received event: {:?}" , ev);
         if ev.endpoint() == endpoint{
-            println!("Received event: {:?}" , ev);
             if let EndpointEvent::State(ep, state) = &ev {
                 if *state == EndpointState::Connected {
                     break;
@@ -1317,7 +1318,7 @@ fn flawed() ->  IOResult<()> {
                 if event.endpoint() == endpoint {
                     match event {
                         EndpointEvent::State(endpoint, state) => {}
-                        EndpointEvent::Diagnostic(endpoint, diag) => {
+                        EndpointEvent::Diagnostic(endpoint, diag, id) => {
                             *diag_counts.entry(diag).or_insert(0) += 1;
                         }
                     }
@@ -1327,7 +1328,7 @@ fn flawed() ->  IOResult<()> {
         }
     }
     print_stats_rec(&rec);
-    let total_rx = rec.message_count() + rec.error_count();
+    let total_rx = rec.messages() + rec.errors();
     if CONNECTION_MODE == ConnectionMode::Individual {
         for diag in EndpointDiag::ALL {
             println!("{:?}: {}", diag, diag_counts.get(&diag).unwrap_or(&0));

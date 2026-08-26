@@ -116,16 +116,20 @@ impl<K> FifoQueue<K> {
     }
 
     /// Adds a message to the FIFO. Drops the oldest if the FIFO is full.
-    pub  fn add(&self, message: K) {
+    /// Return the dropped item.
+    pub  fn add(&self, message: K) -> Option<K> {
         let mut queue = self.queue.lock().unwrap();
         let mut dropped_count = self.dropped_count.lock().unwrap();
 
-        if queue.len() >= self.max_size {
-            queue.pop_front(); // Drop the oldest element
+        let dropped = if queue.len() >= self.max_size {
             *dropped_count += 1; // Increment the dropped counter
-        }
+            queue.pop_front() // Drop the oldest element
+        } else {
+            None
+        };
         queue.push_back(message);
         self.available.notify_one();
+        dropped
     }
 
     /// Retrieves the next message from the FIFO, or `None` if empty.
@@ -150,6 +154,10 @@ impl<K> FifoQueue<K> {
     /// Retrieves the total count of dropped messages.
     pub  fn dropped_count(&self) -> u32 {
         *self.dropped_count.lock().unwrap()
+    }
+
+    pub  fn reset_dropped(&self) {
+        *self.dropped_count.lock().unwrap() = 0;
     }
 
     /// Retrieves the count of available messages.

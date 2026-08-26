@@ -248,8 +248,9 @@ pub enum EndpointState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum EndpointDiag {
-    Messages,
-    Errors,
+    Message,
+    Error,
+    Dropped,
     RepeatedId,
     NonPositiveId,
     DecreasingId,
@@ -257,13 +258,14 @@ pub enum EndpointDiag {
     SocketError,
     ParsingError,
     DecompressionError,
-    HeaderChange
+    HeaderChange,
 }
 
 impl EndpointDiag {
     pub const ALL: &'static [EndpointDiag] = &[
-        EndpointDiag::Messages,
-        EndpointDiag::Errors,
+        EndpointDiag::Message,
+        EndpointDiag::Error,
+        EndpointDiag::Dropped,
         EndpointDiag::RepeatedId,
         EndpointDiag::NonPositiveId,
         EndpointDiag::DecreasingId,
@@ -278,7 +280,7 @@ impl EndpointDiag {
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
     State(String, EndpointState),
-    Diagnostic(String, EndpointDiag)
+    Diagnostic(String, EndpointDiag, Option<u64>),
 }
 
 
@@ -286,7 +288,7 @@ impl EndpointEvent {
     pub fn endpoint(&self) -> String {
         match self {
             EndpointEvent::State(endpoint, _)
-            | EndpointEvent::Diagnostic(endpoint, _) => endpoint.clone()
+            | EndpointEvent::Diagnostic(endpoint,..) => endpoint.clone()
         }
     }
 }
@@ -355,6 +357,8 @@ pub fn _monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, Endp
 
 #[derive(Clone)]
 pub struct SocketMonitor {
+    diag_tx:crossbeam_channel::Sender<EndpointEvent>,
+    diag_rx:crossbeam_channel::Receiver<EndpointEvent>,
     cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
     endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,
     lifetime: Arc<()>,
@@ -375,10 +379,12 @@ enum MonitorCommand {
 }
 
 impl SocketMonitor {
-    pub fn new( tx: crossbeam_channel::Sender<EndpointEvent>) -> Self {
+    pub fn new( ) -> Self {
+        let (diag_tx, diag_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let endpoint_states = Arc::new(Mutex::new(HashMap::new()));
         let states = endpoint_states.clone();
+        let tx  = diag_tx.clone();
         thread::spawn(move || {
             let mut monitors: Vec<MonitorEntry> = Vec::new();
             loop {
@@ -439,7 +445,7 @@ impl SocketMonitor {
                 }
             }
         });
-    Self {endpoint_states, cmd_tx, lifetime: Arc::new(())}
+    Self {endpoint_states, cmd_tx, diag_tx, diag_rx, lifetime: Arc::new(())}
     }
     pub fn shutdown(&self) {
         if let Err(err) = self.cmd_tx.send(MonitorCommand::Shutdown){
@@ -466,6 +472,18 @@ impl SocketMonitor {
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
         let mut map = self.endpoint_states.lock().unwrap();
         map.clone()
+    }
+
+    pub fn send_diag (&self, endpoint: String, diag:EndpointDiag, id:Option<u64>) {
+        if let Err(err) = self.diag_tx.send(EndpointEvent::Diagnostic(endpoint, diag, id)) {
+            log::error!("Error sending event: {}", err);
+        }
+    }
+    pub fn diag_rx(&self) -> crossbeam_channel::Receiver<EndpointEvent> {
+        self.diag_rx.clone()
+    }
+    pub fn diag_tx(&self) -> crossbeam_channel::Sender<EndpointEvent> {
+        self.diag_tx.clone()
     }
 }
 
