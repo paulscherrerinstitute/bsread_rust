@@ -243,11 +243,11 @@ impl Worker {
                 match sockets.get(endpoint) {
                     None => {
                         let mut socket = TrackedSocket::new(context, self.socket_type, self.index)?;
+                        self.socket_options.lock().unwrap().set(socket.socket())?;
                         socket.connect(endpoint)?;
                         if let Some(socket_monitor) = &self.socket_monitor {
                             socket.enable_monitoring(self.bsread.context(), &socket_monitor, Some(endpoint.to_string()))?;
                         }
-                        self.socket_options.lock().unwrap().set(socket.socket())?;
                         sockets.insert(endpoint.to_string(), socket);
                         self.sockets.update_poll_items();
                     }
@@ -275,6 +275,7 @@ impl Worker {
                         }
                         sockets.remove(endpoint);
                         self.sockets.update_poll_items();
+                        self.header_buffer.remove(&endpoint.to_string());
                     }
                 }
             }
@@ -832,7 +833,11 @@ impl Receiver{
     pub fn enable_shared_monitoring(&mut self, monitor: &SocketMonitor)-> IOResult<()> {
         if self.socket_monitor.is_none() {
             self.socket_monitor = Some(monitor.clone());
-            let monitor =monitor.clone();
+            let mut monitor = monitor.clone();
+            let socket_options = self.socket_options.lock().unwrap();
+            if socket_options.handshake_ivl == Some(0) {
+                monitor.disable_handshake_check();
+            }
             if let Some(mut worker) = self.worker.as_mut() {
                 worker.enable_monitoring(monitor);
             } else if self.delivery_mode.thraded() {
@@ -1315,6 +1320,17 @@ impl SocketConfig for Receiver {
         let mut socket_options = self.socket_options.lock().unwrap();
         socket_options.sndhwm = Some(value);
         self.set_options(&socket_options)?;
+        Ok(())
+    }
+    fn set_handshake_ivl(&mut self, value: i32)-> IOResult<()> {
+        let mut socket_options = self.socket_options.lock().unwrap();
+        socket_options.handshake_ivl = Some(value);
+        self.set_options(&socket_options)?;
+        if value == 0 {
+            if let Some(mut socket_monitor) = self.socket_monitor.as_mut() {
+                socket_monitor.disable_handshake_check();
+            }
+        }
         Ok(())
     }
 

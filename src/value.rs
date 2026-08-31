@@ -360,6 +360,13 @@ impl Value {
         self.as_au8()
     }
 
+    pub fn into_bytes(self) -> Option<Vec<u8>> {
+        match self {
+            Value::AU8(v) => Some(v),
+            _ => None,
+        }
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
             // Scalars

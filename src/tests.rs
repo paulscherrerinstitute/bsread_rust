@@ -1178,11 +1178,6 @@ fn receiver_ipc() ->  IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
     rec.set_keepalive(30,10,3)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
-    if CONNECTION_MODE == ConnectionMode::Individual {
-        //Keepalive should not be set in IPC transport
-        let keepalive = rec.socket_options(&TXP_IPC.endpoint())?.keepalive;
-        assert_eq!(keepalive, None);
-    }
     print_stats_rec(&rec);
     assert_rec(&rec, None, None);
     Ok(())

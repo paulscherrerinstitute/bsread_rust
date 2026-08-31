@@ -457,6 +457,13 @@ impl SocketConfig for Pool {
         Ok(())
     }
 
+    fn set_handshake_ivl(&mut self, value: i32)-> IOResult<()> {
+        for receiver in &mut self.receivers {
+            receiver.set_handshake_ivl(value)?;
+        }
+        Ok(())
+    }
+
     fn set_keepalive(&mut self, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
         for receiver in &mut self.receivers {
             receiver.set_keepalive(idle, intvl, cnt)?;

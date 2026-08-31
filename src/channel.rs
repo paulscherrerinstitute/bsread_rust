@@ -157,6 +157,8 @@ pub trait ChannelTrait: Send + ChannelClone {
     fn config(&self) -> &ChannelConfig {
         &EMPTY_CONFIG
     }
+    fn into_config(self: Box<Self>) -> ChannelConfig;
+
     fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(IOError::new(ErrorKind::Unsupported, "Unsupported channel type"))
     }
@@ -183,8 +185,10 @@ impl Clone for Box<dyn ChannelTrait> {
 }
 
 impl ChannelTrait for ChannelRaw {
-    fn config(&self) -> &ChannelConfig{
-        return &self.config
+    fn config(&self) -> &ChannelConfig{ &self.config }
+
+    fn into_config(self: Box<Self>) -> ChannelConfig {
+        self.config
     }
 
     fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
@@ -228,6 +232,10 @@ macro_rules! impl_channel_scalar_trait {
             fn config(&self) -> &ChannelConfig{
                 return &self.config
             }
+
+            fn into_config(self: Box<Self>) -> ChannelConfig {
+                self.config
+            }
         }
     };
 }
@@ -257,6 +265,10 @@ macro_rules! impl_channel_array_trait {
             fn config(&self) -> &ChannelConfig{
                 return &self.config
             }
+
+            fn into_config(self: Box<Self>) -> ChannelConfig {
+               self.config
+           }
          }
     };
 }
@@ -291,6 +303,9 @@ impl_channel_array_trait!(f64, AF64);
 impl ChannelTrait for ChannelArray<String> {
     fn read(&self, _: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
         Err(IOError::new(ErrorKind::Unsupported, "String array not supported"))
+    }
+    fn into_config(self: Box<Self>) -> ChannelConfig {
+        EMPTY_CONFIG.clone()
     }
 }
 

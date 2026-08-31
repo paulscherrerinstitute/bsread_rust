@@ -102,6 +102,10 @@ impl ChannelData {
     pub fn value(&self) -> &Value {
         &self.value
     }
+    pub fn into_value(self) -> Value {
+        self.value
+    }
+
     pub fn timestamp(&self) -> &(u64, u64) {
         &self.timestamp
     }
@@ -301,6 +305,10 @@ impl Message {
 
     pub fn data(&self) -> &IndexMap<String, Option<ChannelData>> {
         &self.data
+    }
+
+    pub fn into_parts(self) -> (Vec<Box<dyn ChannelTrait>>, IndexMap<String, Option<ChannelData>>) {
+        (self.channels, self.data)
     }
 
     pub fn hash(&self) -> String {

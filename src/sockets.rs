@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use zmq::{SocketType, SocketEvent, Context};
 use std::collections::HashMap;
 use std::thread;
@@ -98,20 +98,21 @@ pub struct SocketOptions{
     pub linger : Option<i32>,
     pub rcvhwm : Option<i32>,
     pub sndhwm : Option<i32>,
+    pub handshake_ivl: Option<i32>,
     pub keepalive: Option<KeepAlive>,
     pub heartbeat: Option<Heartbeat>,
-
 }
 
 impl SocketOptions {
     pub fn new() -> Self {
-        Self{linger:None, rcvhwm:None, sndhwm:None, keepalive:None, heartbeat:None}
+        Self{linger:None, rcvhwm:None, sndhwm:None, handshake_ivl:None, keepalive:None, heartbeat:None}
     }
 
     pub fn get(socket: &zmq::Socket) -> Self {
         let linger = socket.get_linger().ok();
         let rcvhwm = socket.get_rcvhwm().ok();
         let sndhwm = socket.get_sndhwm().ok();
+        let handshake_ivl = socket.get_handshake_ivl().ok();
 
         let keepalive = if let Ok(ka) = socket.get_tcp_keepalive() && ka>0{
             Some(KeepAlive{ idle:socket.get_tcp_keepalive_idle().ok().unwrap_or(0),
@@ -130,7 +131,7 @@ impl SocketOptions {
         } else {
             None
         };
-        Self{linger, rcvhwm, sndhwm, keepalive, heartbeat}
+        Self{linger, rcvhwm, sndhwm, handshake_ivl, keepalive, heartbeat}
     }
 
     pub fn set(self:& SocketOptions, socket: &zmq::Socket) -> IOResult<()>{
@@ -143,6 +144,9 @@ impl SocketOptions {
         if let Some(sndhwm) = self.sndhwm {
             socket.set_sndhwm(sndhwm)?;
         }
+        if let Some(handshake_ivl) = self.handshake_ivl {
+            socket.set_handshake_ivl(handshake_ivl)?;
+        }
         if let Some(keepalive) = &self.keepalive {
             set_socket_keepalive(socket, keepalive.idle, keepalive.intvl, keepalive.cnt)?;
         }
@@ -150,11 +154,11 @@ impl SocketOptions {
             set_socket_heartbeat(socket, heartbeat.ivl, heartbeat.timeout, heartbeat.ttl)?;
         }
         Ok(())
-    }
+     }
 
 }
 
-fn set_socket_keepalive(socket: &zmq::Socket, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
+pub fn set_socket_keepalive(socket: &zmq::Socket, idle: i32, intvl: i32, cnt: i32) -> IOResult<()> {
     if !is_socket_ipc(socket) {
         socket.set_tcp_keepalive(1)?;
         socket.set_tcp_keepalive_idle(idle)?;
@@ -164,29 +168,34 @@ fn set_socket_keepalive(socket: &zmq::Socket, idle: i32, intvl: i32, cnt: i32) -
     Ok(())
 }
 
-fn set_socket_heartbeat(socket: &zmq::Socket, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
+pub fn set_socket_heartbeat(socket: &zmq::Socket, ivl: i32, timeout: i32, ttl: i32) -> IOResult<()> {
     socket.set_heartbeat_ivl(ivl)?;
     socket.set_heartbeat_timeout(timeout)?;
     socket.set_heartbeat_ttl(ttl)?;
     Ok(())
 }
 
-fn set_socket_linger(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+pub fn set_socket_linger(socket: &zmq::Socket, value:i32) -> IOResult<()> {
     socket.set_linger(value)?;
     Ok(())
 }
 
-fn set_socket_rcvhwm(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+pub fn set_socket_rcvhwm(socket: &zmq::Socket, value:i32) -> IOResult<()> {
     socket.set_rcvhwm(value)?;
     Ok(())
 }
 
-fn set_socket_sndhwm(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+pub fn set_socket_sndhwm(socket: &zmq::Socket, value:i32) -> IOResult<()> {
     socket.set_sndhwm(value)?;
     Ok(())
 }
 
-fn is_socket_ipc(socket: &zmq::Socket) -> bool {
+pub fn set_handshake_ivl(socket: &zmq::Socket, value:i32) -> IOResult<()> {
+    socket.set_handshake_ivl(value)?;
+    Ok(())
+}
+
+pub fn is_socket_ipc(socket: &zmq::Socket) -> bool {
     if let Ok(last_endpoint) = socket.get_last_endpoint() {
         if let Ok((endpoint)) = last_endpoint {
             return endpoint.starts_with("ipc://");
@@ -220,6 +229,12 @@ pub trait SocketConfig {
     fn set_sndhwm(&mut self, value: i32)-> IOResult<()> {
         if let Some(socket) = self.socket() {
             set_socket_sndhwm(socket, value)?;
+        }
+        Ok(())
+    }
+    fn set_handshake_ivl(&mut self, value: i32) -> IOResult<()> {
+        if let Some(socket) = self.socket() {
+            set_handshake_ivl(socket, value)?;
         }
         Ok(())
     }
@@ -293,7 +308,7 @@ impl EndpointEvent {
     }
 }
 
-fn decode_monitor_event(monitor: &zmq::Socket, rec_index: u32, index: u32) -> Result<(SocketEvent, Option<EndpointEvent>), zmq::Error> {
+fn decode_monitor_event(monitor: &zmq::Socket, rec_index: u32, index: u32, handshake_check: bool) -> Result<(SocketEvent, Option<EndpointEvent>), zmq::Error> {
 
     // First frame: event info (binary struct)
     let msg = monitor.recv_msg(0)?;
@@ -312,7 +327,7 @@ fn decode_monitor_event(monitor: &zmq::Socket, rec_index: u32, index: u32) -> Re
     log::debug!("Socket event:{:?} ({:}) [{:}/{:}]", socket_event, endpoint, rec_index, index);
 
     let endpoint_event = match socket_event {
-        SocketEvent::CONNECTED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
+        SocketEvent::CONNECTED => Some(EndpointEvent::State(endpoint, if handshake_check{EndpointState::Connecting} else {EndpointState::Connected})),
         SocketEvent::CONNECT_DELAYED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
         SocketEvent::CONNECT_RETRIED => Some(EndpointEvent::State(endpoint, EndpointState::Connecting)),
         SocketEvent::HANDSHAKE_SUCCEEDED  => Some(EndpointEvent::State(endpoint, EndpointState::Connected)),
@@ -333,34 +348,12 @@ fn decode_monitor_event(monitor: &zmq::Socket, rec_index: u32, index: u32) -> Re
     Ok((socket_event, endpoint_event))
 }
 
-pub fn _monitor_loop(monitor: zmq::Socket,states: Arc<Mutex<HashMap<String, EndpointState>>>,tx: crossbeam_channel::Sender<EndpointEvent>, endpoint: Option<String>, rec_index: u32, index: u32) {
-    loop {
-        if let Ok((socket_event, endpoint_event)) = decode_monitor_event(&monitor, rec_index, index) {
-            if let Some(event) = endpoint_event {
-                let mut map = states.lock().unwrap();
-                let endpoint = endpoint.clone().unwrap_or_else(|| event.endpoint().to_string());
-                if let EndpointEvent::State(ep, new_state) = &event {
-                    let should_send = match map.get(&endpoint) {
-                        Some(old_state) => *old_state != *new_state,
-                        None => true,
-                    };
-                    if should_send {
-                        log::info!("Endpoint event: {:?} [{:}]", event, rec_index);
-                        map.insert(endpoint.clone(), *new_state);
-                        let _ = tx.send(event);
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct SocketMonitor {
     diag_tx:crossbeam_channel::Sender<EndpointEvent>,
     diag_rx:crossbeam_channel::Receiver<EndpointEvent>,
     cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
-    endpoint_states: Arc<Mutex<HashMap<String, EndpointState>>>,
+    endpoint_states: Arc<RwLock<HashMap<String, EndpointState>>>,
     lifetime: Arc<()>,
 }
 
@@ -375,6 +368,7 @@ struct MonitorEntry {
 enum MonitorCommand {
     Add(MonitorEntry),
     Remove(u32),
+    DisableHandshakeCheck,
     Shutdown
 }
 
@@ -382,11 +376,12 @@ impl SocketMonitor {
     pub fn new( ) -> Self {
         let (diag_tx, diag_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-        let endpoint_states = Arc::new(Mutex::new(HashMap::new()));
+        let endpoint_states = Arc::new(RwLock::new(HashMap::new()));
         let states = endpoint_states.clone();
         let tx  = diag_tx.clone();
         thread::spawn(move || {
             let mut monitors: Vec<MonitorEntry> = Vec::new();
+            let mut handshake_check = true;
             loop {
                 // Add newly registered monitors
                 while let Ok(cmd) = cmd_rx.try_recv() {
@@ -397,7 +392,9 @@ impl SocketMonitor {
                             if let Some(pos) = monitors.iter().position(|m| m.index == index) {
                                 let entry = monitors.remove(pos);
                                 if let Some(endpoint) = entry.endpoint {
-                                     states.lock().unwrap().remove(&endpoint);
+                                     {
+                                        states.write().unwrap().remove(&endpoint);
+                                     }
                                      if let Err(err) = (entry.socket.disconnect(entry.monitor_ep.as_str())){
                                          log::error!("Error disconnecting monitor socket for {}: {:?}", endpoint, err);
                                      } else {
@@ -405,6 +402,9 @@ impl SocketMonitor {
                                      }
                                 }
                             }
+                        },
+                        MonitorCommand::DisableHandshakeCheck => {
+                            handshake_check = false;
                         },
                         MonitorCommand::Shutdown => {
                             log::info!("Finishing socket monitor");
@@ -425,14 +425,14 @@ impl SocketMonitor {
                     log::error!("Error polling socket monitor channels: {:?}", err);
                     return;
                 } else {
-                    let mut states = states.lock().unwrap();
                     for (idx, item) in items.iter().enumerate() {
                         if item.is_readable() {
                             let monitor = &monitors[idx];
-                            if let Ok((_event, endpoint_event)) = decode_monitor_event(&monitor.socket, monitor.rec_index, monitor.index) {
+                            if let Ok((_event, endpoint_event)) = decode_monitor_event(&monitor.socket, monitor.rec_index, monitor.index, handshake_check) {
                                 if let Some(event) = endpoint_event {
                                     if let EndpointEvent::State(ep, state) = &event {
                                         let endpoint = monitor.endpoint.clone().unwrap_or_else(|| ep.to_string());
+                                        let mut states = states.write().unwrap();
                                         if states.get(&endpoint) != Some(state) {
                                             states.insert(endpoint, state.clone());
                                             let _ = tx.send(event);
@@ -466,11 +466,11 @@ impl SocketMonitor {
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        let mut map = self.endpoint_states.lock().ok()?;
+        let mut map = self.endpoint_states.read().ok()?;
         map.get(endpoint).copied()
     }
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
-        let mut map = self.endpoint_states.lock().unwrap();
+        let mut map = self.endpoint_states.read().unwrap();
         map.clone()
     }
 
@@ -484,6 +484,31 @@ impl SocketMonitor {
     }
     pub fn diag_tx(&self) -> crossbeam_channel::Sender<EndpointEvent> {
         self.diag_tx.clone()
+    }
+
+    pub fn disable_handshake_check(&mut self) {
+        if let Err(err) = self.cmd_tx.send(MonitorCommand::DisableHandshakeCheck){
+            log::error!("Error disabling handshake check: {}", err);
+        }
+    }
+    pub fn check_connected(&self, endpoint: &str) {
+        //This undesirable check can be done because older ZMQ never sends HANDSHAKE_SUCCEEDED,
+        //And connection state never gets to Connected
+        //Can be cakled upon message reception to change state to  Connected.
+        {
+            //Cheaper than write
+            let states = self.endpoint_states.read().unwrap();
+            if states.get(endpoint) != Some(&EndpointState::Connecting) {
+                return;
+            }
+        }
+        {
+            let mut states = self.endpoint_states.write().unwrap();
+            if let Some(state) = states.get_mut(endpoint) {
+                log::warn!("Received messge from {}, endpoint didn't send HANDSHAKE_SUCCEEDED - setting Connected", endpoint);
+                *state = EndpointState::Connected;
+            }
+        }
     }
 }
 

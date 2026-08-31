@@ -259,7 +259,8 @@ pub fn start_sender(bsread: Option<&Arc<Bsread>>, transport:Transport, socket_ty
         sender.start()?;
         let mut count = 0;
         let mut start_time = Instant::now();
-        let mut msg_timestamp = Instant::now().sub( Duration::from_secs(1));
+        let interval = Duration::from_millis(interval_ms);
+        let mut next = Instant::now();
         while  !SENDER_INTERRUPTED.load(Ordering::Relaxed){
             if let Some(to) = timeout {
                 if start_time.elapsed() >= Duration::from_millis(to){
@@ -267,28 +268,29 @@ pub fn start_sender(bsread: Option<&Arc<Bsread>>, transport:Transport, socket_ty
                     break;
                 }
             }
-            if msg_timestamp.elapsed() >= Duration::from_millis(interval_ms){
-                match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
-                    Ok(msg) => {
-                        match sender.send_message(&msg, true){
-                            Ok(id) => {
-                                //println!("Sent message Sender: {} ID: {}",   ep, id);
-                            }
-                            Err(e) => {
-                                if e.kind() == std::io::ErrorKind::WouldBlock {
-                                    log::debug!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: Would block", sender.last_pulse_id(), sender.transport().endpoint(), socket_type)
-                                } else {
-                                    log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)
-                                }
+            let now = Instant::now();
+            if now < next {
+                thread::sleep(next - now);
+            }
+            match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
+                Ok(msg) => {
+                    match sender.send_message(&msg, true){
+                        Ok(id) => {
+                            //println!("Sent message Sender: {} ID: {}",   ep, id);
+                        }
+                        Err(e) => {
+                            if e.kind() == std::io::ErrorKind::WouldBlock {
+                                log::debug!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: Would block", sender.last_pulse_id(), sender.transport().endpoint(), socket_type)
+                            } else {
+                                log::warn!("Error sending ID {} in Sender [endpoint={}, socketType={:?}]: {:?}", sender.last_pulse_id(), sender.transport().endpoint(), socket_type, e)
                             }
                         }
                     }
-                    Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.transport().endpoint(), socket_type, e)}
                 }
-                count = count+1;
-                msg_timestamp = Instant::now();
+                Err(e) => {log::warn!("Error creating mesage in Sender [endpoint={}, socketType={:?}]: {:?}", sender.transport().endpoint(), socket_type, e)}
             }
-            thread::sleep(Duration::from_millis(10));
+            count = count+1;
+            next += interval;
         }
         sender.stop();
         Ok(())
