@@ -328,6 +328,7 @@ impl Worker {
                         if let Some(dropped) =  fifo.add(msg) {
                             log::debug!("Dropping message {} from {:?}: endpoint queue is full", dropped.message.id(), &dropped.endpoint);
                             self.send_diag(&dropped.endpoint, EndpointDiag::Dropped, Some(dropped.message.id()));
+                            self.stats.write().unwrap().increase_drops();
                         }
                     }
                 }
@@ -509,13 +510,14 @@ impl Worker {
         let message = self.process(&endpoint, message_parts);
         match message {
             Ok(msg) => {
-                self.stats.write().unwrap().increase_messages();
+                //if let Some(socket_monitor) = &self.socket_monitor {
+                //    socket_monitor.on_message(&endpoint);
+                //}
                 self.increse_stats(&endpoint, EndpointDiag::Message);
                 Ok(ReceivedMessage { endpoint, message: msg })
             }
             Err(e) => {
                 log::trace!("Receiver Error: {}", e);
-                self.stats.write().unwrap().increase_errors();
                 self.increse_stats(&endpoint, EndpointDiag::Error);
                 Err(IOError::new(e.kind(), e))
             }
@@ -638,9 +640,15 @@ impl Worker {
     }
     fn increse_stats(& mut self, endpoint: &Option<String>, diag:EndpointDiag){
         let ep: &str = endpoint.as_deref().unwrap_or("");
-        //*self.stats.lock().unwrap().diagnostics.entry(ep.clone()).or_insert( HashMap::new()).entry(diag).or_insert(0) += 1;
         //Only clone endpoint if entry is absent
         let mut stats = self.stats.write().unwrap();
+
+        if diag == EndpointDiag::Message{
+            stats.increase_messages();
+        } else if diag == EndpointDiag::Error {
+            stats.increase_errors();
+        }
+
         let map = if let Some(map) = stats.diagnostics.get_mut(ep) {
             map
         } else {
@@ -830,14 +838,14 @@ impl Receiver{
         }
     }
 
-    pub fn enable_shared_monitoring(&mut self, monitor: &SocketMonitor)-> IOResult<()> {
+    pub fn enable_shared_monitoring(&mut self, socket_monitor: &SocketMonitor)-> IOResult<()> {
         if self.socket_monitor.is_none() {
-            self.socket_monitor = Some(monitor.clone());
-            let mut monitor = monitor.clone();
+            let mut monitor = socket_monitor.clone();
             let socket_options = self.socket_options.lock().unwrap();
             if socket_options.handshake_ivl == Some(0) {
                 monitor.disable_handshake_check();
             }
+            self.socket_monitor = Some(monitor.clone());
             if let Some(mut worker) = self.worker.as_mut() {
                 worker.enable_monitoring(monitor);
             } else if self.delivery_mode.thraded() {

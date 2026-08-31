@@ -491,22 +491,23 @@ impl SocketMonitor {
             log::error!("Error disabling handshake check: {}", err);
         }
     }
-    pub fn check_connected(&self, endpoint: &str) {
-        //This undesirable check can be done because older ZMQ never sends HANDSHAKE_SUCCEEDED,
-        //And connection state never gets to Connected
-        //Can be cakled upon message reception to change state to  Connected.
-        {
-            //Cheaper than write
-            let states = self.endpoint_states.read().unwrap();
-            if states.get(endpoint) != Some(&EndpointState::Connecting) {
-                return;
+    pub fn check_connected(&self, endpoint: &Option<String>) {
+        if let Some(ep) = &endpoint {
+            //This undesirable check can be done because older ZMQ never sends HANDSHAKE_SUCCEEDED,
+            //snd connection state never gets to Connected
+            //Only paying the price if handshake_check is disabled -> assuming legacy sources.
+            {
+                //Cheaper than write
+                if self.endpoint_states.read().unwrap().get(ep) != Some(&EndpointState::Connecting) {
+                    return;
+                }
             }
-        }
-        {
-            let mut states = self.endpoint_states.write().unwrap();
-            if let Some(state) = states.get_mut(endpoint) {
-                log::warn!("Received messge from {}, endpoint didn't send HANDSHAKE_SUCCEEDED - setting Connected", endpoint);
-                *state = EndpointState::Connected;
+            {
+                let mut states = self.endpoint_states.write().unwrap();
+                if let Some(state) = states.get_mut(ep) {
+                    log::warn!("Received messge from {}, endpoint didn't send HANDSHAKE_SUCCEEDED - setting Connected", ep);
+                    *state = EndpointState::Connected;
+                }
             }
         }
     }
