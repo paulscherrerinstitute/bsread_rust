@@ -754,7 +754,7 @@ pub struct Receiver {
     tx_cmd:crossbeam_channel::Sender<ReceiverCommand>,
     rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
     forked:bool,
-    blocking_configuration: bool,
+    blocking_config: bool,
     socket_options: Arc<Mutex<SocketOptions>>,
     worker: Option<Worker>,
 }
@@ -779,7 +779,7 @@ impl Receiver{
             bsread, fifo:None, handle:None,
             stats, index,
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
-            socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options, blocking_configuration:true,
+            socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options, blocking_config:true,
             #[cfg(feature = "async")]
             async_handle:None, worker:None
         })
@@ -790,12 +790,12 @@ impl Receiver{
     }
 
 
-    pub fn blocking_configuration(&self) -> bool{
-        self.blocking_configuration
+    pub fn blocking_config(&self) -> bool{
+        self.blocking_config
     }
 
-    pub fn set_blocking_configuration(&mut self, value: bool){
-        self.blocking_configuration = value;
+    pub fn set_blocking_config(&mut self, value: bool){
+        self.blocking_config = value;
     }
 
     fn send_command<T>(&self,command: impl FnOnce(Option<crossbeam_channel::Sender<IOResult<T>>>) -> ReceiverCommand,) -> IOResult<T> {
@@ -812,7 +812,7 @@ impl Receiver{
 
     pub fn connect(&mut self) -> IOResult<()> {
         if self.delivery_mode.thraded(){
-            if self.blocking_configuration {
+            if self.blocking_config {
                 self.send_command(|response| { ReceiverCommand::Connect { response } })
             } else {
                 self.send_command_no_wait(|_| { ReceiverCommand::Connect { response:None } })
@@ -826,7 +826,7 @@ impl Receiver{
         if let Some(mut worker) = self.worker.as_mut() {
             worker.disconnect();
         } else if self.delivery_mode.thraded(){
-            if self.blocking_configuration {
+            if self.blocking_config {
                 self.send_command(|response| { ReceiverCommand::Disconnect { response } });
             } else {
                 self.send_command_no_wait(|_| { ReceiverCommand::Disconnect { response:None } });
@@ -839,7 +839,7 @@ impl Receiver{
             worker.add_endpoint(endpoint)
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
-            if self.blocking_configuration {
+            if self.blocking_config {
                 self.send_command(|response| { ReceiverCommand::AddEndpoint { endpoint, response } })
             } else {
                 self.send_command_no_wait(|_| { ReceiverCommand::AddEndpoint { endpoint, response:None } })
@@ -859,7 +859,7 @@ impl Receiver{
             worker.remove_endpoint(endpoint)
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
-            if self.blocking_configuration {
+            if self.blocking_config {
                 self.send_command(|response| { ReceiverCommand::RemoveEndpoint { endpoint, response } });
             } else {
                 self.send_command_no_wait(|_| { ReceiverCommand::RemoveEndpoint { endpoint, response:None } });

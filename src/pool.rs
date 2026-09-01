@@ -112,7 +112,7 @@ Pool {
 
     fn current_index(&mut self) -> usize {
         //When configuration is async, all endpoints may come to same receiver, so base index on rotating position instead of taking the less crowded receiver.
-        if self.blocking_configuration() {
+        if self.blocking_config() {
             self.receivers
                 .iter()
                 .enumerate()
@@ -136,13 +136,13 @@ Pool {
         self.receivers[0].is_raw()
     }
 
-    pub fn blocking_configuration(&self) -> bool{
-        self.receivers[0].blocking_configuration()
+    pub fn blocking_config(&self) -> bool{
+        self.receivers[0].blocking_config()
     }
 
-    pub fn set_blocking_configuration(&mut self, value: bool){
+    pub fn set_blocking_config(&mut self, value: bool){
         for receiver in & mut self.receivers{
-            receiver.set_raw(value);
+            receiver.set_blocking_config(value);
         }
     }
     pub fn receive(&mut self, index:usize) -> IOResult<ReceivedMessage> {
