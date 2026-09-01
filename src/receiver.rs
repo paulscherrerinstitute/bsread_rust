@@ -125,12 +125,12 @@ pub const CHECK_ID_PAST_RANGE:u64 = 4;
 pub const CHECK_ALL:u64 = !0;
 
 enum ReceiverCommand {
-    Connect {response: crossbeam_channel::Sender<IOResult<()>>,},
-    Disconnect {response: crossbeam_channel::Sender<IOResult<()>>,},
-    AddEndpoint {endpoint: String,response: crossbeam_channel::Sender<IOResult<()>>,},
-    RemoveEndpoint {endpoint: String, response: crossbeam_channel::Sender<IOResult<()>>,},
-    EnableMonitoring {monitor: SocketMonitor, response:crossbeam_channel::Sender<IOResult<()>>,},
-    SocketOptions {endpoint: String, response:crossbeam_channel::Sender<IOResult<SocketOptions>>,},
+    Connect {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    Disconnect {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    AddEndpoint {endpoint: String,response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    RemoveEndpoint {endpoint: String, response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    EnableMonitoring {monitor: SocketMonitor, response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    SocketOptions {endpoint: String, response: Option<crossbeam_channel::Sender<IOResult<SocketOptions>>>,},
 }
 
 #[derive(Debug, Clone)]
@@ -342,23 +342,33 @@ impl Worker {
             while let Ok(command) = self.rx_cmd.try_recv() {
                 match command {
                     ReceiverCommand::Connect { response } => {
-                        let result = self.connect();
-                        let _ = response.send(result);
+                        let ret = self.connect();
+                        if let Some(response) = response {
+                            let _ = response.send(ret);
+                        }
                     }
                     ReceiverCommand::Disconnect { response } => {
                         self.disconnect();
-                        let _ = response.send(Ok(()));
+                        if let Some(response) = response {
+                            let _ = response.send(Ok(()));
+                        }
                     }
                     ReceiverCommand::AddEndpoint { endpoint, response } => {
-                        let result = self.add_endpoint(&endpoint);
-                        let _ = response.send(result);
+                        let ret = self.add_endpoint(&endpoint);
+                        if let Some(response) = response {
+                            let _ = response.send(ret);
+                        }
                     }
                     ReceiverCommand::RemoveEndpoint { endpoint, response } => {
-                        self.remove_endpoint(&endpoint);
-                        let _ = response.send(Ok(()));
+                        if let Some(response) = response {
+                            let _ = response.send(Ok(()));
+                        }
                     }
                     ReceiverCommand::EnableMonitoring { monitor, response } => {
-                        let _ = response.send(self.enable_monitoring(monitor));
+                        let ret = self.enable_monitoring(monitor);
+                        if let Some(response) = response {
+                            let _ = response.send(ret);
+                        }
                     }
 
                     ReceiverCommand::SocketOptions { endpoint, response } => {
@@ -367,7 +377,9 @@ impl Worker {
                         } else {
                             Err(IOError::new(ErrorKind::InvalidData, "Invalid endpoint", ))
                         };
-                        let _ = response.send(options);
+                        if let Some(response) = response {
+                            let _ = response.send(options);
+                        }
                     }
                 }
             }
@@ -742,6 +754,7 @@ pub struct Receiver {
     tx_cmd:crossbeam_channel::Sender<ReceiverCommand>,
     rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
     forked:bool,
+    blocking_configuration: bool,
     socket_options: Arc<Mutex<SocketOptions>>,
     worker: Option<Worker>,
 }
@@ -766,7 +779,7 @@ impl Receiver{
             bsread, fifo:None, handle:None,
             stats, index,
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
-            socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options,
+            socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options, blocking_configuration:true,
             #[cfg(feature = "async")]
             async_handle:None, worker:None
         })
@@ -777,15 +790,33 @@ impl Receiver{
     }
 
 
-    fn send_command<T>(&self,command: impl FnOnce(crossbeam_channel::Sender<IOResult<T>>) -> ReceiverCommand,) -> IOResult<T> {
+    pub fn blocking_configuration(&self) -> bool{
+        self.blocking_configuration
+    }
+
+    pub fn set_blocking_configuration(&mut self, value: bool){
+        self.blocking_configuration = value;
+    }
+
+    fn send_command<T>(&self,command: impl FnOnce(Option<crossbeam_channel::Sender<IOResult<T>>>) -> ReceiverCommand,) -> IOResult<T> {
         let (tx, rx) = crossbeam_channel::bounded(1);
-        self.tx_cmd.send(command(tx))
+        self.tx_cmd.send(command(Some(tx)))
             .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",)})?;
         rx.recv().map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread terminated",)})?
     }
+
+    fn send_command_no_wait(&self,command: impl FnOnce(Option<crossbeam_channel::Sender<IOResult<()>>>) -> ReceiverCommand,) -> IOResult<()> {
+        self.tx_cmd.send(command(None))
+            .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",)})
+    }
+
     pub fn connect(&mut self) -> IOResult<()> {
         if self.delivery_mode.thraded(){
-            self.send_command(|response| {ReceiverCommand::Connect { response }})
+            if self.blocking_configuration {
+                self.send_command(|response| { ReceiverCommand::Connect { response } })
+            } else {
+                self.send_command_no_wait(|_| { ReceiverCommand::Connect { response:None } })
+            }
         } else {
             self.create_worker().connect()
         }
@@ -795,7 +826,11 @@ impl Receiver{
         if let Some(mut worker) = self.worker.as_mut() {
             worker.disconnect();
         } else if self.delivery_mode.thraded(){
-            self.send_command(|response| {ReceiverCommand::Disconnect { response }});
+            if self.blocking_configuration {
+                self.send_command(|response| { ReceiverCommand::Disconnect { response } });
+            } else {
+                self.send_command_no_wait(|_| { ReceiverCommand::Disconnect { response:None } });
+            }
         }
     }
 
@@ -804,7 +839,11 @@ impl Receiver{
             worker.add_endpoint(endpoint)
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
-            self.send_command(|response| {ReceiverCommand::AddEndpoint { endpoint, response }})
+            if self.blocking_configuration {
+                self.send_command(|response| { ReceiverCommand::AddEndpoint { endpoint, response } })
+            } else {
+                self.send_command_no_wait(|_| { ReceiverCommand::AddEndpoint { endpoint, response:None } })
+            }
         } else {
             let mut endpoints = self.endpoints.write().unwrap();
             let ep = endpoint.to_string();
@@ -820,7 +859,11 @@ impl Receiver{
             worker.remove_endpoint(endpoint)
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
-            self.send_command(|response| {ReceiverCommand::RemoveEndpoint { endpoint, response }});
+            if self.blocking_configuration {
+                self.send_command(|response| { ReceiverCommand::RemoveEndpoint { endpoint, response } });
+            } else {
+                self.send_command_no_wait(|_| { ReceiverCommand::RemoveEndpoint { endpoint, response:None } });
+            }
         } else {
             let mut endpoints = self.endpoints.write().unwrap();
             endpoints.retain(|e| e != endpoint);
@@ -1056,7 +1099,7 @@ impl Receiver{
                                     tx
                                 })
                                 .clone()
-                            };
+                        };
                         if blocking {
                             if let Err(err) = sender.blocking_send(msg) {
                                 log::error!(

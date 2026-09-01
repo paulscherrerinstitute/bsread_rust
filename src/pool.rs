@@ -17,6 +17,7 @@ pub struct Pool {
     bsread: Arc<Bsread>,
     receivers: Vec<Receiver>,
     socket_monitor: Option<SocketMonitor>,
+    current_index: usize,
 }
 
 impl
@@ -28,14 +29,13 @@ Pool {
         }
         let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type, connection_mode.clone()).unwrap()).collect();
         let mut index = 0;
-        for endpoint in endpoints{
-            receivers[index].add_endpoint(endpoint);
-            index += 1;
-            if index >= threads {
-                index = 0;
+        for endpoint in endpoints {
+            if let Err(e) = receivers[index].add_endpoint(endpoint){
+                log::error!("Adding endpoint {} failed: {:?}", endpoint, e);
             }
+            index = (index + 1) % threads;
         }
-        Ok(Self { socket_type, threads, connected:false, bsread,  receivers, socket_monitor:None})
+        Ok(Self { socket_type, threads, connected:false, bsread,  receivers, socket_monitor:None, current_index:index})
     }
 
     //Endpoints manually set grouped per thread
@@ -45,17 +45,14 @@ Pool {
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid configuration"));
         }
         let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type, connection_mode.clone()).unwrap()).collect();
-        let mut index = 0;
-        for group in endpoints {
-            for endpoint  in group {
-                receivers[index].add_endpoint(endpoint);
-            }
-            index += 1;
-            if index >= threads {
-                index = 0;
+        for (index, group) in endpoints.into_iter().enumerate() {
+            for endpoint in group {
+                if let Err(e) =receivers[index].add_endpoint(endpoint){
+                    log::error!("Adding endpoint {} failed: {:?}", endpoint, e);
+                }
             }
         }
-        Ok(Self { socket_type, threads, connected: false, bsread,  receivers, socket_monitor:None})
+        Ok(Self { socket_type, threads, connected: false, bsread,  receivers, socket_monitor:None, current_index:0})
     }
 
     pub fn connect(&mut self) -> IOResult<()> {
@@ -71,6 +68,7 @@ Pool {
         Ok(())
     }
 
+
     pub fn disconnect(&mut self)  {
         if self.connected {
             self.connected = false;
@@ -82,14 +80,7 @@ Pool {
 
     pub fn add_endpoint(&mut self, endpoint: &str, index: Option<usize>) -> IOResult<()> {
         let index = match(index){
-            None => {
-                self.receivers
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, receiver)| receiver.connections())
-                    .map(|(i, _)| i as i32)
-                    .unwrap_or(-1) as usize
-            }
+            None => {self.current_index()}
             Some(index) => {index}
         };
 
@@ -119,6 +110,22 @@ Pool {
        self.endpoint_receiver(endpoint).is_some()
     }
 
+    fn current_index(&mut self) -> usize {
+        //When configuration is async, all endpoints may come to same receiver, so base index on rotating position instead of taking the less crowded receiver.
+        if self.blocking_configuration() {
+            self.receivers
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, receiver)| receiver.connections())
+                .map(|(i, _)| i as i32)
+                .unwrap_or(-1) as usize
+        } else {
+            let ret = self.current_index;
+            self.current_index = (self.current_index + 1) % self.threads;
+            ret
+        }
+    }
+
 
     pub fn set_raw(&mut self, raw:bool) {
         for receiver in & mut self.receivers{
@@ -129,6 +136,15 @@ Pool {
         self.receivers[0].is_raw()
     }
 
+    pub fn blocking_configuration(&self) -> bool{
+        self.receivers[0].blocking_configuration()
+    }
+
+    pub fn set_blocking_configuration(&mut self, value: bool){
+        for receiver in & mut self.receivers{
+            receiver.set_raw(value);
+        }
+    }
     pub fn receive(&mut self, index:usize) -> IOResult<ReceivedMessage> {
          self.receivers[index].receive()
     }
