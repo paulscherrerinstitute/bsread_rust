@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 use zmq::{SocketType, SocketEvent, Context};
 use std::collections::HashMap;
+use std::io::SeekFrom::End;
 use std::thread;
 use md5::digest::consts::P1;
 use serde::Serialize;

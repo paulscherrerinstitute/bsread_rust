@@ -33,6 +33,18 @@ pub struct ReceivedMessage{
     pub message: Message,
 }
 
+#[derive(Clone)]
+struct Endpoint{
+    pub address: String,
+    pub socket_type: Option<SocketType>,
+}
+impl Endpoint{
+    pub fn new (address: &str, socket_type:Option<SocketType>) -> Self{
+        Endpoint{address:address.to_string(), socket_type}
+    }
+}
+
+
 impl Stats{
     fn increase_messages(& mut self){
         self.counter_messages = self.counter_messages + 1;
@@ -127,7 +139,7 @@ pub const CHECK_ALL:u64 = !0;
 enum ReceiverCommand {
     Connect {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
     Disconnect {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
-    AddEndpoint {endpoint: String,response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    AddEndpoint {endpoint: String, socket_type:Option<SocketType>, response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
     RemoveEndpoint {endpoint: String, response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
     EnableMonitoring {monitor: SocketMonitor, response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
     SocketOptions {endpoint: String, response: Option<crossbeam_channel::Sender<IOResult<SocketOptions>>>,},
@@ -151,7 +163,7 @@ struct Worker {
     bsread: Arc<Bsread>,
     connected: bool,
     sockets: ConnectionSockets,
-    endpoints: Arc<RwLock<Vec<String>>>,
+    endpoints: Arc<RwLock<Vec<Endpoint>>>,
     socket_type: SocketType,
     connection_mode: ConnectionMode,
     socket_options: Arc<Mutex<SocketOptions>>,
@@ -170,7 +182,7 @@ struct Worker {
 }
 
 impl Worker {
-    pub fn new(index: u32, bsread: Arc<Bsread>, endpoints: Arc<RwLock<Vec<String>>>, socket_type: SocketType, connection_mode: ConnectionMode,
+    pub fn new(index: u32, bsread: Arc<Bsread>, endpoints: Arc<RwLock<Vec<Endpoint>>>, socket_type: SocketType, connection_mode: ConnectionMode,
                socket_options: Arc<Mutex<SocketOptions>>, socket_monitor: Option<SocketMonitor>, rx_cmd: crossbeam_channel::Receiver<ReceiverCommand>,
                forwarder_config: Option<ForwarderConfig>, forwarder: Option<Sender>,
                fifo: Option<Arc<FifoQueue<ReceivedMessage>>>, stats: Arc<RwLock<Stats>>,
@@ -221,7 +233,12 @@ impl Worker {
     }
 
     pub fn endpoints(&self) ->  Vec<String> {
-        self.endpoints.read().unwrap().clone()
+        self.endpoints
+            .read()
+            .unwrap()
+            .iter()
+            .map(|endpoint| endpoint.address.clone())
+            .collect()
     }
 
     pub fn has_endpoint(&self, endpoint: &str) -> bool {
@@ -229,11 +246,22 @@ impl Worker {
             .read()
             .unwrap()
             .iter()
-            .any(|e| e == endpoint)
+            .any(|e| e.address == endpoint)
     }
 
-    fn connect_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
+    fn connect_endpoint(&mut self, endpoint: &str, socket_type:Option<SocketType>) -> IOResult<()> {
         let context = self.bsread.context();
+        let socket_type = match socket_type {
+            None => {self.socket_type}
+            Some(socket_type) => {
+                if self.connection_mode == ConnectionMode::Shared{
+                    if socket_type != self.socket_type {
+                        return Err(IOError::new(ErrorKind::InvalidData, "Cannot have different socket type of connection mode is shared", ));
+                    }
+                }
+                socket_type
+            }
+        };
 
         match &mut self.sockets {
             ConnectionSockets::Shared { socket } => {
@@ -242,7 +270,7 @@ impl Worker {
             ConnectionSockets::Individual { sockets, .. } => {
                 match sockets.get(endpoint) {
                     None => {
-                        let mut socket = TrackedSocket::new(context, self.socket_type, self.index)?;
+                        let mut socket = TrackedSocket::new(context, socket_type, self.index)?;
                         self.socket_options.lock().unwrap().set(socket.socket())?;
                         socket.connect(endpoint)?;
                         if let Some(socket_monitor) = &self.socket_monitor {
@@ -251,7 +279,9 @@ impl Worker {
                         sockets.insert(endpoint.to_string(), socket);
                         self.sockets.update_poll_items();
                     }
-                    Some(_) => {}
+                    Some(_) => {
+                        log::warn!("Socket already connected: {}", endpoint);
+                    }
                 }
             }
         }
@@ -353,13 +383,14 @@ impl Worker {
                             let _ = response.send(Ok(()));
                         }
                     }
-                    ReceiverCommand::AddEndpoint { endpoint, response } => {
-                        let ret = self.add_endpoint(&endpoint);
+                    ReceiverCommand::AddEndpoint { endpoint, socket_type, response } => {
+                        let ret = self.add_endpoint(&endpoint, socket_type);
                         if let Some(response) = response {
                             let _ = response.send(ret);
                         }
                     }
                     ReceiverCommand::RemoveEndpoint { endpoint, response } => {
+                        let ret = self.remove_endpoint(&endpoint);
                         if let Some(response) = response {
                             let _ = response.send(Ok(()));
                         }
@@ -536,12 +567,14 @@ impl Worker {
         }
     }
 
+    //Connect added endpoints with the common socket type
     fn connect(&mut self) -> IOResult<()> {
         log::info!("Connecting");
+        let  endpoints = self.endpoints.read().unwrap().clone();
         if !self.connected {
-            for endpoint in self.endpoints() {
+            for endpoint in endpoints {
                 //TODO: Should break if one of the endpoints fail?
-                self.connect_endpoint(&endpoint)?;
+                self.connect_endpoint(&endpoint.address, endpoint.socket_type)?;
             }
             self.connected = true;
         }
@@ -562,17 +595,17 @@ impl Worker {
         }
     }
 
-    fn add_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
-        log::info!("Adding endpoint: {}", endpoint);
+    fn add_endpoint(&mut self, endpoint: &str, socket_type:Option<SocketType>) -> IOResult<()> {
+        log::info!("Adding endpoint: {} [{:?}]:", endpoint, socket_type.unwrap_or(self.socket_type));
         {
             let mut endpoints = self.endpoints.write().unwrap();
-            let ep = endpoint.to_string();
-            if !endpoints.contains(&ep) {
-                endpoints.push(ep);
+            let exists = endpoints.iter().any(|e| e.address == endpoint);
+            if !exists {
+                endpoints.push(Endpoint::new(endpoint, socket_type));
             }
         }
         if (self.connected) {
-            self.connect_endpoint(endpoint)?;
+            self.connect_endpoint(endpoint, socket_type)?;
         }
         Ok(())
     }
@@ -584,7 +617,7 @@ impl Worker {
         }
         {
             let mut endpoints = self.endpoints.write().unwrap();
-            endpoints.retain(|e| e != endpoint);
+            endpoints.retain(|e| e.address != endpoint);
         }
         self.remove_stats(endpoint);
     }
@@ -696,7 +729,7 @@ impl Worker {
     fn launch<F>(
         bsread: Arc<Bsread>,
         index: u32,
-        endpoints: Arc<RwLock<Vec<String>>>,
+        endpoints: Arc<RwLock<Vec<Endpoint>>>,
         socket_type: SocketType,
         connection_mode: ConnectionMode,
         callback: F,
@@ -734,7 +767,7 @@ impl Drop for Worker {
 
 
 pub struct Receiver {
-    endpoints: Arc<RwLock<Vec<String>>>,
+    endpoints: Arc<RwLock<Vec<Endpoint>>>,
     socket_type: SocketType,
     check_mask: u64,
     bsread: Arc<Bsread>,
@@ -763,11 +796,12 @@ pub struct Receiver {
 impl Receiver{
     pub fn new(bsread: Arc<Bsread>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
         let index =  index();
-        let endpoints = Arc::new(RwLock::new(endpoints
+        let endpoints: Vec<Endpoint> = endpoints
             .unwrap_or_default()
             .into_iter()
-            .map(str::to_string)
-            .collect()));
+            .map(|(address)| Endpoint::new(address, None))
+            .collect();
+        let endpoints = Arc::new(RwLock::new(endpoints));
         let stats = Arc::new(RwLock::new(Stats{counter_messages:0, counter_error:0, counter_drop:0, diagnostics:HashMap::new()}));
         let delivery_mode = DeliveryMode::Inline;
         let  interrupted = Arc::new(AtomicBool::new(false));
@@ -834,21 +868,23 @@ impl Receiver{
         }
     }
 
-    pub fn add_endpoint(&mut self, endpoint: &str) -> IOResult<()> {
+    pub fn add_endpoint(&mut self, endpoint: &str, socket_type:Option<SocketType>) -> IOResult<()> {
         if let Some(mut worker) = self.worker.as_mut() {
-            worker.add_endpoint(endpoint)
+            worker.add_endpoint(endpoint, socket_type)
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
             if self.blocking_config {
-                self.send_command(|response| { ReceiverCommand::AddEndpoint { endpoint, response } })
+                self.send_command(|response| { ReceiverCommand::AddEndpoint { endpoint, socket_type, response } })
             } else {
-                self.send_command_no_wait(|_| { ReceiverCommand::AddEndpoint { endpoint, response:None } })
+                self.send_command_no_wait(|_| { ReceiverCommand::AddEndpoint { endpoint, socket_type, response:None } })
             }
         } else {
             let mut endpoints = self.endpoints.write().unwrap();
-            let ep = endpoint.to_string();
-            if !endpoints.contains(&ep) {
-                endpoints.push(ep);
+            let exists = endpoints.iter().any(|e| e.address == endpoint);
+            if !exists {
+                endpoints.push(Endpoint::new(endpoint, socket_type));
+            } else {
+                log::error!("Endpoint {} already exists", endpoint);
             }
             Ok(())
         }
@@ -866,7 +902,7 @@ impl Receiver{
             }
         } else {
             let mut endpoints = self.endpoints.write().unwrap();
-            endpoints.retain(|e| e != endpoint);
+            endpoints.retain(|e| e.address != endpoint);
         }
     }
 
@@ -911,7 +947,12 @@ impl Receiver{
 
 
     pub fn endpoints(&self) ->  Vec<String> {
-        self.endpoints.read().unwrap().clone()
+        self.endpoints
+            .read()
+            .unwrap()
+            .iter()
+            .map(|endpoint| endpoint.address.clone())
+            .collect()
     }
 
     pub fn has_endpoint(&self, endpoint: &str) -> bool {
@@ -919,7 +960,20 @@ impl Receiver{
             .read()
             .unwrap()
             .iter()
-            .any(|e| e == endpoint)
+            .any(|e| e.address == endpoint)
+    }
+
+    fn endpoint(&self, endpoint: &str) -> Option<Endpoint> {
+        self.endpoints.read().unwrap().iter().find(|e| e.address == endpoint).cloned()
+    }
+
+    pub fn endpoint_socket_type(&self, endpoint: &str) -> SocketType {
+        if let Some(endpoint) = self.endpoint(endpoint) {
+            if let Some(socket_type) = endpoint.socket_type {
+                return socket_type
+            }
+        }
+        self.socket_type
     }
 
     pub fn forwarder(& self) -> &Option<Sender>{
@@ -1102,10 +1156,7 @@ impl Receiver{
                         };
                         if blocking {
                             if let Err(err) = sender.blocking_send(msg) {
-                                log::error!(
-                                "Error sending blocking message: {:?}",
-                                err
-                            );
+                                log::error!("Error sending blocking message: {:?}",err);
                             }
                         } else {
                             match sender.try_send(msg) {

@@ -30,7 +30,7 @@ Pool {
         let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type, connection_mode.clone()).unwrap()).collect();
         let mut index = 0;
         for endpoint in endpoints {
-            if let Err(e) = receivers[index].add_endpoint(endpoint){
+            if let Err(e) = receivers[index].add_endpoint(endpoint, None) {
                 log::error!("Adding endpoint {} failed: {:?}", endpoint, e);
             }
             index = (index + 1) % threads;
@@ -46,9 +46,9 @@ Pool {
         }
         let mut receivers: Vec<Receiver> = (0..threads).map(|_id| Receiver::new(bsread.clone(), None, socket_type, connection_mode.clone()).unwrap()).collect();
         for (index, group) in endpoints.into_iter().enumerate() {
-            for endpoint in group {
-                if let Err(e) =receivers[index].add_endpoint(endpoint){
-                    log::error!("Adding endpoint {} failed: {:?}", endpoint, e);
+            for  endpoint in group {
+                if let Err(e) =receivers[index].add_endpoint(endpoint, None){
+                    log::error!("Adding endpoint {} failed: {:?}",endpoint, e);
                 }
             }
         }
@@ -78,7 +78,7 @@ Pool {
         }
     }
 
-    pub fn add_endpoint(&mut self, endpoint: &str, index: Option<usize>) -> IOResult<()> {
+    pub fn add_endpoint(&mut self,  endpoint: &str, socket_type:Option<SocketType>, index: Option<usize>) -> IOResult<()> {
         let index = match(index){
             None => {self.current_index()}
             Some(index) => {index}
@@ -87,7 +87,9 @@ Pool {
         if self.has_endpoint(endpoint) {
             if let Some(receiver) = self.endpoint_receiver(endpoint){
                 if self.receivers[index].index() == receiver.index() {
-                    return Ok(())
+                    if self.endpoint_socket_type(endpoint) == socket_type.unwrap_or(self.socket_type) {
+                        return Ok(())
+                    }
                 }
             }
             return Err(IOError::new(ErrorKind::InvalidInput, "endpoint already exists"));
@@ -96,7 +98,7 @@ Pool {
             return Err(IOError::new(ErrorKind::Other, format!("Invalid receiver index: {}", index)));
         }
 
-        self.receivers[index].add_endpoint(endpoint)?;
+        self.receivers[index].add_endpoint(endpoint,socket_type)?;
         Ok(())
     }
 
@@ -108,6 +110,15 @@ Pool {
 
     pub fn has_endpoint(&self, endpoint: &str) -> bool {
        self.endpoint_receiver(endpoint).is_some()
+    }
+
+
+    pub fn endpoint_socket_type(&self, endpoint: &str) -> SocketType {
+        if let Some(receiver) = self.endpoint_receiver(endpoint) {
+            receiver.endpoint_socket_type(endpoint)
+        } else {
+            self.socket_type
+        }
     }
 
     fn current_index(&mut self) -> usize {

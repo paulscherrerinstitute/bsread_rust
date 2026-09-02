@@ -22,7 +22,7 @@ use lazy_static::lazy_static;
 use log::SetLoggerError;
 use num_traits::{AsPrimitive, ToPrimitive};
 use std::sync::Once;
-use crate::receiver::AsyncExecution;
+use crate::receiver::{AsyncExecution};
 use crate::sockets::KeepAlive;
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
@@ -178,7 +178,6 @@ fn receiver_pull() ->  IOResult<()> {
     assert_rec(&rec, None, None);
     Ok(())
 }
-
 #[test]
 fn multi() -> IOResult<()> {
     for i in 0..5 {
@@ -187,7 +186,29 @@ fn multi() -> IOResult<()> {
         rec.listen(on_message, Some(MESSAGE_COUNT))?;
         print_stats_rec(&rec);
         assert_rec(&rec, None, Some(2));
-        let mut endpoints = vec![TXP_PUB.endpoint().clone(), TXP_CMP.endpoint().clone()];
+        let mut endpoints = vec![TXP_PUB.endpoint(), TXP_CMP.endpoint()];
+        if CONNECTION_MODE == ConnectionMode::Individual {
+            let mut diagnostics_endpoints = rec.diagnostics_endpoints();
+            endpoints.sort();
+            diagnostics_endpoints.sort();
+            assert_eq!(endpoints, diagnostics_endpoints);
+            println!("Diagnostics : {:?}", diagnostics_endpoints);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn misc() -> IOResult<()> {
+    for i in 0..5 {
+        let env = TestEnvironment::new()?;
+        let mut rec = env.bsread.receiver(None, SocketType::PULL, CONNECTION_MODE)?;
+        rec.add_endpoint(&TXP_PUSH.endpoint(), None)?;
+        rec.add_endpoint(&TXP_PUB.endpoint(), Some(SocketType::SUB))?;
+        rec.listen(on_message, Some(MESSAGE_COUNT))?;
+        print_stats_rec(&rec);
+        assert_rec(&rec, None, Some(2));
+        let mut endpoints = vec![TXP_PUSH.endpoint(), TXP_PUB.endpoint()];
         if CONNECTION_MODE == ConnectionMode::Individual {
             let mut diagnostics_endpoints = rec.diagnostics_endpoints();
             endpoints.sort();
@@ -200,13 +221,14 @@ fn multi() -> IOResult<()> {
 }
 
 
+
 #[test]
 fn late() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.enable_monitoring();
-    rec.add_endpoint(&TXP_PUB.endpoint());
-    rec.add_endpoint(&TXP_CMP.endpoint());
+    rec.add_endpoint(&TXP_PUB.endpoint(), None);
+    rec.add_endpoint(&TXP_CMP.endpoint(), None);
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     if CONNECTION_MODE == ConnectionMode::Individual {
         let ess = rec.endpoint_states();
@@ -224,8 +246,8 @@ fn dynamic() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
     rec.enable_monitoring();
-    rec.add_endpoint(&TXP_PUB.endpoint())?;
-    rec.add_endpoint(&TXP_CMP.endpoint())?;
+    rec.add_endpoint(&TXP_PUB.endpoint(), None)?;
+    rec.add_endpoint(&TXP_CMP.endpoint(), None)?;
     rec.listen(on_message, Some(MESSAGE_COUNT))?;
     if CONNECTION_MODE == ConnectionMode::Individual {
         let ess = rec.endpoint_states();
@@ -254,7 +276,7 @@ fn dynamic() ->  IOResult<()> {
 fn manual() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
-    rec.add_endpoint(&TXP_PUB.endpoint());
+    rec.add_endpoint(&TXP_PUB.endpoint(), None)?;
     let message = rec.receive()?;
     print_message(&message);
     print_stats_rec(&rec);
@@ -437,7 +459,7 @@ fn bitshuffle() -> IOResult<()> {
 fn conversion() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None, SocketType::SUB, CONNECTION_MODE)?;
-    rec.add_endpoint(&TXP_PUB.endpoint());
+    rec.add_endpoint(&TXP_PUB.endpoint(), None)?;
     let rx = rec.receive()?;
     print_message(&rx);
     let message = rx.message;
@@ -454,7 +476,7 @@ fn conversion() -> IOResult<()> {
 fn booleans() -> IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(None,  SocketType::SUB, CONNECTION_MODE)?;
-    rec.add_endpoint(&TXP_PUB.endpoint());
+    rec.add_endpoint(&TXP_PUB.endpoint(), None)?;
     let rx = rec.receive()?;
     print_message(&rx);
     let message = rx.message;
@@ -647,8 +669,8 @@ fn pool_dynamic() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut pool = env.bsread.pool(vec![], SocketType::SUB, CONNECTION_MODE, 2)?;
     //pool.enable_monitoring()?;
-    pool.add_endpoint(&TXP_PUB.endpoint(),Some(0))?;
-    pool.add_endpoint(&TXP_CMP.endpoint(),Some(1))?;
+    pool.add_endpoint(&TXP_PUB.endpoint(),None, Some(0))?;
+    pool.add_endpoint(&TXP_CMP.endpoint(),None, Some(1))?;
     pool.enable_monitoring()?;
     pool.listen(on_message, Some(MESSAGE_COUNT))?;
     if CONNECTION_MODE == ConnectionMode::Individual {
@@ -686,9 +708,9 @@ fn pool_auto_assign() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut pool = env.bsread.pool(vec![], SocketType::SUB, CONNECTION_MODE, 2)?;
     //pool.enable_monitoring()?;
-    pool.add_endpoint(&TXP_PUB.endpoint(), None)?;
-    pool.add_endpoint(&TXP_CMP.endpoint(), None)?;
-    pool.add_endpoint(&TXP_IPC.endpoint(), None)?;
+    pool.add_endpoint(&TXP_PUB.endpoint(), None, None)?;
+    pool.add_endpoint(&TXP_CMP.endpoint(), None, None)?;
+    pool.add_endpoint(&TXP_IPC.endpoint(), None, None)?;
     assert_eq!(pool.endpoint_receiver(&TXP_PUB.endpoint()).unwrap().index(), pool.receivers()[0].index());
     assert_eq!(pool.endpoint_receiver(&TXP_CMP.endpoint()).unwrap().index(), pool.receivers()[1].index());
     assert_eq!(pool.endpoint_receiver(&TXP_IPC.endpoint()).unwrap().index(), pool.receivers()[0].index());
@@ -737,8 +759,8 @@ fn pool_async_dyn() -> IOResult<()> {
     runtime.block_on(async {
         let handle = runtime.handle().clone();
         pool.start_async(callback, AsyncExecution::Concurrent, Some(handle)).unwrap();
-        pool.add_endpoint("tcp://0.0.0.0:10300", None).unwrap();
-        pool.add_endpoint("tcp://0.0.0.0:10301", None).unwrap();
+        pool.add_endpoint("tcp://0.0.0.0:10300",None, None).unwrap();
+        pool.add_endpoint("tcp://0.0.0.0:10301",None, None).unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_eq!(pool.is_running(), true);
         let ess = pool.endpoint_states();
@@ -1201,7 +1223,7 @@ fn pool_options() ->  IOResult<()> {
     let mut pool = env.bsread.pool(vec![&TXP_PUB.endpoint()], SocketType::SUB, CONNECTION_MODE, 2)?;
     pool.set_linger(0)?;
     pool.set_rcvhwm(10000)?;
-    pool.add_endpoint(&TXP_CMP.endpoint(), Some(1))?;
+    pool.add_endpoint(&TXP_CMP.endpoint(),None, Some(1))?;
 
     //TODO
     //assert_eq!(pool.zmq_sockets()[0].get_linger().unwrap(), 0);
@@ -1224,14 +1246,14 @@ fn receiver_monitoring() ->  IOResult<()> {
     start_sender(Some(&env.bsread), TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     let event_receiver = rec.enable_monitoring()?;
-    rec.add_endpoint(endpoint.as_str());
+    rec.add_endpoint(&endpoint, None)?;
     rec.connect()?;
 
     //Waiting for connected state using events
     loop{
         let ev = event_receiver.recv_timeout(Duration::from_millis(server_lifetime)).unwrap();
         println!("Received event: {:?}" , ev);
-        if ev.endpoint() == endpoint{
+        if ev.endpoint() == endpoint {
             if let EndpointEvent::State(ep, state) = &ev {
                 if *state == EndpointState::Connected {
                     break;
