@@ -254,8 +254,7 @@ pub trait SocketConfig {
         Ok(())
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum EndpointState {
     Connecting,
     Connected,
@@ -467,12 +466,21 @@ impl SocketMonitor {
     }
 
     pub fn endpoint_state(&self, endpoint: &str) -> Option<EndpointState> {
-        let mut map = self.endpoint_states.read().ok()?;
+        let map = self.endpoint_states.read().ok()?;
         map.get(endpoint).copied()
     }
     pub fn endpoint_states(&self) -> HashMap<String, EndpointState> {
-        let mut map = self.endpoint_states.read().unwrap();
+        let map = self.endpoint_states.read().unwrap();
         map.clone()
+    }
+
+    pub fn endpoint_stats(&self) -> HashMap<EndpointState, u32> {
+        let mut ret = HashMap::new();
+        let map = self.endpoint_states.read().unwrap();
+        for state in  map.values() {
+            *ret.entry(*state).or_insert(0) += 1;
+        }
+        ret
     }
 
     pub fn send_diag (&self, endpoint: String, diag:EndpointDiag, id:Option<u64>) {

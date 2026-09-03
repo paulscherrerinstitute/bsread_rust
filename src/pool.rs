@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use crate::*;
-use crate::receiver::{AsyncExecution, ConnectionMode, Receiver};
+use crate::receiver::{AsyncExecution, ConnectionMode, Receiver, MessageStats};
 use crate::bsread::Bsread;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
@@ -368,6 +368,17 @@ Pool {
             .sum()
     }
 
+    pub fn message_stats(&self) -> MessageStats {
+        let mut total = MessageStats::default();
+        for receiver in &self.receivers {
+            let stats = receiver.message_stats();
+            total.messages += stats.messages;
+            total.errors += stats.errors;
+            total.dropped += stats.dropped;
+        }
+        total
+    }
+
     pub fn reset_counters(& mut self){
         for receiver in &mut self.receivers {
             receiver.reset_counters();
@@ -426,6 +437,13 @@ Pool {
         match &self.socket_monitor{
             None => {HashMap::new()}
             Some(socket_monitor) => {socket_monitor.endpoint_states()}
+        }
+    }
+
+    pub fn endpoint_stats(&self) -> HashMap<EndpointState, u32> {
+        match &self.socket_monitor{
+            None => {HashMap::new()}
+            Some(socket_monitor) => {socket_monitor.endpoint_stats()}
         }
     }
 

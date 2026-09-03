@@ -22,10 +22,17 @@ fn index() -> u32{
 }
 
 struct Stats {
-    counter_messages: u32,
-    counter_error: u32,
-    counter_drop: u32,
-    diagnostics: HashMap<String, HashMap<EndpointDiag, u32>>
+    counter_messages: AtomicU32,
+    counter_error: AtomicU32,
+    counter_drop: AtomicU32,
+}
+
+impl Stats{
+    fn reset(&self){
+        self.counter_messages.store(0, Ordering::Relaxed);
+        self.counter_error.store(0, Ordering::Relaxed);
+        self.counter_drop .store(0, Ordering::Relaxed);
+    }
 }
 
 pub struct ReceivedMessage{
@@ -44,25 +51,11 @@ impl Endpoint{
     }
 }
 
-
-impl Stats{
-    fn increase_messages(& mut self){
-        self.counter_messages = self.counter_messages + 1;
-    }
-
-    fn increase_errors(& mut self){
-        self.counter_error = self.counter_error + 1;
-    }
-    fn increase_drops(& mut self){
-        self.counter_drop = self.counter_drop + 1;
-    }
-
-    fn reset(& mut self){
-        self.counter_messages = 0;
-        self.counter_error = 0;
-        self.counter_drop = 0;
-        self.diagnostics = HashMap::new();
-    }
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MessageStats {
+    pub messages: u32,
+    pub errors: u32,
+    pub dropped: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,7 +168,8 @@ struct Worker {
     forwarder_config: Option<ForwarderConfig>,
     forwarder: Option<Sender>,
     fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
-    stats: Arc<RwLock<Stats>>,
+    stats: Arc<Stats>,
+    diags: Arc<RwLock<HashMap<String, HashMap<EndpointDiag, u32>>>>,
     raw: bool,
     check_mask: u64,
     threaded: bool,
@@ -185,7 +179,7 @@ impl Worker {
     pub fn new(index: u32, bsread: Arc<Bsread>, endpoints: Arc<RwLock<Vec<Endpoint>>>, socket_type: SocketType, connection_mode: ConnectionMode,
                socket_options: Arc<Mutex<SocketOptions>>, socket_monitor: Option<SocketMonitor>, rx_cmd: crossbeam_channel::Receiver<ReceiverCommand>,
                forwarder_config: Option<ForwarderConfig>, forwarder: Option<Sender>,
-               fifo: Option<Arc<FifoQueue<ReceivedMessage>>>, stats: Arc<RwLock<Stats>>,
+               fifo: Option<Arc<FifoQueue<ReceivedMessage>>>, stats: Arc<Stats>, diags:Arc<RwLock<HashMap<String, HashMap<EndpointDiag, u32>>>>,
                interrupted: Arc<AtomicBool>, raw: bool, check_mask: u64, threaded: bool,
     ) -> Self {
         let sockets: ConnectionSockets = match connection_mode {
@@ -201,7 +195,7 @@ impl Worker {
             index, bsread, connected: false, sockets, endpoints, socket_type, connection_mode,
             header_buffer: LimitedHashMap::void(), id_buffer: HashMap::new(),
             socket_options, socket_monitor:None, rx_cmd, interrupted, forwarder_config, forwarder,
-            fifo, stats, raw, check_mask, threaded
+            fifo, stats, diags, raw, check_mask, threaded
         };
         if let Some (socket_monitor) = socket_monitor{
             worker.enable_monitoring(socket_monitor);
@@ -220,6 +214,7 @@ impl Worker {
         let forwarder = receiver.forwarder.take();
         let fifo = None;
         let stats = receiver.stats.clone();
+        let diags = receiver.diags.clone();
         let raw = receiver.raw;
         let socket_options = receiver.socket_options.clone();
         let socket_monitor = receiver.socket_monitor.clone();
@@ -228,7 +223,7 @@ impl Worker {
         let threaded = false;
         Worker::new(
             index, bsread, endpoints, socket_type, connection_mode, socket_options, socket_monitor,
-            rx_cmd, forwarder_config, forwarder, fifo, stats, interrupted, raw, check_mask, threaded
+            rx_cmd, forwarder_config, forwarder, fifo, stats, diags, interrupted, raw, check_mask, threaded
         )
     }
 
@@ -358,7 +353,7 @@ impl Worker {
                         if let Some(dropped) =  fifo.add(msg) {
                             log::debug!("Dropping message {} from {:?}: endpoint queue is full", dropped.message.id(), &dropped.endpoint);
                             self.send_diag(&dropped.endpoint, EndpointDiag::Dropped, Some(dropped.message.id()));
-                            self.stats.write().unwrap().increase_drops();
+                            self.stats.counter_drop.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }
@@ -631,20 +626,15 @@ impl Worker {
     }
 
     fn reset_counters(& mut self) {
-        if let Ok(mut stats) = self.stats.write() {
-            stats.reset();
-        }
+        self.stats.reset();
+        self.diags.write().unwrap().clear();
         if let Some(fifo) = &self.fifo {
             fifo.reset_dropped()
         }
     }
 
     fn message_count(&self) -> u32 {
-        if let Ok(stats) = self.stats.read() {
-            stats.counter_messages
-        } else {
-            0
-        }
+        self.stats.counter_messages.load(Ordering::Relaxed)
     }
 
     fn is_interrupted(&self) ->bool {
@@ -686,25 +676,24 @@ impl Worker {
     fn increse_stats(& mut self, endpoint: &Option<String>, diag:EndpointDiag){
         let ep: &str = endpoint.as_deref().unwrap_or("");
         //Only clone endpoint if entry is absent
-        let mut stats = self.stats.write().unwrap();
-
         if diag == EndpointDiag::Message{
-            stats.increase_messages();
+            self.stats.counter_messages.fetch_add(1, Ordering::Relaxed);
         } else if diag == EndpointDiag::Error {
-            stats.increase_errors();
+            self.stats.counter_error.fetch_add(1, Ordering::Relaxed);
         }
 
-        let map = if let Some(map) = stats.diagnostics.get_mut(ep) {
+        let mut diags = self.diags.write().unwrap();
+        let map = if let Some(map) = diags.get_mut(ep) {
             map
         } else {
-            stats.diagnostics.entry(ep.to_string()).or_insert_with(HashMap::new)
+            diags.entry(ep.to_string()).or_insert_with(HashMap::new)
         };
         *map.entry(diag).or_insert(0) += 1;
     }
 
     fn remove_stats(& mut self, endpoint: &str){
-        let mut stats = self.stats.write().unwrap();
-        stats.diagnostics.remove(endpoint);
+        let mut diags = self.diags.write().unwrap();
+        diags.remove(endpoint);
     }
 
     pub fn enable_monitoring(& mut self, socket_monitor: SocketMonitor) -> IOResult<()> {
@@ -735,7 +724,8 @@ impl Worker {
         callback: F,
         num_messages: Option<u32>,
         fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
-        stats: Arc<RwLock<Stats>>,
+        stats: Arc<Stats>,
+        diags: Arc<RwLock<HashMap<String, HashMap<EndpointDiag, u32>>>>,
         forwarder_config: Option<ForwarderConfig>,
         interrupted: Arc<AtomicBool>,
         raw: bool,
@@ -749,7 +739,7 @@ impl Worker {
     {
         let mut worker = Worker::new(
             index, bsread, endpoints, socket_type, connection_mode, socket_options, socket_monitor,
-            rx_cmd, forwarder_config, None, fifo, stats, interrupted, raw, check_mask, true
+            rx_cmd, forwarder_config, None, fifo, stats, diags, interrupted, raw, check_mask, true
         );
         worker
             .listen(callback, num_messages)
@@ -775,7 +765,8 @@ pub struct Receiver {
     handle: Option<JoinHandle<IOResult<()>>>,
     #[cfg(feature = "async")]
     async_handle: Option<tokio::task::JoinHandle<IOResult<()>>>,
-    stats: Arc<RwLock<Stats>>,
+    stats: Arc<Stats>,
+    diags: Arc<RwLock<HashMap<String, HashMap<EndpointDiag, u32>>>>,
     index: u32,
     forwarder_config: Option<ForwarderConfig>,
     forwarder: Option<Sender>,
@@ -802,7 +793,9 @@ impl Receiver{
             .map(|(address)| Endpoint::new(address, None))
             .collect();
         let endpoints = Arc::new(RwLock::new(endpoints));
-        let stats = Arc::new(RwLock::new(Stats{counter_messages:0, counter_error:0, counter_drop:0, diagnostics:HashMap::new()}));
+        let stats = Arc::new(Stats{counter_messages:AtomicU32::new(0),
+            counter_error:AtomicU32::new(0), counter_drop:AtomicU32::new(0)});
+        let diags = Arc::new(RwLock::new(HashMap::new()));
         let delivery_mode = DeliveryMode::Inline;
         let  interrupted = Arc::new(AtomicBool::new(false));
         let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
@@ -811,7 +804,7 @@ impl Receiver{
 
         Ok(Self { endpoints, socket_type, check_mask,
             bsread, fifo:None, handle:None,
-            stats, index,
+            stats, diags, index,
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
             socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options, blocking_config:true,
             #[cfg(feature = "async")]
@@ -1034,6 +1027,7 @@ impl Receiver{
         let forwarder_config = self.forwarder_config.clone();
         let fifo = self.fifo.clone();
         let stats = Arc::clone(&self.stats);
+        let diags = Arc::clone(&self.diags);
         let raw = self.raw;
         let thread_name = self.to_string();
         let socket_options = Arc::clone(&self.socket_options);
@@ -1045,7 +1039,7 @@ impl Receiver{
             .name(thread_name)
             .spawn(move || {
                 Worker::launch(bsread, index, endpoints, socket_type, connection_mode, callback, num_messages, fifo, stats,
-                               forwarder_config, interrupted, raw, socket_options, socket_monitor, rx_cmd, check_mask)
+                               diags, forwarder_config, interrupted, raw, socket_options, socket_monitor, rx_cmd, check_mask)
             })
             .expect("Failed to spawn thread");
 
@@ -1096,6 +1090,7 @@ impl Receiver{
         let interrupted = Arc::clone(&self.interrupted);
         let forwarder_config = self.forwarder_config.clone();
         let stats = Arc::clone(&self.stats);
+        let diags = Arc::clone(&self.diags);
         let raw = self.raw;
         let socket_options = Arc::clone(&self.socket_options);
         let socket_monitor = self.socket_monitor.clone();
@@ -1113,7 +1108,7 @@ impl Receiver{
                         callback_handle.spawn(callback(msg));
                     };
                     Worker::launch(bsread, index, endpoints, socket_type, connection_mode, cb,
-                                   num_messages, None, stats,
+                                   num_messages, None, stats, diags,
                                    forwarder_config, interrupted, raw,
                                    socket_options, socket_monitor, rx_cmd, check_mask)
                 })
@@ -1122,7 +1117,7 @@ impl Receiver{
             AsyncExecution::Ordered { capacity, blocking } => {
                 let callback = Arc::new(callback);
                 let callback_handle = handle.clone();
-                let st = Arc::clone(&self.stats);
+                let diagnostics = Arc::clone(&self.diags);
 
                 handle.spawn_blocking(move || {
                     let senders =
@@ -1164,13 +1159,13 @@ impl Receiver{
                                 Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
                                     log::debug!("Dropping message {} from {:?}: endpoint queue is full",msg.message.id(),msg.endpoint);
                                     if let Some(endpoint) = msg.endpoint {
-                                        let mut st = st.write().unwrap();
-                                        *st.diagnostics.entry(endpoint.to_string()).or_default().entry(EndpointDiag::Dropped).or_default() += 1;
+                                        let mut diags = diagnostics.write().unwrap();
+                                        *diags.entry(endpoint.to_string()).or_default().entry(EndpointDiag::Dropped).or_default() += 1;
                                         if let Some(sm) = &monitor {
                                             sm.send_diag(endpoint, EndpointDiag::Dropped, Some(msg.message.id()),);
                                         }
                                     }
-                                    drop_stats.write().unwrap().increase_drops();
+                                    drop_stats.counter_drop.fetch_add(1, Ordering::Relaxed);
                                 }
                                 Err(err) => {
                                     log::error!("Error trying sending message: {:?}", err);
@@ -1179,7 +1174,7 @@ impl Receiver{
                         }
                     };
                     Worker::launch(bsread, index, endpoints, socket_type, connection_mode, cb,
-                                   num_messages, None, stats,
+                                   num_messages, None, stats, diags,
                                    forwarder_config, interrupted, raw,
                                    socket_options, socket_monitor, rx_cmd, check_mask)
                 })
@@ -1304,21 +1299,23 @@ impl Receiver{
     }
 
     pub fn reset_counters(& mut self) {
-        self.stats.write().unwrap().reset()
+        self.stats.reset();
+        self.diags.write().unwrap().clear();
     }
+
     pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>>{
-        self.stats.read().unwrap().diagnostics.clone()
+        self.diags.read().unwrap().clone()
     }
     pub fn diagnostics_endpoints(&self) -> Vec<String> {
-        self.stats.read().unwrap().diagnostics.keys().cloned().collect()
+        self.diags.read().unwrap().keys().cloned().collect()
     }
 
     pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<HashMap<EndpointDiag, u32>> {
-        self.stats.read().unwrap().diagnostics.get(endpoint).cloned()
+        self.diags.read().unwrap().get(endpoint).cloned()
     }
 
     pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u32> {
-        self.stats.read().unwrap().diagnostics.get(endpoint)?.get(&diag).copied()
+        self.diags.read().unwrap().get(endpoint)?.get(&diag).copied()
     }
 
     pub fn header_changes(& self,  endpoint:  &str) -> u32 {
@@ -1332,30 +1329,30 @@ impl Receiver{
     }
 
     pub fn messages(&self) -> u32 {
-        if let Ok(stats) = self.stats.read() {
-            stats.counter_messages
-        } else {
-            0
-        }
+        self.stats.counter_messages.load(Ordering::Relaxed)
     }
 
     pub fn errors(&self) -> u32 {
-        if let Ok(stats) = self.stats.read() {
-            stats.counter_error
-        } else {
-            0
-        }
+        self.stats.counter_error.load(Ordering::Relaxed)
     }
 
     pub fn dropped(&self) -> u32 {
         if let Some(fifo) = &self.fifo {
             fifo.dropped_count()
         } else {
-            if let Ok(stats) = self.stats.read() {
-                stats.counter_drop
+            self.stats.counter_drop.load(Ordering::Relaxed)
+        }
+    }
+
+    pub fn message_stats(&self) -> MessageStats {
+        MessageStats {
+            messages: self.stats.counter_messages.load(Ordering::Relaxed),
+            errors: self.stats.counter_error.load(Ordering::Relaxed),
+            dropped: if let Some(fifo) = &self.fifo {
+                fifo.dropped_count()
             } else {
-                0
-            }
+                self.stats.counter_drop.load(Ordering::Relaxed)
+            },
         }
     }
 
@@ -1369,6 +1366,13 @@ impl Receiver{
         match &self.socket_monitor{
             None => {HashMap::new()}
             Some(socket_monitor) => {socket_monitor.endpoint_states()}
+        }
+    }
+
+    pub fn endpoint_stats(&self) -> HashMap<EndpointState, u32> {
+        match &self.socket_monitor{
+            None => {HashMap::new()}
+            Some(socket_monitor) => {socket_monitor.endpoint_stats()}
         }
     }
 
