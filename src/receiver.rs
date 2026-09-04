@@ -683,10 +683,9 @@ impl Worker {
         }
 
         let mut diags = self.diags.write().unwrap();
-        let map = if let Some(map) = diags.get_mut(ep) {
-            map
-        } else {
-            diags.entry(ep.to_string()).or_insert_with(HashMap::new)
+        let map = match diags.get_mut(ep) {
+            Some(map) => map,
+            None => diags.entry(ep.to_owned()).or_default(),
         };
         *map.entry(diag).or_insert(0) += 1;
     }
