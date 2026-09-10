@@ -1336,7 +1336,7 @@ impl Receiver{
         }
     }
 
-    pub fn diags(&self) -> &HashMap<String, Arc<EndpointDiagnostics>> {
+    pub fn diagnostics(&self) -> &HashMap<String, Arc<EndpointDiagnostics>> {
         if let Some(worker) = &self.worker {
             &worker.diags
         } else {
@@ -1344,29 +1344,21 @@ impl Receiver{
         }
     }
 
-    pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>> {
-        let mut ret = HashMap::new();
-        for (endpoint, diags) in self.diags().iter(){
-            ret.insert(endpoint.clone(), diags.as_map());
-        }
-        ret
-    }
-
     pub fn diagnostics_endpoints(&self) -> Vec<String> {
-        self.diags().keys().cloned().collect()
+        self.diagnostics().keys().cloned().collect()
     }
 
-    pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<HashMap<EndpointDiag, u32>> {
-        Some(self.diags().get(endpoint)?.as_map())
+    pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<Arc<EndpointDiagnostics>> {
+        self.diagnostics().get(endpoint).cloned()
     }
 
     pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u32> {
-        let stats = self.diags().get(endpoint)?;
+        let stats = self.diagnostics().get(endpoint)?;
         Some(stats.get(diag))
     }
 
     pub fn header_changes(& self,  endpoint:  &str) -> u32 {
-        if let Some(stats) =self.diags().get(endpoint){
+        if let Some(stats) =self.diagnostics().get(endpoint){
             let mut header_changes = stats.get(EndpointDiag::HeaderChange);
             if header_changes == 0 {
                 header_changes = if stats.get(EndpointDiag::Message) == 0 {0} else {1};

@@ -385,20 +385,12 @@ Pool {
         }
     }
 
-    pub fn diags(&self) -> HashMap<String, Arc<EndpointDiagnostics>> {
+    pub fn diagnostics(&self) -> HashMap<String, Arc<EndpointDiagnostics>> {
         let mut diags  = HashMap::new();
         for receiver in &self.receivers {
-            diags.extend(receiver.diags().clone());
+            diags.extend(receiver.diagnostics().clone());
         }
         diags
-    }
-
-    pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>> {
-        let mut diagnostics = HashMap::new();
-        for receiver in &self.receivers {
-            diagnostics.extend(receiver.diagnostics());
-        }
-        diagnostics
     }
 
     pub fn diagnostics_endpoints(&self) -> Vec<String> {
@@ -421,7 +413,7 @@ Pool {
     }
 
 
-    pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<HashMap<EndpointDiag, u32>> {
+    pub fn endpoint_diagnostics(& self,  endpoint: &str) -> Option<Arc<EndpointDiagnostics>> {
         self.endpoint_receiver(endpoint)
             .map_or(None, |receiver| receiver.endpoint_diagnostics(endpoint))
     }
