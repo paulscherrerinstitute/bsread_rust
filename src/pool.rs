@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 use zmq::SocketType;
-use crate::sockets::{EndpointDiag, EndpointEvent, EndpointState, Heartbeat, KeepAlive, SocketConfig, SocketMonitor, TrackedSocket};
+use crate::sockets::{EndpointDiag, EndpointDiagnostics, EndpointEvent, EndpointState, Heartbeat, KeepAlive, SocketConfig, SocketMonitor, TrackedSocket};
 
 pub struct Pool {
     socket_type: SocketType,
@@ -384,6 +384,15 @@ Pool {
             receiver.reset_counters();
         }
     }
+
+    pub fn diags(&self) -> HashMap<String, Arc<EndpointDiagnostics>> {
+        let mut diags  = HashMap::new();
+        for receiver in &self.receivers {
+            diags.extend(receiver.diags().clone());
+        }
+        diags
+    }
+
     pub fn diagnostics(&self) -> HashMap<String, HashMap<EndpointDiag, u32>> {
         let mut diagnostics = HashMap::new();
         for receiver in &self.receivers {
@@ -472,6 +481,15 @@ Pool {
             Some(socket_monitor) => {Ok(socket_monitor.diag_rx())}
         }
     }
+
+    //If blocking config(default) this should not be called by th8e application.
+    //If not then application must call update_diagnostics after sockets are added/removed to link receivers to socket diagnostics.
+    pub fn update_diagnostics(&mut self){
+        for receiver in &mut self.receivers {
+            receiver.update_diagnostics();
+        }
+    }
+
 
 }
 

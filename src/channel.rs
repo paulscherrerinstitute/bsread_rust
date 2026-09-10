@@ -54,7 +54,7 @@ impl ChannelConfig {
         let mut metadata: HashMap<String, JsonValue> = HashMap::new();
         metadata.insert("name".to_string(), JsonValue::String(self.name()));
         //let shape = self.get_shape().unwrap_or(Vec::new());
-        let shape = self.shape().unwrap_or(vec![1]);
+        let shape = self.shape().unwrap_or(vec![]);
         let shape_json = JsonValue::Array(shape.into_iter().map(|num| JsonValue::Number(num.into())).collect());
         metadata.insert("shape".to_string(),shape_json);
         metadata.insert("type".to_string(), JsonValue::String(self.kind()));
@@ -63,6 +63,10 @@ impl ChannelConfig {
             metadata.insert("compression".to_string(), JsonValue::String(self.compression().to_string()));
         }
         metadata
+    }
+
+    pub fn into_parts(self: Self) -> (String, String, Option<Vec<u32>>) {
+        (self.name, self.kind, self.shape)
     }
 }
 

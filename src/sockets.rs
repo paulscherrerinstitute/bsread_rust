@@ -290,6 +290,7 @@ impl EndpointDiag {
         EndpointDiag::DecompressionError,
         EndpointDiag::HeaderChange
     ];
+    pub const COUNT: usize = Self::ALL.len();
 }
 
 #[derive(Clone, Debug)]
@@ -538,20 +539,48 @@ fn index() -> u32{
     SOCKET_INDEX.fetch_add(1, Ordering::Relaxed) + 1
 }
 
+pub struct EndpointDiagnostics {
+    counters: [AtomicU32; EndpointDiag::COUNT],
+}
+
+impl EndpointDiagnostics {
+    pub fn new() -> Self {
+        Self { counters: [const { AtomicU32::new(0) }; EndpointDiag::COUNT] }
+    }
+
+    pub fn get(&self, diag: EndpointDiag) -> u32 {
+        self.counters[diag as usize].load(Ordering::Relaxed)
+    }
+
+    pub fn as_map(&self) -> HashMap<EndpointDiag, u32>  {
+        let mut ret = HashMap::new();
+        for diag in EndpointDiag::ALL {
+            let counter =  self.get(*diag);
+            if counter>0 {
+                ret.insert(*diag, counter);
+            }
+        }
+        ret
+    }
+
+}
+
 pub struct TrackedSocket {
     socket: zmq::Socket,
     endpoints: Vec<String>,
     rec_index: u32,
     topics: Vec<String>,
     monitoring: bool,
-    index: u32,
+    diags: Arc<EndpointDiagnostics>,
+    index: u32
 }
 
 impl TrackedSocket {
     pub fn new(context: &Context, socket_type: zmq::SocketType, rec_index: u32) -> IOResult<TrackedSocket> {
         let socket = context.socket(socket_type)?;
         let index =  index();
-        Ok (Self {socket, rec_index, endpoints: Vec::new(),topics: Vec::new(),monitoring: false, index })
+        let diags =  Arc::new(EndpointDiagnostics::new());
+        Ok (Self {socket, rec_index, endpoints: Vec::new(), topics: Vec::new(), monitoring: false, diags , index})
     }
 
     pub fn enable_monitoring(&mut self, context: &Context, monitor: &SocketMonitor, endpoint: Option<String>) -> IOResult<()> {
@@ -683,6 +712,24 @@ impl TrackedSocket {
 
     pub fn options(&self) -> SocketOptions {SocketOptions::get(self.socket())}
 
+    #[inline]
+    pub fn increment_diag(&self, diag: EndpointDiag) {
+        self.diags.counters[diag as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn diag(&self, diag: EndpointDiag) -> u32 {
+        self.diags.counters[diag as usize].load(Ordering::Relaxed)
+    }
+
+    pub fn diagnostics(&self) -> Arc<EndpointDiagnostics> {
+        self.diags.clone()
+    }
+
+    pub fn reset_stats(& mut self) {
+        for diag in &self.diags.counters {
+            diag.store(0, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Drop for TrackedSocket {
