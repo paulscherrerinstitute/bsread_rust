@@ -1149,12 +1149,8 @@ impl Receiver{
                 //TODO: Cleck locking
                 handle.spawn_blocking(move || {
                     let senders = Arc::new(Mutex::new(HashMap::<String,tokio::sync::mpsc::Sender<ReceivedMessage>,>::new(),));
-
-                    let monitor = socket_monitor.clone();
-                    let drop_stats = Arc::clone(&stats);
                     let cb = move |msg: ReceivedMessage| {
                         let endpoint = msg.endpoint.clone().unwrap_or_default();
-
                         let sender = {
                             let mut senders = senders.lock().unwrap();
                             senders
@@ -1176,8 +1172,6 @@ impl Receiver{
                                 log::error!("Error sending blocking message: {:?}",err);
                             }
                         } else {
-                            let ep = msg.endpoint.clone().unwrap_or_default();
-                            let id = msg.message.id();
                             match sender.try_send(msg) {
                                 Ok(()) => {}
                                 Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
