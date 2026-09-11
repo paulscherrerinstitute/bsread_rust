@@ -1139,6 +1139,7 @@ impl Receiver{
         tx
     }
 
+
     #[cfg(feature = "async")]
     pub fn start_async<F, Fut>(
         &mut self,
@@ -1192,24 +1193,21 @@ impl Receiver{
 
                 //TODO: Cleck locking
                 handle.spawn_blocking(move || {
-                    //HashMap<String, OnceCell<Sender<ReceivedMessage>>>
-                    let senders = ordered_senders.load();
                     let cb = move |msg: ReceivedMessage| {
-                        let endpoint = match &msg.endpoint{
-                            None => {&"".to_string()},
-                            Some(endpoint) => {endpoint}
-                        };
+                        let senders = ordered_senders.load();
+                        let endpoint = msg.endpoint.as_deref().unwrap_or("");
                         match senders.get(endpoint){
                             None => {
                                 log::error!("Endpoint not added to senders map: {:?}", endpoint);
                             }
                             Some(cell) => {
-                                let sender = match cell.get() {
-                                    Some(sender) => sender,
-                                    None => cell.get_or_init(|| {
-                                        Receiver::create_ordered_sender(capacity,Arc::clone(&callback),&callback_handle,)
-                                    }),
-                                };
+                                let sender = cell.get_or_init(|| {
+                                    Receiver::create_ordered_sender(
+                                        capacity,
+                                        Arc::clone(&callback),
+                                        &callback_handle,
+                                    )
+                                });
 
                                 if blocking {
                                     if let Err(err) = sender.blocking_send(msg) {
