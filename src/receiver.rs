@@ -1096,6 +1096,22 @@ impl Receiver{
         Ok(())
     }
 
+
+    #[cfg(feature = "async")]
+    fn create_ordered_sender<F, Fut>(capacity: usize, callback: Arc<F>, handle: &Handle,) -> tokio::sync::mpsc::Sender<ReceivedMessage>
+    where
+        F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(capacity);
+        handle.spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                callback(msg).await;
+            }
+        });
+        tx
+    }
+
     #[cfg(feature = "async")]
     pub fn start_async<F, Fut>(
         &mut self,
@@ -1155,18 +1171,10 @@ impl Receiver{
                             let mut senders = senders.lock().unwrap();
                             senders
                                 .entry(endpoint)
-                                .or_insert_with(|| {
-                                    let (tx, mut rx) =tokio::sync::mpsc::channel(capacity);
-                                    let callback = Arc::clone(&callback);
-                                    callback_handle.spawn(async move {
-                                        while let Some(msg) = rx.recv().await {
-                                            callback(msg).await;
-                                        }
-                                    });
-                                    tx
-                                })
+                                .or_insert_with(|| Receiver::create_ordered_sender(capacity, Arc::clone(&callback), &callback_handle,))
                                 .clone()
                         };
+
                         if blocking {
                             if let Err(err) = sender.blocking_send(msg) {
                                 log::error!("Error sending blocking message: {:?}",err);

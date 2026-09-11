@@ -397,7 +397,7 @@ fn run_async_endpoint_serial_executor() -> IOResult<()> {
 
     runtime.block_on(async {
         let handle = runtime.handle().clone();
-        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Ordered {capacity:100, blocking:false}, Some(handle));
+        rec.start_async(callback, Some(MESSAGE_COUNT), AsyncExecution::Ordered {capacity:100, blocking:true}, Some(handle));
         rec.join_async().await.unwrap();
     });
     //thread::sleep(Duration::from_millis(2000));
