@@ -2,7 +2,6 @@ use crate::*;
 use crate::message::*;
 use crate::utils::*;
 use crate::sockets::*;
-use arc_swap::ArcSwap;
 use std::{io, thread};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
@@ -790,8 +789,6 @@ pub struct Receiver {
     handle: Option<JoinHandle<IOResult<()>>>,
     #[cfg(feature = "async")]
     async_handle: Option<tokio::task::JoinHandle<IOResult<()>>>,
-    #[cfg(feature = "async")]
-    ordered_senders:Arc<ArcSwap<HashMap<String, OnceLock<tokio::sync::mpsc::Sender<ReceivedMessage>>>>>,
     stats: Arc<Stats>,
     diags: HashMap<String, Arc<EndpointDiagnostics>>,
     index: u32,
@@ -827,7 +824,7 @@ impl Receiver{
         let check_mask = CHECK_ALL;
         let socket_options =Arc::new( Mutex::new(SocketOptions::new()));
 
-        let mut ret = Self { endpoints, socket_type, check_mask,
+        Ok(Self { endpoints, socket_type, check_mask,
             bsread, fifo:None, handle:None,
             stats, index, diags: HashMap::new(),
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
@@ -835,12 +832,7 @@ impl Receiver{
             worker:None,
             #[cfg(feature = "async")]
             async_handle:None,
-            #[cfg(feature = "async")]
-            ordered_senders: Arc::new(ArcSwap::from_pointee(HashMap::new()))
-        };
-        #[cfg(feature = "async")]
-        ret.update_ordered_senders();
-        Ok(ret)
+        })
     }
 
     pub fn to_string(& self,) -> String {
@@ -897,8 +889,6 @@ impl Receiver{
     pub fn add_endpoint(&mut self, endpoint: &str, socket_type:Option<SocketType>) -> IOResult<()> {
         //Must be called at the beginning because, if blocking, we may receive message fom the endpoint before reaching Ok.
         //We do not remove in case of failure, because having a None on the map is zero cost and avoid complication.
-        #[cfg(feature = "async")]
-        self.add_ordered_sender(endpoint);
         if let Some(mut worker) = self.worker.as_mut() {
             worker.add_endpoint(endpoint, socket_type)?
         } else if self.delivery_mode.thraded(){
@@ -936,8 +926,6 @@ impl Receiver{
             endpoints.retain(|e| e.address != endpoint);
         }
         self.update_diagnostics();
-        #[cfg(feature = "async")]
-        self.remove_ordered_sender(endpoint);
     }
 
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
@@ -1111,48 +1099,6 @@ impl Receiver{
 
 
     #[cfg(feature = "async")]
-    pub fn update_ordered_senders(&mut self) {
-        let old = self.ordered_senders.load();
-        let mut new = HashMap::with_capacity(self.endpoints().len());
-        for endpoint in self.endpoints() {
-            if let Some(sender) = old.get(&endpoint) {
-                // Preserve the existing OnceLock, and therefore its queue if initialized.
-                new.insert(endpoint.clone(), sender.clone());
-            } else {
-                // New endpoint: create nothing yet.
-                new.insert(endpoint.clone(), OnceLock::new());
-            }
-        }
-        self.ordered_senders.store(Arc::new(new));
-    }
-
-    #[cfg(feature = "async")]
-    fn add_ordered_sender(&mut self, endpoint: &str) -> bool{
-        let old = self.ordered_senders.load();
-        if old.contains_key(endpoint) {
-            false
-        } else {
-            let mut new = old.as_ref().clone();
-            new.insert(endpoint.to_string(), OnceLock::new());
-            self.ordered_senders.store(Arc::new(new));
-            true
-        }
-    }
-
-    #[cfg(feature = "async")]
-    fn remove_ordered_sender(&mut self, endpoint: &str) -> bool{
-        let old = self.ordered_senders.load();
-        if !old.contains_key(endpoint) {
-            false
-        } else {
-            let mut new = old.as_ref().clone();
-            new.remove(endpoint);
-            self.ordered_senders.store(Arc::new(new));
-            true
-        }
-    }
-
-    #[cfg(feature = "async")]
     fn create_ordered_sender<F, Fut>(capacity: usize, callback: Arc<F>, handle: &Handle,) -> tokio::sync::mpsc::Sender<ReceivedMessage>
     where
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
@@ -1166,7 +1112,6 @@ impl Receiver{
         });
         tx
     }
-
 
     #[cfg(feature = "async")]
     pub fn start_async<F, Fut>(
@@ -1217,42 +1162,43 @@ impl Receiver{
                 let callback = Arc::new(callback);
                 let callback_handle = handle.clone();
                 let tx_cmd = self.tx_cmd.clone();
-                let ordered_senders  = self.ordered_senders.clone();
 
                 handle.spawn_blocking(move || {
+                    let senders = Arc::new(RwLock::new(HashMap::<String,tokio::sync::mpsc::Sender<ReceivedMessage>,>::new(),));
                     let cb = move |msg: ReceivedMessage| {
-                        let senders = ordered_senders.load();
                         let endpoint = msg.endpoint.as_deref().unwrap_or("");
-                        match senders.get(endpoint){
+                        let sender = {
+                            senders.read().unwrap().get(endpoint).cloned()
+                        };
+                        let sender = match sender {
+                            Some(sender) => sender,
                             None => {
-                                log::warn!("Endpoint not added to senders map: {:?}", endpoint);
+                                let sender = Receiver::create_ordered_sender(capacity,Arc::clone(&callback),&callback_handle,);
+                                let mut senders = senders.write().unwrap();
+                                senders.entry(endpoint.to_string()).or_insert_with(|| sender).clone()
                             }
-                            Some(cell) => {
-                                let sender = cell.get_or_init(|| {
-                                    Receiver::create_ordered_sender(capacity, Arc::clone(&callback), &callback_handle,)
-                                });
+                        };
 
-                                if blocking {
-                                    if let Err(err) = sender.blocking_send(msg) {
-                                        log::error!("Error sending blocking message: {:?}",err);
-                                    }
-                                } else {
-                                    match sender.try_send(msg) {
-                                        Ok(()) => {}
-                                        Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
-                                            log::debug!("Dropping message {} from {:?}: endpoint queue is full",msg.message.id(),msg.endpoint);
-                                            if let Some(endpoint) = msg.endpoint {
-                                                let cmd = || { ReceiverCommand::SendDiag {
-                                                    endpoint: Some(endpoint), diag: EndpointDiag::Dropped, id: Some(msg.message.id()), response:None } };
-                                                tx_cmd.send(cmd());
-                                            }
-                                        }
-                                        Err(err) => {
-                                            log::error!("Error trying sending message: {:?}", err);
-                                        }
+                        if blocking {
+                            if let Err(err) = sender.blocking_send(msg) {
+                                log::error!("Error sending blocking message: {:?}",err);
+                            }
+                        } else {
+                            match sender.try_send(msg) {
+                                Ok(()) => {}
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
+                                    log::debug!("Dropping message {} from {:?}: endpoint queue is full",msg.message.id(),msg.endpoint);
+                                    if let Some(endpoint) = msg.endpoint {
+                                        let cmd = || { ReceiverCommand::SendDiag {
+                                            endpoint: Some(endpoint), diag: EndpointDiag::Dropped, id: Some(msg.message.id()), response:None } };
+                                        tx_cmd.send(cmd());
                                     }
                                 }
+                                Err(err) => {
+                                    log::error!("Error trying sending message: {:?}", err);
+                                }
                             }
+
                         }
                     };
                     Worker::launch(bsread, index, endpoints, socket_type, connection_mode, cb,
