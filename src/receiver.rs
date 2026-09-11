@@ -1191,7 +1191,6 @@ impl Receiver{
                 let tx_cmd = self.tx_cmd.clone();
                 let ordered_senders  = self.ordered_senders.clone();
 
-                //TODO: Cleck locking
                 handle.spawn_blocking(move || {
                     let cb = move |msg: ReceivedMessage| {
                         let senders = ordered_senders.load();
@@ -1202,11 +1201,7 @@ impl Receiver{
                             }
                             Some(cell) => {
                                 let sender = cell.get_or_init(|| {
-                                    Receiver::create_ordered_sender(
-                                        capacity,
-                                        Arc::clone(&callback),
-                                        &callback_handle,
-                                    )
+                                    Receiver::create_ordered_sender(capacity, Arc::clone(&callback), &callback_handle,)
                                 });
 
                                 if blocking {
