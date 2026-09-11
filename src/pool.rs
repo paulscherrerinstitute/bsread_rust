@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use crate::*;
-use crate::receiver::{AsyncExecution, ConnectionMode, Receiver, MessageStats};
+use crate::receiver::{ConnectionMode, Receiver, MessageStats};
+#[cfg(feature = "async")]
+use crate::receiver::{AsyncExecution};
 use crate::bsread::Bsread;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;

@@ -22,8 +22,9 @@ use lazy_static::lazy_static;
 use log::SetLoggerError;
 use num_traits::{AsPrimitive, ToPrimitive};
 use std::sync::Once;
-use crate::receiver::{AsyncExecution};
 use crate::sockets::KeepAlive;
+#[cfg(feature = "async")]
+use crate::receiver::{AsyncExecution};
 
 const PRINT_ARRAY_MAX_SIZE: usize = 10;
 const PRINT_MAIN_HEADER: bool = false;

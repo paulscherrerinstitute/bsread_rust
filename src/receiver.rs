@@ -2,12 +2,13 @@ use crate::*;
 use crate::message::*;
 use crate::utils::*;
 use crate::sockets::*;
+use arc_swap::ArcSwap;
 use std::{io, thread};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::io::SeekFrom::End;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, PollItem, SocketEvent, SocketType};
@@ -789,6 +790,8 @@ pub struct Receiver {
     handle: Option<JoinHandle<IOResult<()>>>,
     #[cfg(feature = "async")]
     async_handle: Option<tokio::task::JoinHandle<IOResult<()>>>,
+    #[cfg(feature = "async")]
+    ordered_senders:Arc<ArcSwap<HashMap<String, OnceLock<tokio::sync::mpsc::Sender<ReceivedMessage>>>>>,
     stats: Arc<Stats>,
     diags: HashMap<String, Arc<EndpointDiagnostics>>,
     index: u32,
@@ -807,7 +810,6 @@ pub struct Receiver {
     worker: Option<Worker>,
 }
 
-
 impl Receiver{
     pub fn new(bsread: Arc<Bsread>, endpoints: Option<Vec<&str>>, socket_type: SocketType, connection_mode: ConnectionMode) -> IOResult<Self> {
         let index =  index();
@@ -825,14 +827,20 @@ impl Receiver{
         let check_mask = CHECK_ALL;
         let socket_options =Arc::new( Mutex::new(SocketOptions::new()));
 
-        Ok(Self { endpoints, socket_type, check_mask,
+        let mut ret = Self { endpoints, socket_type, check_mask,
             bsread, fifo:None, handle:None,
             stats, index, diags: HashMap::new(),
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
             socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options, blocking_config:true,
+            worker:None,
             #[cfg(feature = "async")]
-            async_handle:None, worker:None
-        })
+            async_handle:None,
+            #[cfg(feature = "async")]
+            ordered_senders: Arc::new(ArcSwap::from_pointee(HashMap::new()))
+        };
+        #[cfg(feature = "async")]
+        ret.update_ordered_senders();
+        Ok(ret)
     }
 
     pub fn to_string(& self,) -> String {
@@ -888,15 +896,13 @@ impl Receiver{
 
     pub fn add_endpoint(&mut self, endpoint: &str, socket_type:Option<SocketType>) -> IOResult<()> {
         if let Some(mut worker) = self.worker.as_mut() {
-            worker.add_endpoint(endpoint, socket_type)
+            worker.add_endpoint(endpoint, socket_type)?
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
             if self.blocking_config {
                 self.send_command(|response| { ReceiverCommand::AddEndpoint { endpoint, socket_type, response } })?;
-                self.update_diagnostics();
-                Ok(())
             } else {
-                self.send_command_no_wait(|_| { ReceiverCommand::AddEndpoint { endpoint, socket_type, response:None } })
+                self.send_command_no_wait(|_| { ReceiverCommand::AddEndpoint { endpoint, socket_type, response:None } })?;
             }
         } else {
             let mut endpoints = self.endpoints.write().unwrap();
@@ -906,18 +912,20 @@ impl Receiver{
             } else {
                 log::error!("Endpoint {} already exists", endpoint);
             }
-            Ok(())
         }
+        self.update_diagnostics();
+        #[cfg(feature = "async")]
+        self.update_ordered_senders();
+        Ok(())
     }
 
     pub fn remove_endpoint(&mut self, endpoint: &str) {
         if let Some(mut worker) = self.worker.as_mut() {
-            worker.remove_endpoint(endpoint)
+            worker.remove_endpoint(endpoint);
         } else if self.delivery_mode.thraded(){
             let endpoint = endpoint.to_string();
             if self.blocking_config {
                 self.send_command(|response| { ReceiverCommand::RemoveEndpoint { endpoint, response } });
-                self.update_diagnostics();
             } else {
                 self.send_command_no_wait(|_| { ReceiverCommand::RemoveEndpoint { endpoint, response:None } });
             }
@@ -925,6 +933,9 @@ impl Receiver{
             let mut endpoints = self.endpoints.write().unwrap();
             endpoints.retain(|e| e.address != endpoint);
         }
+        self.update_diagnostics();
+        #[cfg(feature = "async")]
+        self.update_ordered_senders();
     }
 
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
@@ -1098,6 +1109,22 @@ impl Receiver{
 
 
     #[cfg(feature = "async")]
+    fn update_ordered_senders(&mut self) {
+        let old = self.ordered_senders.load();
+        let mut new = HashMap::with_capacity(self.endpoints().len());
+        for endpoint in self.endpoints() {
+            if let Some(sender) = old.get(&endpoint) {
+                // Preserve the existing OnceLock, and therefore its queue if initialized.
+                new.insert(endpoint.clone(), sender.clone());
+            } else {
+                // New endpoint: create nothing yet.
+                new.insert(endpoint.clone(), OnceLock::new());
+            }
+        }
+        self.ordered_senders.store(Arc::new(new));
+    }
+
+    #[cfg(feature = "async")]
     fn create_ordered_sender<F, Fut>(capacity: usize, callback: Arc<F>, handle: &Handle,) -> tokio::sync::mpsc::Sender<ReceivedMessage>
     where
         F: Fn(ReceivedMessage) -> Fut + Send + Sync + 'static,
@@ -1161,37 +1188,48 @@ impl Receiver{
                 let callback = Arc::new(callback);
                 let callback_handle = handle.clone();
                 let tx_cmd = self.tx_cmd.clone();
+                let ordered_senders  = self.ordered_senders.clone();
 
                 //TODO: Cleck locking
                 handle.spawn_blocking(move || {
-                    let senders = Arc::new(Mutex::new(HashMap::<String,tokio::sync::mpsc::Sender<ReceivedMessage>,>::new(),));
+                    //HashMap<String, OnceCell<Sender<ReceivedMessage>>>
+                    let senders = ordered_senders.load();
                     let cb = move |msg: ReceivedMessage| {
-                        let endpoint = msg.endpoint.clone().unwrap_or_default();
-                        let sender = {
-                            let mut senders = senders.lock().unwrap();
-                            senders
-                                .entry(endpoint)
-                                .or_insert_with(|| Receiver::create_ordered_sender(capacity, Arc::clone(&callback), &callback_handle,))
-                                .clone()
+                        let endpoint = match &msg.endpoint{
+                            None => {&"".to_string()},
+                            Some(endpoint) => {endpoint}
                         };
-
-                        if blocking {
-                            if let Err(err) = sender.blocking_send(msg) {
-                                log::error!("Error sending blocking message: {:?}",err);
+                        match senders.get(endpoint){
+                            None => {
+                                log::error!("Endpoint not added to senders map: {:?}", endpoint);
                             }
-                        } else {
-                            match sender.try_send(msg) {
-                                Ok(()) => {}
-                                Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
-                                    log::debug!("Dropping message {} from {:?}: endpoint queue is full",msg.message.id(),msg.endpoint);
-                                    if let Some(endpoint) = msg.endpoint {
-                                        let cmd = || { ReceiverCommand::SendDiag {
-                                            endpoint: Some(endpoint), diag: EndpointDiag::Dropped, id: Some(msg.message.id()), response:None } };
-                                        tx_cmd.send(cmd());
+                            Some(cell) => {
+                                let sender = match cell.get() {
+                                    Some(sender) => sender,
+                                    None => cell.get_or_init(|| {
+                                        Receiver::create_ordered_sender(capacity,Arc::clone(&callback),&callback_handle,)
+                                    }),
+                                };
+
+                                if blocking {
+                                    if let Err(err) = sender.blocking_send(msg) {
+                                        log::error!("Error sending blocking message: {:?}",err);
                                     }
-                                }
-                                Err(err) => {
-                                    log::error!("Error trying sending message: {:?}", err);
+                                } else {
+                                    match sender.try_send(msg) {
+                                        Ok(()) => {}
+                                        Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
+                                            log::debug!("Dropping message {} from {:?}: endpoint queue is full",msg.message.id(),msg.endpoint);
+                                            if let Some(endpoint) = msg.endpoint {
+                                                let cmd = || { ReceiverCommand::SendDiag {
+                                                    endpoint: Some(endpoint), diag: EndpointDiag::Dropped, id: Some(msg.message.id()), response:None } };
+                                                tx_cmd.send(cmd());
+                                            }
+                                        }
+                                        Err(err) => {
+                                            log::error!("Error trying sending message: {:?}", err);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1329,7 +1367,7 @@ impl Receiver{
         }
     }
 
-    //If blocking config(default) this should not be called by th8e application.
+    //If blocking config(default) this should not be called by the application.
     //If not then application must call update_diagnostics after sockets are added/removed to link receivers to socket diagnostics.
     pub fn update_diagnostics(&mut self){
         if self.delivery_mode.thraded(){
