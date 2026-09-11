@@ -895,6 +895,10 @@ impl Receiver{
     }
 
     pub fn add_endpoint(&mut self, endpoint: &str, socket_type:Option<SocketType>) -> IOResult<()> {
+        //Must be called at the beginning because, if blocking, we may receive message fom the endpoint before reaching Ok.
+        //We do not remove in case of failure, because having a None on the map is zero cost and avoid complication.
+        #[cfg(feature = "async")]
+        self.add_ordered_sender(endpoint);
         if let Some(mut worker) = self.worker.as_mut() {
             worker.add_endpoint(endpoint, socket_type)?
         } else if self.delivery_mode.thraded(){
@@ -914,8 +918,6 @@ impl Receiver{
             }
         }
         self.update_diagnostics();
-        #[cfg(feature = "async")]
-        self.update_ordered_senders();
         Ok(())
     }
 
@@ -935,7 +937,7 @@ impl Receiver{
         }
         self.update_diagnostics();
         #[cfg(feature = "async")]
-        self.update_ordered_senders();
+        self.remove_ordered_sender(endpoint);
     }
 
     pub fn enable_monitoring(& mut self)-> IOResult< crossbeam_channel::Receiver<EndpointEvent>> {
@@ -1109,7 +1111,7 @@ impl Receiver{
 
 
     #[cfg(feature = "async")]
-    fn update_ordered_senders(&mut self) {
+    pub fn update_ordered_senders(&mut self) {
         let old = self.ordered_senders.load();
         let mut new = HashMap::with_capacity(self.endpoints().len());
         for endpoint in self.endpoints() {
@@ -1122,6 +1124,32 @@ impl Receiver{
             }
         }
         self.ordered_senders.store(Arc::new(new));
+    }
+
+    #[cfg(feature = "async")]
+    fn add_ordered_sender(&mut self, endpoint: &str) -> bool{
+        let old = self.ordered_senders.load();
+        if old.contains_key(endpoint) {
+            false
+        } else {
+            let mut new = old.as_ref().clone();
+            new.insert(endpoint.to_string(), OnceLock::new());
+            self.ordered_senders.store(Arc::new(new));
+            true
+        }
+    }
+
+    #[cfg(feature = "async")]
+    fn remove_ordered_sender(&mut self, endpoint: &str) -> bool{
+        let old = self.ordered_senders.load();
+        if !old.contains_key(endpoint) {
+            false
+        } else {
+            let mut new = old.as_ref().clone();
+            new.remove(endpoint);
+            self.ordered_senders.store(Arc::new(new));
+            true
+        }
     }
 
     #[cfg(feature = "async")]
@@ -1197,7 +1225,7 @@ impl Receiver{
                         let endpoint = msg.endpoint.as_deref().unwrap_or("");
                         match senders.get(endpoint){
                             None => {
-                                log::error!("Endpoint not added to senders map: {:?}", endpoint);
+                                log::warn!("Endpoint not added to senders map: {:?}", endpoint);
                             }
                             Some(cell) => {
                                 let sender = cell.get_or_init(|| {
