@@ -215,13 +215,24 @@ Pool {
         Ok(())
     }
 
-    pub fn stop(&mut self) -> IOResult<()> {
+
+    pub fn interrupt(&mut self) -> IOResult<()> {
         for receiver in &mut self.receivers{
             receiver.interrupt();
         }
+        Ok(())
+    }
+
+    pub fn join(&mut self) -> IOResult<()> {
         for receiver in &mut self.receivers{
-            receiver.join()?;
+            receiver.interrupt();
         }
+        Ok(())
+    }
+
+    pub fn stop(&mut self) -> IOResult<()> {
+        self.interrupt();
+        self.join();
         Ok(())
     }
 
@@ -287,15 +298,18 @@ Pool {
 
     #[cfg(feature = "async")]
     pub async fn stop_async(&mut self) -> IOResult<()> {
-        for receiver in &mut self.receivers{
-            receiver.interrupt();
-        }
+        self.interrupt();
+        self.join_async().await;
+        Ok(())
+    }
+
+    #[cfg(feature = "async")]
+    pub async fn join_async(&mut self) -> IOResult<()> {
         for receiver in &mut self.receivers{
             receiver.join_async().await?;
         }
         Ok(())
     }
-
     pub fn is_running(&self) -> bool {
         for receiver in & self.receivers{
             if receiver.is_running(){

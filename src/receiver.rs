@@ -84,6 +84,7 @@ pub enum ConnectionMode {
 pub enum AsyncExecution {
     Concurrent,
     Ordered {capacity: usize,blocking: bool},
+    Direct
 }
 
 
@@ -1144,6 +1145,19 @@ impl Receiver{
         let handle = handle.unwrap_or_else(tokio::runtime::Handle::current);
 
         let join_handle = match execution {
+            AsyncExecution::Direct => {
+                let callback_handle = handle.clone();
+                handle.spawn_blocking(move || {
+                    let cb = move |msg: ReceivedMessage| {
+                        callback_handle.block_on(callback(msg))
+                    };
+                    Worker::launch(bsread, index, endpoints, socket_type, connection_mode, cb,
+                                   num_messages, None, stats,
+                                   forwarder_config, interrupted, raw,
+                                   socket_options, socket_monitor, rx_cmd, check_mask)
+                })
+            }
+
             AsyncExecution::Concurrent => {
                 let callback_handle = handle.clone();
 
@@ -1259,6 +1273,13 @@ impl Receiver{
         self.interrupt();
         self.join()?;
         self.fifo = None;
+        Ok(())
+    }
+
+    #[cfg(feature = "async")]
+    pub async fn stop_async(&mut self) -> IOResult<()> {
+        self.interrupt();
+        self.join_async().await?;
         Ok(())
     }
 

@@ -307,8 +307,8 @@ impl Message {
         &self.data
     }
 
-    pub fn into_parts(self) -> (Vec<Box<dyn ChannelTrait>>, IndexMap<String, Option<ChannelData>>) {
-        (self.channels, self.data)
+    pub fn into_parts(self) -> (u64, (u64, u64), bool, Vec<Box<dyn ChannelTrait>>, IndexMap<String, Option<ChannelData>>) {
+        (self.id, self.timestamp, self.header_changed(), self.channels, self.data)
     }
 
     pub fn hash(&self) -> String {
