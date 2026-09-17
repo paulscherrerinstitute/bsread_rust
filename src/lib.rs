@@ -1,8 +1,8 @@
 extern crate core;
 
 pub use crate::bsread::{Bsread};
-pub use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait};
-pub use crate::value::{Value};
+pub use crate::channel::{ChannelConfig, ChannelArray, ChannelScalar, ChannelTrait,};
+pub use crate::value::{Value, ScalarType};
 pub use crate::message::{ChannelData, Message, DataHeaderInfo, ID_SIMULATED, TIMESTAMP_NOW};
 pub use crate::sockets::{Transport,EndpointState, EndpointDiag, EndpointEvent, SocketConfig};
 pub use crate::utils::{init_id_t0, init_sf_id_t0};

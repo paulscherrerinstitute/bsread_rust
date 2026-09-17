@@ -1,5 +1,5 @@
 use crate::*;
-use crate::value::Value;
+use crate::value::{ScalarType, Value};
 use crate::reader::{READER_ABF32, READER_ABF64, READER_ABI16, READER_ABI32, READER_ABI64, READER_ABOOL, READER_ABU16, READER_ABU32, READER_ABU64, READER_AF32, READER_AF64, READER_AI16, READER_AI32, READER_AI64, READER_AI8, READER_AU16, READER_AU32, READER_AU64, READER_AU8, READER_BF32, READER_BF64, READER_BI16, READER_BI32, READER_BI64, READER_BOOL, READER_BU16, READER_BU32, READER_BU64, READER_F32, READER_F64, READER_I16, READER_I32, READER_I64, READER_I8, READER_STRING, READER_U16, READER_U32, READER_U64, READER_U8, READER_RAW, READER_BRAW16, READER_BRAW32, READER_BRAW64};
 use crate::writer::{WRITER_ABF32, WRITER_ABF64, WRITER_ABI16, WRITER_ABI32, WRITER_ABI64, WRITER_ABOOL, WRITER_ABU16, WRITER_ABU32, WRITER_ABU64, WRITER_AF32, WRITER_AF64, WRITER_AI16, WRITER_AI32, WRITER_AI64, WRITER_AI8, WRITER_AU16, WRITER_AU32, WRITER_AU64, WRITER_AU8, WRITER_BF32, WRITER_BF64, WRITER_BI16, WRITER_BI32, WRITER_BI64, WRITER_BOOL, WRITER_BU16, WRITER_BU32, WRITER_BU64, WRITER_F32, WRITER_F64, WRITER_I16, WRITER_I32, WRITER_I64, WRITER_I8, WRITER_STRING, WRITER_U16, WRITER_U32, WRITER_U64, WRITER_U8, WRITER_RAW, WRITER_BRAW16, WRITER_BRAW32, WRITER_BRAW64};
 use std::io::Cursor;
@@ -11,7 +11,7 @@ use crate::compression::{decompress_bitshuffle_lz4, decompress_lz4};
 #[derive(Clone)]
 pub struct ChannelConfig {
     name: String,
-    kind: String,
+    kind: ScalarType,
     shape: Option<Vec<u32>>,
     elements: usize,
     element_size: usize,
@@ -25,9 +25,7 @@ impl ChannelConfig {
     pub fn name(&self) -> String {
         self.name.clone()
     }
-    pub fn kind(&self) -> String {
-        self.kind.clone()
-    }
+    pub fn kind(&self) -> ScalarType {self.kind}
     pub fn shape(&self) -> Option<Vec<u32>> {
         self.shape.clone()
     }
@@ -57,7 +55,7 @@ impl ChannelConfig {
         let shape = self.shape().unwrap_or(vec![]);
         let shape_json = JsonValue::Array(shape.into_iter().map(|num| JsonValue::Number(num.into())).collect());
         metadata.insert("shape".to_string(),shape_json);
-        metadata.insert("type".to_string(), JsonValue::String(self.kind()));
+        metadata.insert("type".to_string(), JsonValue::String(self.kind().to_string()));
         metadata.insert("encoding".to_string(), JsonValue::String((if self.is_little_endian(){"little"} else {"big"}).to_string()));
         if self.compression() != Compression::None {
             metadata.insert("compression".to_string(), JsonValue::String(self.compression().to_string()));
@@ -65,7 +63,7 @@ impl ChannelConfig {
         metadata
     }
 
-    pub fn into_parts(self: Self) -> (String, String, Option<Vec<u32>>) {
+    pub fn into_parts(self: Self) -> (String, ScalarType, Option<Vec<u32>>) {
         (self.name, self.kind, self.shape)
     }
 }
@@ -102,55 +100,55 @@ pub fn elements(shape: &Option<Vec<u32>>) -> usize {
     elements
 }
 
-fn element_size(typ: &str) -> usize {
-    match typ {
-        "bool" => 1,
-        "string" => 1,
-        "int8" => 1,
-        "uint8" => 1,
-        "int16" => 2,
-        "uint16" => 2,
-        "int32" => 4,
-        "uint32" => 4,
-        "int64" => 8,
-        "uint64" => 8,
-        "float32" => 4,
-        "float64" => 8,
+fn element_size(kind: &ScalarType) -> usize {
+    match kind {
+        ScalarType::bool => 1,
+        ScalarType::string => 1,
+        ScalarType::int8 => 1,
+        ScalarType::uint8 => 1,
+        ScalarType::int16=> 2,
+        ScalarType::uint16 => 2,
+        ScalarType::int32 => 4,
+        ScalarType::uint32 => 4,
+        ScalarType::int64 => 8,
+        ScalarType::uint64 => 8,
+        ScalarType::float32 => 4,
+        ScalarType::float64 => 8,
         _ => 4,
     }
 }
 impl<T: Default + Clone> ChannelScalar<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
+    pub fn new(name: String, kind: ScalarType, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
                reader: fn(&mut Cursor<&Vec<u8>>) -> IOResult<T>, writer: fn(&mut Cursor<&mut Vec<u8>>, &T) -> IOResult<()>) -> Self {
         let elements = elements(&shape);
-        let element_size = element_size(&typ);
-        let config = ChannelConfig { name, kind: typ, shape, elements, element_size, little_endian, compression, raw:false };
+        let element_size = element_size(&kind);
+        let config = ChannelConfig { name, kind, shape, elements, element_size, little_endian, compression, raw:false };
         Self { config, reader, writer }
     }
 }
 
 
 impl<T: Default + Clone> ChannelArray<T> {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
+    pub fn new(name: String, kind: ScalarType, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
                reader: fn(&mut Cursor<&Vec<u8>>, &mut [T]) -> IOResult<()>,  writer: fn(&mut Cursor<&mut Vec<u8>>, &[T]) -> IOResult<()>) -> Self {
         let elements = elements(&shape);
-        let element_size = element_size(&typ);
-        let config = ChannelConfig { name, kind: typ, shape, elements, element_size, little_endian, compression, raw: false };
+        let element_size = element_size(&kind);
+        let config = ChannelConfig { name, kind, shape, elements, element_size, little_endian, compression, raw: false };
         Self { config, reader, writer }
     }
 }
 
 impl ChannelRaw {
-    pub fn new(name: String, typ: String, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
+    pub fn new(name: String, kind: ScalarType, shape: Option<Vec<u32>>, little_endian: bool, compression: Compression,
                reader: fn(&mut Cursor<&Vec<u8>>, &mut [u8]) -> IOResult<()>, writer: fn(&mut Cursor<&mut Vec<u8>>, &[u8]) -> IOResult<()>) -> Self {
         let elements = elements(&shape);
-        let element_size = element_size(&typ);
-        let config = ChannelConfig { name, kind: typ, shape, elements, element_size, little_endian, compression, raw: true };
+        let element_size = element_size(&kind);
+        let config = ChannelConfig { name, kind, shape, elements, element_size, little_endian, compression, raw: true };
         Self { config, reader, writer }
     }
 }
 
-static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), kind: String::new(), shape: None, elements: 0, element_size: 0, little_endian: false, compression: Compression::None, raw: false};
+static EMPTY_CONFIG: ChannelConfig = ChannelConfig { name: String::new(), kind: ScalarType::float64, shape: None, elements: 0, element_size: 0, little_endian: false, compression: Compression::None, raw: false};
 
 
 pub trait ChannelClone {
@@ -321,52 +319,52 @@ pub fn is_array(shape:&Option<Vec<u32>>) -> bool{
     }
 }
 
-pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool, compression:Compression, raw:bool) -> IOResult<Box<dyn ChannelTrait>> {
+pub fn new(name: String, kind:ScalarType, shape:Option<Vec<u32>>, little_endian:bool, compression:Compression, raw:bool) -> IOResult<Box<dyn ChannelTrait>> {
     let array = is_array(&shape);
-    if raw && (typ.as_str()!="string") {
-        if little_endian || (element_size(&typ)==1){
-            Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_RAW,  WRITER_RAW )))
+    if raw && (kind != ScalarType::string) {
+        if little_endian || (element_size(&kind)==1){
+            Ok(Box::new(ChannelRaw::new(name, kind, shape, little_endian, compression, READER_RAW,  WRITER_RAW )))
         } else{
-            match element_size(&typ){
-                2 =>  Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_BRAW16,  WRITER_BRAW16 ))),
-                4 => Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_BRAW32,  WRITER_BRAW32 ))),
-                8 => Ok(Box::new(ChannelRaw::new(name, typ, shape, little_endian, compression, READER_BRAW64,  WRITER_BRAW64 ))),
+            match element_size(&kind){
+                2 =>  Ok(Box::new(ChannelRaw::new(name, kind, shape, little_endian, compression, READER_BRAW16,  WRITER_BRAW16 ))),
+                4 => Ok(Box::new(ChannelRaw::new(name, kind, shape, little_endian, compression, READER_BRAW32,  WRITER_BRAW32 ))),
+                8 => Ok(Box::new(ChannelRaw::new(name, kind, shape, little_endian, compression, READER_BRAW64,  WRITER_BRAW64 ))),
                 _ => Err(IOError::new(ErrorKind::Unsupported, "Unsupported data type"))
             }
 
         }
     }  else {
         if array {
-            match typ.as_str() {
-                "bool" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_ABOOL, WRITER_ABOOL))),
-                //"string" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_ASTRING, WRITER_ASTRING))),
-                "string" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_STRING, WRITER_STRING))),
-                "int8" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_AI8, WRITER_AI8))),
-                "uint8" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, READER_AU8, WRITER_AU8))),
-                "int16" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AI16 } else { READER_ABI16 }, if little_endian { WRITER_AI16 } else { WRITER_ABI16 }))),
-                "uint16" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU16 } else { READER_ABU16 }, if little_endian { WRITER_AU16 } else { WRITER_ABU16 }))),
-                "int32" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AI32 } else { READER_ABI32 }, if little_endian { WRITER_AI32 } else { WRITER_ABI32 }))),
-                "uint32" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU32 } else { READER_ABU32 }, if little_endian { WRITER_AU32 } else { WRITER_ABU32 }))),
-                "int64" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AI64 } else { READER_ABI64 }, if little_endian { WRITER_AI64 } else { WRITER_ABI64 }))),
-                "uint64" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AU64 } else { READER_ABU64 }, if little_endian { WRITER_AU64 } else { WRITER_ABU64 }))),
-                "float32" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AF32 } else { READER_ABF32 }, if little_endian { WRITER_AF32 } else { WRITER_ABF32 }))),
-                "float64" => Ok(Box::new(ChannelArray::new(name, typ, shape, little_endian, compression, if little_endian { READER_AF64 } else { READER_ABF64 }, if little_endian { WRITER_AF64 } else { WRITER_ABF64 }))),
+            match kind {
+                ScalarType::bool => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, READER_ABOOL, WRITER_ABOOL))),
+                //ScalarType::string => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, READER_ASTRING, WRITER_ASTRING))),
+                ScalarType::string => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, READER_STRING, WRITER_STRING))),
+                ScalarType::int8 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, READER_AI8, WRITER_AI8))),
+                ScalarType::uint8 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, READER_AU8, WRITER_AU8))),
+                ScalarType::int16=> Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AI16 } else { READER_ABI16 }, if little_endian { WRITER_AI16 } else { WRITER_ABI16 }))),
+                ScalarType::uint16 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AU16 } else { READER_ABU16 }, if little_endian { WRITER_AU16 } else { WRITER_ABU16 }))),
+                ScalarType::int32 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AI32 } else { READER_ABI32 }, if little_endian { WRITER_AI32 } else { WRITER_ABI32 }))),
+                ScalarType::uint32 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AU32 } else { READER_ABU32 }, if little_endian { WRITER_AU32 } else { WRITER_ABU32 }))),
+                ScalarType::int64 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AI64 } else { READER_ABI64 }, if little_endian { WRITER_AI64 } else { WRITER_ABI64 }))),
+                ScalarType::uint64 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AU64 } else { READER_ABU64 }, if little_endian { WRITER_AU64 } else { WRITER_ABU64 }))),
+                ScalarType::float32 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AF32 } else { READER_ABF32 }, if little_endian { WRITER_AF32 } else { WRITER_ABF32 }))),
+                ScalarType::float64 => Ok(Box::new(ChannelArray::new(name, kind, shape, little_endian, compression, if little_endian { READER_AF64 } else { READER_ABF64 }, if little_endian { WRITER_AF64 } else { WRITER_ABF64 }))),
                 _ => Err(IOError::new(ErrorKind::Unsupported, "Unsupported data type"))
             }
         } else {
-            match typ.as_str() {
-                "bool" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_BOOL, WRITER_BOOL))),
-                "string" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_STRING, WRITER_STRING))),
-                "int8" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_I8, WRITER_I8))),
-                "uint8" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, READER_U8, WRITER_U8))),
-                "int16" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_I16 } else { READER_BI16 }, if little_endian { WRITER_I16 } else { WRITER_BI16 }))),
-                "uint16" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U16 } else { READER_BU16 }, if little_endian { WRITER_U16 } else { WRITER_BU16 }))),
-                "int32" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_I32 } else { READER_BI32 }, if little_endian { WRITER_I32 } else { WRITER_BI32 }))),
-                "uint32" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U32 } else { READER_BU32 }, if little_endian { WRITER_U32 } else { WRITER_BU32 }))),
-                "int64" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_I64 } else { READER_BI64 }, if little_endian { WRITER_I64 } else { WRITER_BI64 }))),
-                "uint64" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_U64 } else { READER_BU64 }, if little_endian { WRITER_U64 } else { WRITER_BU64 }))),
-                "float32" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_F32 } else { READER_BF32 }, if little_endian { WRITER_F32 } else { WRITER_BF32 }))),
-                "float64" => Ok(Box::new(ChannelScalar::new(name, typ, shape, little_endian, compression, if little_endian { READER_F64 } else { READER_BF64 }, if little_endian { WRITER_F64 } else { WRITER_BF64 }))),
+            match kind {
+                ScalarType::bool => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, READER_BOOL, WRITER_BOOL))),
+                ScalarType::string => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, READER_STRING, WRITER_STRING))),
+                ScalarType::int8 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, READER_I8, WRITER_I8))),
+                ScalarType::uint8 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, READER_U8, WRITER_U8))),
+                ScalarType::int16 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_I16 } else { READER_BI16 }, if little_endian { WRITER_I16 } else { WRITER_BI16 }))),
+                ScalarType::uint16 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_U16 } else { READER_BU16 }, if little_endian { WRITER_U16 } else { WRITER_BU16 }))),
+                ScalarType::int32 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_I32 } else { READER_BI32 }, if little_endian { WRITER_I32 } else { WRITER_BI32 }))),
+                ScalarType::uint32 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_U32 } else { READER_BU32 }, if little_endian { WRITER_U32 } else { WRITER_BU32 }))),
+                ScalarType::int64 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_I64 } else { READER_BI64 }, if little_endian { WRITER_I64 } else { WRITER_BI64 }))),
+                ScalarType::uint64 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_U64 } else { READER_BU64 }, if little_endian { WRITER_U64 } else { WRITER_BU64 }))),
+                ScalarType::float32 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_F32 } else { READER_BF32 }, if little_endian { WRITER_F32 } else { WRITER_BF32 }))),
+                ScalarType::float64 => Ok(Box::new(ChannelScalar::new(name, kind, shape, little_endian, compression, if little_endian { READER_F64 } else { READER_BF64 }, if little_endian { WRITER_F64 } else { WRITER_BF64 }))),
                 _ => Err(IOError::new(ErrorKind::Unsupported, "Unsupported data type"))
             }
         }
@@ -374,10 +372,10 @@ pub fn new(name: String, typ:String, shape:Option<Vec<u32>>, little_endian:bool,
 }
 pub fn copy(channel:& Box<dyn ChannelTrait>) -> IOResult<Box<dyn ChannelTrait>> {
     let name = channel.config().name().to_string();
-    let typ = channel.config().kind();
+    let kind = channel.config().kind();
     let shape = channel.config().shape();
     let little_endian   =   channel.config().is_little_endian();
     let compression = channel.config().compression();
     let raw = channel.config().is_raw();
-    new(name, typ, shape, little_endian, compression, raw)
+    new(name, kind, shape, little_endian, compression, raw)
 }

@@ -5,6 +5,7 @@ use crate::writer::*;
 use crate::compression::*;
 use crate::utils::LimitedHashMap;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::io::{Cursor};
 use std::thread;
 use indexmap::IndexMap;
@@ -50,6 +51,13 @@ fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResu
         .and_then(|v| v.as_str())
         .unwrap_or("float64")
         .to_string();
+    let kind = match ScalarType::try_from(typ.as_str()){
+        Ok(kind ) => {kind}
+        Err(_) => {
+            log::debug!("Received invalid channel type: {} - default to float64", typ);
+            ScalarType::float64
+        }
+    };
 
     let shape = convert_shape_val_to_vec(channel_data.get("shape"));
     let encoding = channel_data.get("encoding")
@@ -63,7 +71,7 @@ fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResu
         .and_then(|v| v.as_str())
         .unwrap_or("none"))?;
 
-    channel::new(name, typ, shape, little_endian, compression, raw)
+    channel::new(name, kind, shape, little_endian, compression, raw)
 }
 
 fn parse_channels(data_header: &HashMap<String, JsonValue>, raw: bool) -> IOResult<Vec<Box<dyn ChannelTrait>>> {

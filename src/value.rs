@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use serde::{Serialize, Deserialize};
 use byteorder::BigEndian;
 use std::mem;
 use crate::convert::*;
@@ -30,6 +31,51 @@ pub enum Value {
     AU64(Vec<u64>),
     AF32(Vec<f32>),
     AF64(Vec<f64>),
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub enum ScalarType {
+    string,
+    bool,
+    int8,
+    uint8,
+    int16,
+    uint16,
+    int32,
+    uint32,
+    int64,
+    uint64,
+    float32,
+    float64,
+}
+
+impl std::fmt::Display for ScalarType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl TryFrom<&str> for ScalarType {
+    type Error = ();
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "string"  => Ok(Self::string),
+            "bool"    => Ok(Self::bool),
+            "int8"    => Ok(Self::int8),
+            "uint8"   => Ok(Self::uint8),
+            "int16"   => Ok(Self::int16),
+            "uint16"  => Ok(Self::uint16),
+            "int32"   => Ok(Self::int32),
+            "uint32"  => Ok(Self::uint32),
+            "int64"   => Ok(Self::int64),
+            "uint64"  => Ok(Self::uint64),
+            "float32" => Ok(Self::float32),
+            "float64" => Ok(Self::float64),
+            _ => Err(()),
+        }
+    }
 }
 
 macro_rules! impl_as{
@@ -338,20 +384,20 @@ impl Value {
         }
     }
 
-    pub fn kind(&self) -> &str {
+    pub fn kind(&self) -> ScalarType {
         match self {
-            Value::STR(_) | Value::ASTR(_) => { "string" }
-            Value::BOOL(_) | Value::ABOOL(_) => { "bool" }
-            Value::I8(_) | Value::AI8(_) => { "int8" }
-            Value::U8(_) | Value::AU8(_) => { "uint8" }
-            Value::I16(_) | Value::AI16(_) => { "int16" }
-            Value::U16(_) | Value::AU16(_) => { "uint16" }
-            Value::I32(_) | Value::AI32(_) => { "int32" }
-            Value::U32(_) | Value::AU32(_) => { "uint32" }
-            Value::I64(_) | Value::AI64(_) => { "int64" }
-            Value::U64(_) | Value::AU64(_) => { "uint64" }
-            Value::F32(_) | Value::AF32(_) => { "float32" }
-            Value::F64(_) | Value::AF64 (_) => {"float64"}
+            Value::STR(_) | Value::ASTR(_) => { ScalarType::string }
+            Value::BOOL(_) | Value::ABOOL(_) => {ScalarType::bool }
+            Value::I8(_) | Value::AI8(_) => { ScalarType::int8 }
+            Value::U8(_) | Value::AU8(_) => { ScalarType::uint8 }
+            Value::I16(_) | Value::AI16(_) => { ScalarType::int16 }
+            Value::U16(_) | Value::AU16(_) => { ScalarType::uint16 }
+            Value::I32(_) | Value::AI32(_) => { ScalarType::int32 }
+            Value::U32(_) | Value::AU32(_) => { ScalarType::uint32 }
+            Value::I64(_) | Value::AI64(_) => { ScalarType::int64 }
+            Value::U64(_) | Value::AU64(_) => { ScalarType::uint64 }
+            Value::F32(_) | Value::AF32(_) => { ScalarType::float32 }
+            Value::F64(_) | Value::AF64 (_) => {ScalarType::float64 }
         }
     }
 

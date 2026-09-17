@@ -220,7 +220,7 @@ fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, 
     let values = create_test_values(v, s);
     for value in values {
         let shape = if value.is_array() { Some(vec![value.size() as u32]) } else { None };
-        let ch = channel::new(value.name().to_string(), value.kind().to_string(), shape, little_endian, comp.clone(), false)?;
+        let ch = channel::new(value.name().to_string(), value.kind(), shape, little_endian, comp.clone(), false)?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
         data.insert(ch.config().name().clone(), ch_data );
         channels.push(ch);
