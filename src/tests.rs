@@ -88,11 +88,11 @@ impl TestEnvironment {
         if !STARTED_SERVERS.load(Ordering::SeqCst) {
             STARTED_SERVERS.store(true, Ordering::SeqCst);
             println!("Starting senders...");
-            start_sender(Some(&bsread), TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
-            start_sender(Some(&bsread), TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None, false)?;
-            start_sender(Some(&bsread), TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None, false)?;
-            start_sender(Some(&bsread), TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None, false)?;
-            start_sender(Some(&bsread), TXP_FLAWED, SocketType::PUB, SENDER_INTERVAL, None, None, None, true)?;
+            start_sender(Some(&bsread), None, TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
+            start_sender(Some(&bsread), None, TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None, false)?;
+            start_sender(Some(&bsread), None, TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None, false)?;
+            start_sender(Some(&bsread), None, TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None, false)?;
+            start_sender(Some(&bsread), None, TXP_FLAWED, SocketType::PUB, SENDER_INTERVAL, None, None, None, true)?;
         }
         Ok(Self {bsread})
     }
@@ -604,8 +604,8 @@ fn pool_monitoring() ->  IOResult<()> {
     let TXP2: Transport = Transport::Tcp {port:10352, host:None};
     let endpoint2 = TXP2.endpoint();
     let server_lifetime = 2000;
-    start_sender(Some(&env.bsread), TXP1, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
-    start_sender(Some(&env.bsread), TXP2, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    start_sender(Some(&env.bsread), None, TXP1, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    start_sender(Some(&env.bsread), None, TXP2, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
     let mut pool = env.bsread.pool(vec![&endpoint1, &endpoint2], SocketType::SUB, CONNECTION_MODE, 2)?;
     let event_receiver = pool.enable_monitoring()?;
     pool.connect()?;
@@ -1244,7 +1244,7 @@ fn receiver_monitoring() ->  IOResult<()> {
     let TXP: Transport = Transport::Tcp {port:10350, host:None};
     let endpoint = TXP.endpoint();
     let server_lifetime = 2000;
-    start_sender(Some(&env.bsread), TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    start_sender(Some(&env.bsread), None, TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     let event_receiver = rec.enable_monitoring()?;
     rec.add_endpoint(&endpoint, None)?;
@@ -1311,7 +1311,7 @@ fn delayed() ->  IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(100)?;
     thread::sleep(Duration::from_millis(3000));
-    start_sender(Some(&env.bsread), TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
+    start_sender(Some(&env.bsread), None, TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
     let rx = rec.wait_messages(MESSAGE_COUNT as usize,  1000)?;
     assert_eq!(rx.len(), MESSAGE_COUNT as usize);
     assert_rec(&rec, Some(MESSAGE_COUNT), None);

@@ -212,7 +212,7 @@ lazy_static! {
     static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
 }
 
-fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, index:u64) -> IOResult<Message>{
+fn create_message(prefix: &Option<String>, v:u64, s:usize, compression:Option<Compression>, flawed:bool, index:u64) -> IOResult<Message>{
     let comp = compression.unwrap_or(Compression::None);
     let little_endian = true;
     let mut channels = Vec::new();
@@ -220,7 +220,11 @@ fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, 
     let values = create_test_values(v, s);
     for value in values {
         let shape = if value.is_array() { Some(vec![value.size() as u32]) } else { None };
-        let ch = channel::new(value.name().to_string(), value.kind(), shape, little_endian, comp.clone(), false)?;
+        let channel_name = match &prefix {
+            None => {value.name().to_string()}
+            Some(prefix) => {format!("{}:{}",prefix,value.name())}
+        };
+        let ch = channel::new(channel_name, value.kind(), shape, little_endian, comp.clone(), false)?;
         let ch_data = Some(ChannelData::new(value, (0, 0)));
         data.insert(ch.config().name().clone(), ch_data );
         channels.push(ch);
@@ -243,8 +247,8 @@ fn create_message(v:u64, s:usize, compression:Option<Compression>, flawed:bool, 
     Message::new_from_channel_map(id,TIMESTAMP_NOW, channels, data)
 }
 
-pub fn start_sender(bsread: Option<&Arc<Bsread>>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
-    fn create_sender(bsread: Option<Arc<Bsread>>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
+pub fn start_sender(bsread: Option<&Arc<Bsread>>, prefix: Option<String>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
+    fn create_sender(bsread: Option<Arc<Bsread>>, prefix: Option<String>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
         let ep = transport.endpoint().clone();
 
         let bsread = match bsread {
@@ -272,7 +276,7 @@ pub fn start_sender(bsread: Option<&Arc<Bsread>>, transport:Transport, socket_ty
             if now < next {
                 thread::sleep(next - now);
             }
-            match create_message(count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
+            match create_message(&prefix,  count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
                 Ok(msg) => {
                     match sender.send_message(&msg, true){
                         Ok(id) => {
@@ -304,7 +308,7 @@ pub fn start_sender(bsread: Option<&Arc<Bsread>>, transport:Transport, socket_ty
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            match create_sender(bs, transport, socket_type, interval_ms, block, compression, timeout, flawed){
+            match create_sender(bs, prefix, transport, socket_type, interval_ms, block, compression, timeout, flawed){
                 Ok(_) => {}
                 Err(e) => {log::warn!("Error creating Sender [endpoint={}, socketType={:?}]: {:?}", endpoint, socket_type, e)}
             }
