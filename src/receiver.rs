@@ -140,6 +140,7 @@ enum ReceiverCommand {
     SocketOptions {endpoint: String, response: Option<crossbeam_channel::Sender<IOResult<SocketOptions>>>,},
     Diagnostics{response: Option<crossbeam_channel::Sender<IOResult<HashMap<String, Arc<EndpointDiagnostics>>>>>,},
     ResetCounters {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
+    ResetHeaders {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
     SendDiag {endpoint: Option<String>, diag: EndpointDiag, id:Option<u64>, response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
 }
 
@@ -425,6 +426,14 @@ impl Worker {
                             let _ = response.send(Ok(()));
                         }
                     }
+
+                    ReceiverCommand::ResetHeaders { response } => {
+                        self.reset_headers();
+                        if let Some(response) = response {
+                            let _ = response.send(Ok(()));
+                        }
+                    }
+
                     ReceiverCommand::SendDiag { endpoint, diag, id, response } => {
                         let ret = self.send_diag(&endpoint, diag, id);
                         if let Some(response) = response {
@@ -662,6 +671,10 @@ impl Worker {
         if let Some(fifo) = &self.fifo {
             fifo.reset_dropped()
         }
+    }
+
+    fn reset_headers(& mut self) {
+        self.header_buffer.clear();
     }
 
     fn message_count(&self) -> u32 {
@@ -1352,6 +1365,14 @@ impl Receiver{
             worker.reset_counters();
         } else if self.delivery_mode.thraded(){
             self.send_command_no_wait(|_| { ReceiverCommand::ResetCounters { response:None } });
+        }
+    }
+
+    pub fn reset_headers(& mut self) {
+        if let Some(mut worker) = self.worker.as_mut() {
+            worker.reset_headers();
+        } else if self.delivery_mode.thraded(){
+            self.send_command_no_wait(|_| { ReceiverCommand::ResetHeaders { response:None } });
         }
     }
 

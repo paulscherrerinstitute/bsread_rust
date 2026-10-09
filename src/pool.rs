@@ -401,6 +401,12 @@ Pool {
         }
     }
 
+    pub fn reset_headers(& mut self){
+        for receiver in &mut self.receivers {
+            receiver.reset_headers();
+        }
+    }
+
     pub fn diagnostics(&self) -> HashMap<String, Arc<EndpointDiagnostics>> {
         let mut diags  = HashMap::new();
         for receiver in &self.receivers {

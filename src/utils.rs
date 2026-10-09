@@ -79,6 +79,11 @@ where
         self.map.remove(key)
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+
     /// Return a copy of the map keys
     pub fn keys(&self) -> Vec<K>{
         Vec::from(self.order.clone())

@@ -63,8 +63,8 @@ impl ChannelConfig {
         metadata
     }
 
-    pub fn into_parts(self: Self) -> (String, ScalarType, Option<Vec<u32>>) {
-        (self.name, self.kind, self.shape)
+    pub fn into_parts(self: Self) -> (String, ScalarType, Option<Vec<u32>>, usize) {
+        (self.name, self.kind, self.shape, self.elements)
     }
 }
 
