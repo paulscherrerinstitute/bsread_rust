@@ -26,6 +26,10 @@ use crate::dispatcher::ChannelDescription;
 //Constants
 pub const HTYPE:&str = "bsr_m-1.1";
 
+//Python bsread expects scalars with shape (1), Java with shape ().
+//If SCALAR_SHAPE_EMPTY then supports array with size 1
+pub const SCALAR_SHAPE_EMPTY:bool = false;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compression {
     None,

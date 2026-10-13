@@ -51,8 +51,11 @@ impl ChannelConfig {
     pub fn metadata(&self) -> HashMap<String, JsonValue> {
         let mut metadata: HashMap<String, JsonValue> = HashMap::new();
         metadata.insert("name".to_string(), JsonValue::String(self.name()));
-        //let shape = self.get_shape().unwrap_or(Vec::new());
-        let shape = self.shape().unwrap_or(vec![]);
+        let shape = if SCALAR_SHAPE_EMPTY {
+            self.shape().unwrap_or(Vec::new())
+        }  else {
+            self.shape().unwrap_or(vec![1])
+        };
         let shape_json = JsonValue::Array(shape.into_iter().map(|num| JsonValue::Number(num.into())).collect());
         metadata.insert("shape".to_string(),shape_json);
         metadata.insert("type".to_string(), JsonValue::String(self.kind().to_string()));
@@ -311,11 +314,15 @@ impl ChannelTrait for ChannelArray<String> {
     }
 }
 
-//Bsread does not support arrays with size=1
 pub fn is_array(shape:&Option<Vec<u32>>) -> bool{
     match shape {
         None => {false},
-        Some(s) => (s.len()>0) && (s[0]>1)
+        Some(s) => {
+            if s.len()==1 && s[0]==1{
+                return SCALAR_SHAPE_EMPTY;
+            }
+            s.len()>0
+        }
     }
 }
 
