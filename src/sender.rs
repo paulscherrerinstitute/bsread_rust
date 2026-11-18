@@ -115,6 +115,13 @@ impl Sender {
         if channel_data.len() != channels.len(){
             return Err(IOError::new(ErrorKind::InvalidInput, "Invalid size of channel data list"));
         }
+        if channel_data.iter().any(|item| item.is_none()) {
+            return Err(IOError::new(ErrorKind::InvalidInput, "Missing channel data is not supported"));
+        }
+        if self.data_header_buffer.is_empty() {
+            return Err(IOError::new(ErrorKind::InvalidInput, "Data header buffer is empty"));
+        }
+
 
         let sent_id = self.update_main_header(id, timestamp);
 
@@ -130,15 +137,13 @@ impl Sender {
         self.socket.send(main_header_buffer, flags_more)?;
         self.socket.send(&self.data_header_buffer, if valid_channels>0 {flags_more} else {flags_last} )?;
 
-        let mut channel_index = 0;
         for i in 0..channels.len(){
             let ch = &channels[i];
+            let last = i >= (valid_channels- 1);
             if let Some(channel_data) = &channel_data[i] {
-                let last = channel_index >= (valid_channels- 1);
                 let (data,tm) =  serialize_channel(&ch, &channel_data)?;
                 self.socket.send(data, flags_more)?;
                 self.socket.send(tm, if last {flags_last} else {flags_more})?;
-                channel_index = channel_index + 1;
             } ;
         }
         Ok(sent_id)

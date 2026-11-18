@@ -5,6 +5,7 @@ use std::io::{Cursor};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::cmp;
 
+const MAX_DECOMPRESSED_SIZE: usize = 1024 * 1024 * 100; // 100MB
 
 unsafe extern "C" {
     pub fn bshuf_decompress_lz4(
@@ -30,16 +31,34 @@ unsafe extern "C" {
 }
 
 fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, String> {
-    let elem_size = elem_size;
+    if elem_size == 0 {
+        return Err("Element size cannot be zero".to_string());
+    }
     let mut c =  Cursor::new(input);
     let size_out = c
         .read_u64::<BigEndian>()
         .map_err(|e| format!("Failed to read output size: {}", e))? as usize;
+    if size_out % elem_size !=0 {
+        return Err("Output size is not a multiple of element size".to_string());
+    }
+    if size_out > MAX_DECOMPRESSED_SIZE {
+        return Err(format!("Output size {} exceeds maximum {}", size_out, MAX_DECOMPRESSED_SIZE));
+    }
+
     let elements = size_out/elem_size;
     let block_size = c
         .read_u32::<BigEndian>()
         .map_err(|e| format!("Failed to read block size: {}", e))?;
+    if block_size == 0 {
+        return Err("Block size cannot be zero".to_string());
+    }
+    if block_size % elem_size as u32 != 0 {
+        return Err("Block size is not a multiple of element size".to_string());
+    }
     let block_size = block_size / (elem_size as u32);
+    if input.len() <12 {
+        return Err("Input buffer is too small".to_string());
+    }
     let blob = &input[12..];
     let mut output = vec![0u8; size_out];
 
@@ -63,7 +82,9 @@ fn bshuf_untrans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, 
 
 
 fn  bshuf_trans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, String> {
-    let elem_size = elem_size;
+    if elem_size == 0 {
+        return Err("Element size cannot be zero".to_string());
+    }
     let blob_in = &input[0..];
     let target_block_size = 8192;
     let minimum_block_size = 128;
@@ -109,16 +130,22 @@ fn  bshuf_trans_bit_elem(input: &[u8],  elem_size: usize, ) -> Result<Vec<u8>, S
 pub fn decompress_bitshuffle_lz4(compressed_data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_untrans_bit_elem(&compressed_data, element_size) {
         Ok(out) => {Ok(out)}
-        Err(e) => {Err(IOError::new(ErrorKind::InvalidInput, e.as_str()))}
+        Err(e) => {Err(IOError::new(ErrorKind::InvalidData, e.as_str()))}
     }
 }
 
 pub fn decompress_lz4(compressed_data: &[u8], little_endian:bool) -> IOResult<Vec<u8>> {
+    if compressed_data.len() < 4 {
+        return Err(IOError::new(ErrorKind::UnexpectedEof, "LZ4 payload too short"));
+    }
     let size = if little_endian {
-        (compressed_data[0] as i32) | (compressed_data[1] as i32) << 8 | (compressed_data[2] as i32) << 16 | (compressed_data[3] as i32) << 24
+        u32::from_le_bytes(compressed_data[0..4].try_into().unwrap())
     } else {
-        (compressed_data[3] as i32) | (compressed_data[2] as i32) << 8 | (compressed_data[1] as i32) << 16 | (compressed_data[0] as i32) << 24
+        u32::from_be_bytes(compressed_data[0..4].try_into().unwrap())
     };
+    let size = i32::try_from(size)
+        .map_err(|_| IOError::new(ErrorKind::InvalidData, "LZ4 size exceeds i32::MAX"))?;
+
     let blob: &[u8] = &compressed_data[4..];
     let output = lz4_decompress(blob, Some(size))?;
     Ok(output)
@@ -128,7 +155,7 @@ pub fn decompress_lz4(compressed_data: &[u8], little_endian:bool) -> IOResult<Ve
 pub fn compress_bitshuffle_lz4(data: &[u8], element_size: usize) -> IOResult<Vec<u8>> {
     match bshuf_trans_bit_elem(data, element_size){
         Ok(out) => {Ok(out)}
-        Err(e) => {Err(IOError::new(ErrorKind::InvalidInput, e.as_str()))}
+        Err(e) => {Err(IOError::new(ErrorKind::InvalidData, e.as_str()))}
     }
 }
 

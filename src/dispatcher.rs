@@ -133,10 +133,11 @@ fn remove_stream(stream: &str) -> IOResult<()> {
         .map_err(|e: ReqwestError| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
     if !response.status().is_success() {
-        match response.text(){
+        let error_msg =match response.text(){
             Ok(msg) => { format!("Unable to delete stream {}: {}", stream, msg)}
             Err(err) => {format!("Error deleting stream {}: {}", stream, err.to_string())}
         };
+        return Err(IOError::new(ErrorKind::Other, error_msg));
     }
     Ok(())
 }

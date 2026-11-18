@@ -511,6 +511,22 @@ fn buffered() -> IOResult<()> {
 }
 
 #[test]
+fn restart() -> IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
+    for i in 0..2 {
+        rec.start(100)?;
+        for _ in 0..MESSAGE_COUNT {
+            print_message(&rec.wait(1000)?);
+        }
+        rec.stop()?;
+        assert_rec(&rec, Some(MESSAGE_COUNT), None);
+    }
+    Ok(())
+}
+
+
+#[test]
 fn limited_hashmap() {
     let mut limited_map = utils::LimitedHashMap::new(3);
     limited_map.insert("a", 1);
@@ -847,6 +863,8 @@ fn lz4() ->  IOResult<()> {
     let compressed = compress_lz4(&buffer,little_endian)?;
     let decompressed = decompress_lz4(&compressed, little_endian)?;
     assert_eq!(&buffer, &decompressed);
+    assert!(decompress_lz4(&[], true).is_err());//Ok, should not panic
+    assert!(decompress_lz4(&[1, 2, 3], true).is_err()); //Ok, should not panic
     Ok(())
 }
 

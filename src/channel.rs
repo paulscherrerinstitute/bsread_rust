@@ -197,7 +197,7 @@ impl ChannelTrait for ChannelRaw {
     }
 
     fn read(&self, cursor: &mut Cursor<&Vec<u8>>) -> IOResult<Value> {
-        let size = self.config.elements * self.config.elements;
+        let size = self.config.size();
         let mut buffer: Vec<u8> = Vec::with_capacity(size);
         unsafe {
             buffer.set_len(size); // Initialize the buffer without default values

@@ -24,21 +24,26 @@ fn decode_json(bytes: &Vec<u8>) -> Result<HashMap<String, JsonValue>, JSonError>
     serde_json::from_slice(&bytes)
 }
 
-fn convert_shape_val_to_vec(opt_val: Option<&JsonValue>) -> Option<Vec<u32>> {
-    opt_val.and_then(|val| {
-        if let JsonValue::Array(arr) = val {
-            // Try converting all elements to integers
-            let vec: Option<Vec<u32>> = arr
-                .into_iter()
-                .map(|item| item.as_i64().and_then(|n| Some(n as u32)))
-                .collect();
+fn convert_shape_val_to_vec(opt_val: Option<&JsonValue>) -> IOResult<Option<Vec<u32>>> {
+    let Some(val) = opt_val else {
+        return Ok(None);
+    };
+    let JsonValue::Array(arr) = val else {
+        return Ok(None);
+    };
 
-            // Return None if vec is empty, otherwise Some(vec)
-            vec.filter(|v| !v.is_empty())
-        } else {
-            None
-        }
-    })
+    let mut shape = Vec::with_capacity(arr.len());
+    for item in arr {
+        let n = item.as_i64().ok_or_else(|| IOError::new(ErrorKind::InvalidInput, "Invalid shape dimension"))?;
+        let n = u32::try_from(n).map_err(|_| IOError::new(ErrorKind::InvalidInput, "Invalid negative or oversized shape dimension"))?;
+        shape.push(n);
+    }
+
+    if shape.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(shape))
+    }
 }
 
 fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResult<Box<dyn ChannelTrait>> {
@@ -59,7 +64,7 @@ fn parse_channel(channel_data: &JsonMap<String, JsonValue>, raw: bool) -> IOResu
         }
     };
 
-    let shape = convert_shape_val_to_vec(channel_data.get("shape"));
+    let shape = convert_shape_val_to_vec(channel_data.get("shape"))?;
     let encoding = channel_data.get("encoding")
         .and_then(|v| v.as_str())
         .unwrap_or("")
@@ -287,6 +292,9 @@ impl Message {
     }
 
     pub fn new_from_channel_vec(id:u64, timestamp: (u64, u64),  channels: &Vec<Box<dyn ChannelTrait>>, mut channel_data:Vec<Option<ChannelData>>) -> IOResult<Self> {
+        if channel_data.len() != channels.len() {
+            return Err(IOError::new(ErrorKind::InvalidInput, "Invalid size of channel data list"));
+        }
         let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
         for i in 0..channels.len() {
             //data.insert(channels[i].config().get_name().clone(),channel_data[i].clone());
@@ -440,8 +448,8 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last
         let v = &message_parts[2 * i + 2];
         let t = &message_parts[2 * i + 3];
 
-        let channel_data = parse_channel_data(&global_timestamp, channel, v, t, raw).ok();
-        data.insert(channel.config().name(), channel_data);
+        let channel_data = parse_channel_data(&global_timestamp, channel, v, t, raw)?;
+        data.insert(channel.config().name(), Some(channel_data));
     }
     let msg = Message::new(main_header, data_header, channels, data, Some(changed), raw);
 

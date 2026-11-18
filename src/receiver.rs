@@ -1046,6 +1046,7 @@ impl Receiver{
     where
         F: Fn(ReceivedMessage),
     {
+        self.interrupted.store(false, Ordering::Relaxed);
         self.create_worker().listen(callback, num_messages)
     }
 
@@ -1061,6 +1062,7 @@ impl Receiver{
         F: Fn(ReceivedMessage) + Send + 'static,
     {
         self.worker = None;
+        self.interrupted.store(false, Ordering::Relaxed);
 
         let index = self.index;
         let bsread = Arc::clone(&self.bsread);
@@ -1140,6 +1142,7 @@ impl Receiver{
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.worker = None;
+        self.interrupted.store(false, Ordering::Relaxed);
 
         let index = self.index;
         let bsread = Arc::clone(&self.bsread);

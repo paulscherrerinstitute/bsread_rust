@@ -86,6 +86,10 @@ Pool {
             Some(index) => {index}
         };
 
+        if index >= self.receivers.len(){
+            return Err(IOError::new(ErrorKind::Other, format!("Invalid receiver index: {}", index)));
+        }
+
         if self.has_endpoint(endpoint) {
             if let Some(receiver) = self.endpoint_receiver(endpoint){
                 if self.receivers[index].index() == receiver.index() {
@@ -96,10 +100,6 @@ Pool {
             }
             return Err(IOError::new(ErrorKind::InvalidInput, "endpoint already exists"));
         }
-        if index >= self.receivers.len(){
-            return Err(IOError::new(ErrorKind::Other, format!("Invalid receiver index: {}", index)));
-        }
-
         self.receivers[index].add_endpoint(endpoint,socket_type)?;
         Ok(())
     }
@@ -225,14 +225,16 @@ Pool {
 
     pub fn join(&mut self) -> IOResult<()> {
         for receiver in &mut self.receivers{
-            receiver.interrupt();
+            receiver.join();
         }
         Ok(())
     }
 
     pub fn stop(&mut self) -> IOResult<()> {
-        self.interrupt();
-        self.join();
+        self.interrupt()?;
+        for receiver in &mut self.receivers{
+            receiver.stop();
+        }
         Ok(())
     }
 
@@ -298,8 +300,8 @@ Pool {
 
     #[cfg(feature = "async")]
     pub async fn stop_async(&mut self) -> IOResult<()> {
-        self.interrupt();
-        self.join_async().await;
+        self.interrupt()?;
+        self.join_async().await?;
         Ok(())
     }
 
