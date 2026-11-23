@@ -104,7 +104,7 @@ where
 /// Thread-safe FIFO queue with a maximum size
 pub struct FifoQueue<K> {
     queue: Mutex<VecDeque<K>>,          // Thread-safe FIFO
-    dropped_count: Mutex<u32>,        // Counter for dropped items
+    dropped_count: Mutex<u64>,        // Counter for dropped items
     max_size: usize,                  // Maximum size of the FIFO
     available: Condvar,
 }
@@ -157,7 +157,7 @@ impl<K> FifoQueue<K> {
     }
 
     /// Retrieves the total count of dropped messages.
-    pub  fn dropped_count(&self) -> u32 {
+    pub  fn dropped_count(&self) -> u64 {
         *self.dropped_count.lock().unwrap()
     }
 

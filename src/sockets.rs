@@ -7,7 +7,7 @@ use md5::digest::consts::P1;
 use serde::Serialize;
 use uuid::Uuid;
 use crate::{IOResult, Receiver};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use crate::utils::app_name;
 
 #[derive(Clone, Debug)]
@@ -540,19 +540,19 @@ fn index() -> u32{
 }
 
 pub struct EndpointDiagnostics {
-    counters: [AtomicU32; EndpointDiag::COUNT],
+    counters: [AtomicU64; EndpointDiag::COUNT],
 }
 
 impl EndpointDiagnostics {
     pub fn new() -> Self {
-        Self { counters: [const { AtomicU32::new(0) }; EndpointDiag::COUNT] }
+        Self { counters: [const { AtomicU64::new(0) }; EndpointDiag::COUNT] }
     }
 
-    pub fn get(&self, diag: EndpointDiag) -> u32 {
+    pub fn get(&self, diag: EndpointDiag) -> u64 {
         self.counters[diag as usize].load(Ordering::Relaxed)
     }
 
-    pub fn as_map(&self) -> HashMap<EndpointDiag, u32>  {
+    pub fn as_map(&self) -> HashMap<EndpointDiag, u64>  {
         let mut ret = HashMap::new();
         for diag in EndpointDiag::ALL {
             let counter =  self.get(*diag);
@@ -717,7 +717,7 @@ impl TrackedSocket {
         self.diags.counters[diag as usize].fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn diag(&self, diag: EndpointDiag) -> u32 {
+    pub fn diag(&self, diag: EndpointDiag) -> u64 {
         self.diags.counters[diag as usize].load(Ordering::Relaxed)
     }
 

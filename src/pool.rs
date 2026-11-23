@@ -164,7 +164,7 @@ Pool {
 
     //TODO: this is blocking in each receiver
     //Synchronous Mode: blocking, callback in same thread
-    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
+    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u64>) -> IOResult<()>
         where
         F: Fn(ReceivedMessage),
         {
@@ -365,21 +365,21 @@ Pool {
             .sum()
     }
 
-    pub fn messages(&self) -> u32 {
+    pub fn messages(&self) -> u64 {
         self.receivers
             .iter()
             .map(|r| r.messages())
             .sum()
     }
 
-    pub fn errors(&self) -> u32 {
+    pub fn errors(&self) -> u64 {
         self.receivers
             .iter()
             .map(|r| r.errors())
             .sum()
     }
 
-    pub fn dropped(&self) -> u32 {
+    pub fn dropped(&self) -> u64 {
         self.receivers
             .iter()
             .map(|r| r.dropped())
@@ -442,12 +442,12 @@ Pool {
             .map_or(None, |receiver| receiver.endpoint_diagnostics(endpoint))
     }
 
-    pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u32> {
+    pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u64> {
         self.endpoint_receiver(endpoint)
             .map_or(None, |receiver| receiver.endpoint_diagnostic(endpoint, diag))
     }
 
-    pub fn header_changes(&self, endpoint: &str) -> u32 {
+    pub fn header_changes(&self, endpoint: &str) -> u64 {
         self.endpoint_receiver(endpoint)
             .map_or(0, |receiver| receiver.header_changes(endpoint))
     }

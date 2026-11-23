@@ -8,7 +8,7 @@ use std::error::Error;
 use std::io::SeekFrom::End;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, RwLock, OnceLock};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use zmq::{Context, PollItem, SocketEvent, SocketType};
 use std::time::{Duration, Instant};
@@ -23,9 +23,9 @@ fn index() -> u32{
 }
 
 struct Stats {
-    counter_messages: AtomicU32,
-    counter_error: AtomicU32,
-    counter_drop: AtomicU32,
+    counter_messages: AtomicU64,
+    counter_error: AtomicU64,
+    counter_drop: AtomicU64,
 }
 
 impl Stats{
@@ -54,9 +54,9 @@ impl Endpoint{
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MessageStats {
-    pub messages: u32,
-    pub errors: u32,
-    pub dropped: u32,
+    pub messages: u64,
+    pub errors: u64,
+    pub dropped: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,7 +323,7 @@ impl Worker {
     }
 
     //Synchronous Mode: blocking, callback in same thread
-    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
+    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u64>) -> IOResult<()>
     where
         F: Fn(ReceivedMessage),
     {
@@ -677,7 +677,7 @@ impl Worker {
         self.header_buffer.clear();
     }
 
-    fn message_count(&self) -> u32 {
+    fn message_count(&self) -> u64 {
         self.stats.counter_messages.load(Ordering::Relaxed)
     }
 
@@ -761,7 +761,7 @@ impl Worker {
         socket_type: SocketType,
         connection_mode: ConnectionMode,
         callback: F,
-        num_messages: Option<u32>,
+        num_messages: Option<u64>,
         fifo: Option<Arc<FifoQueue<ReceivedMessage>>>,
         stats: Arc<Stats>,
         forwarder_config: Option<ForwarderConfig>,
@@ -830,8 +830,8 @@ impl Receiver{
             .map(|(address)| Endpoint::new(address, None))
             .collect();
         let endpoints = Arc::new(RwLock::new(endpoints));
-        let stats = Arc::new(Stats{counter_messages:AtomicU32::new(0),
-            counter_error:AtomicU32::new(0), counter_drop:AtomicU32::new(0)});
+        let stats = Arc::new(Stats{counter_messages:AtomicU64::new(0),
+            counter_error:AtomicU64::new(0), counter_drop:AtomicU64::new(0)});
         let delivery_mode = DeliveryMode::Inline;
         let  interrupted = Arc::new(AtomicBool::new(false));
         let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
@@ -1042,7 +1042,7 @@ impl Receiver{
     }
 
     //Synchronous Mode: blocking, callback in same thread
-    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u32>) -> IOResult<()>
+    pub fn listen<F>(&mut self, callback: F, num_messages: Option<u64>) -> IOResult<()>
     where
         F: Fn(ReceivedMessage),
     {
@@ -1057,7 +1057,7 @@ impl Receiver{
     }
 
     //Threaded Mode: non-blocking, callback in another thread
-    pub fn fork<F>(&mut self, callback: F, num_messages: Option<u32>)
+    pub fn fork<F>(&mut self, callback: F, num_messages: Option<u64>)
     where
         F: Fn(ReceivedMessage) + Send + 'static,
     {
@@ -1133,7 +1133,7 @@ impl Receiver{
     pub fn start_async<F, Fut>(
         &mut self,
         callback: F,
-        num_messages: Option<u32>,
+        num_messages: Option<u64>,
         execution: AsyncExecution,
         handle: Option<tokio::runtime::Handle>,
     )
@@ -1404,12 +1404,12 @@ impl Receiver{
         self.diagnostics().get(endpoint).cloned()
     }
 
-    pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u32> {
+    pub fn endpoint_diagnostic(& self,  endpoint: &str, diag:EndpointDiag) -> Option<u64> {
         let stats = self.diagnostics().get(endpoint)?;
         Some(stats.get(diag))
     }
 
-    pub fn header_changes(& self,  endpoint:  &str) -> u32 {
+    pub fn header_changes(& self,  endpoint:  &str) -> u64 {
         if let Some(stats) =self.diagnostics().get(endpoint){
             let mut header_changes = stats.get(EndpointDiag::HeaderChange);
             if header_changes == 0 {
@@ -1421,15 +1421,15 @@ impl Receiver{
         }
     }
 
-    pub fn messages(&self) -> u32 {
+    pub fn messages(&self) -> u64 {
         self.stats.counter_messages.load(Ordering::Relaxed)
     }
 
-    pub fn errors(&self) -> u32 {
+    pub fn errors(&self) -> u64 {
         self.stats.counter_error.load(Ordering::Relaxed)
     }
 
-    pub fn dropped(&self) -> u32 {
+    pub fn dropped(&self) -> u64 {
         if let Some(fifo) = &self.fifo {
             fifo.dropped_count()
         } else {

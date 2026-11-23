@@ -53,7 +53,7 @@ fn on_message(message: ReceivedMessage) -> () {
 }
 
 const SENDER_INTERVAL: u64 = 100;
-const MESSAGE_COUNT: u32 = 10;
+const MESSAGE_COUNT: u64 = 10;
 const TXP_PUB: Transport = Transport::Tcp {port:10300, host:None};
 const TXP_CMP: Transport= Transport::Tcp {port:10301, host:None};
 const TXP_PUSH: Transport = Transport::Tcp {port:10302, host:None};
@@ -116,7 +116,7 @@ impl Drop for TestEnvironment {
     }
 }
 
-fn assert_rec(rec : &Receiver, min_msg_count: Option<u32>, connections: Option<u32>){
+fn assert_rec(rec : &Receiver, min_msg_count: Option<u64>, connections: Option<u32>){
     assert_eq!(rec.connections(), connections.unwrap_or(1) as usize);
     assert_eq!(rec.dropped(),0);
     match min_msg_count{
@@ -132,7 +132,7 @@ fn assert_rec(rec : &Receiver, min_msg_count: Option<u32>, connections: Option<u
     for endpoint in rec.diagnostics_endpoints() {
         match CONNECTION_MODE{
             ConnectionMode::Shared => {
-                assert_eq!(rec.header_changes(&endpoint),rec.connections() as u32);
+                assert_eq!(rec.header_changes(&endpoint),rec.connections() as u64);
             }
             ConnectionMode::Individual => {
                 assert_eq!(rec.header_changes(&endpoint), 1);
@@ -1036,7 +1036,7 @@ fn sender_demo() ->  IOResult<()> {
     sender.start()?;
 
     //Sends MESSAGE_COUNT messages every SENDER_INTERVAL ms.
-    let mut count:u32 = 0;
+    let mut count:u64 = 0;
     while count < MESSAGE_COUNT{
         let mut data = Vec::new();
         data.push(Some(ChannelData::new(Value::U64(count as u64), TIMESTAMP_NOW)));
@@ -1343,7 +1343,7 @@ fn delayed() ->  IOResult<()> {
 fn flawed() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let endpoint = TXP_FLAWED.endpoint();
-    let mut diag_counts: HashMap<EndpointDiag, u32> = HashMap::new();
+    let mut diag_counts: HashMap<EndpointDiag, u64> = HashMap::new();
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     let event_receiver = rec.enable_monitoring()?;
     rec.fork(on_message, Some(MESSAGE_COUNT));
