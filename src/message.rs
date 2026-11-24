@@ -124,39 +124,43 @@ impl ChannelData {
     }
 }
 
-fn parse_channel_data(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, v: &Vec<u8>, t: &Vec<u8>, raw:bool) -> IOResult<ChannelData> {
-    //if t.len() != 16 {
-    //    return Err(IOError::new(ErrorKind::InvalidData, format!("Invalid channel timestamp: {:?}", t).as_str()));
-    //}
-    let timestamp = if (t.len() == 16){
+
+/// Takes ownership of the channel payload `v` so raw/uncompressed data is moved
+/// into the resulting `Value` without copying, and decompressed buffers are
+/// moved instead of cloned.
+fn parse_channel_data(global_timestamp:&(u64, u64), channel: &Box<dyn ChannelTrait>, v: Vec<u8>, t: &Vec<u8>, raw:bool) -> IOResult<ChannelData> {
+    let timestamp = if t.len() == 16 {
         let mut cursor = Cursor::new(t);
         let timestamp_secs = READER_U64(&mut cursor)?;
         let timestamp_nanos = READER_U64(&mut cursor)?;
         (timestamp_secs, timestamp_nanos)
     } else {
-        global_timestamp.clone()
+        *global_timestamp
     };
 
-    let data = match channel.config().compression() {
+    let config = channel.config();
+    let data: Vec<u8> = match config.compression() {
         Compression::BitshuffleLz4 => {
-            &decompress_bitshuffle_lz4(v, channel.config().element_size())
+            decompress_bitshuffle_lz4(&v, config.element_size())
                 .map_err(|e| IOError::new(DECOMPRESSION_ERROR, e))?
         }
         Compression::Lz4 => {
-            &decompress_lz4(v,  channel.config().is_little_endian())
+            decompress_lz4(&v, config.is_little_endian())
                 .map_err(|e| IOError::new(DECOMPRESSION_ERROR, e))?
         }
-        Compression::None => { v }
+        // Zero-copy: reuse the received frame buffer.
+        Compression::None => v,
     };
-    // Create a Cursor to read from the vector
-    if raw {
-        Ok(ChannelData { value: Value::AU8(data.clone()), timestamp: timestamp })
+
+    let value = if raw && (channel.config().is_little_endian() || (channel.config().element_size() == 1)) {
+        Value::AU8(data)
     } else {
-        let mut cursor = Cursor::new(data);
-        let value = channel.read(&mut cursor)?;
-        Ok(ChannelData { value, timestamp })
-    }
+        let mut cursor = Cursor::new(&data);
+        channel.read(&mut cursor)?
+    };
+    Ok(ChannelData { value, timestamp })
 }
+
 
 pub fn serialize_channel(channel: &Box<dyn ChannelTrait>, channel_data: & ChannelData) -> IOResult<(Vec<u8>,Vec<u8>)> {
     let  value = channel_data.value();
@@ -398,8 +402,7 @@ pub fn create_data_header(channels: &Vec<Box<dyn ChannelTrait>>,)-> IOResult<Has
     Ok(data_header)
 }
 
-pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo>, raw:bool) -> IOResult<Message> {
-    let mut data = IndexMap::new();
+pub fn parse_message(mut message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last_headers:& mut LimitedHashMap<String, DataHeaderInfo>, raw:bool) -> IOResult<Message> {
     if message_parts.len() < 2 {
         return Err(IOError::new(ErrorKind::InvalidData, "Invalid message format"));
     }
@@ -443,9 +446,10 @@ pub fn parse_message(message_parts: Vec<Vec<u8>>, endpoint:&Option<String>, last
     if message_parts.len() - 2 != channels.len() * 2 {
         return Err(IOError::new(ErrorKind::InvalidData, "Invalid number of messages"));
     }
-    for i in 0..channels.len() {
-        let channel = &channels[i];
-        let v = &message_parts[2 * i + 2];
+    let mut data = IndexMap::with_capacity(channels.len());
+    for (i, channel) in channels.iter().enumerate() {
+        // Move the payload frame out instead of borrowing it; it is not used afterwards.
+        let v = std::mem::take(&mut message_parts[2 * i + 2]);
         let t = &message_parts[2 * i + 3];
 
         let channel_data = parse_channel_data(&global_timestamp, channel, v, t, raw)?;

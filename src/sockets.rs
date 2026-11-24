@@ -8,6 +8,7 @@ use serde::Serialize;
 use uuid::Uuid;
 use crate::{IOResult, Receiver};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use crossbeam_channel::{SendError, TrySendError};
 use crate::utils::app_name;
 
 #[derive(Clone, Debug)]
@@ -355,7 +356,22 @@ pub struct SocketMonitor {
     diag_rx:crossbeam_channel::Receiver<EndpointEvent>,
     cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
     endpoint_states: Arc<RwLock<HashMap<String, EndpointState>>>,
-    lifetime: Arc<()>,
+    lifetime: Arc<MonitorLifetime>,
+}
+
+/// Shared by all SocketMonitor clones. Its Drop runs exactly once, when the
+/// last clone is dropped, so shutdown cannot be skipped by concurrent drops.
+struct MonitorLifetime {
+    cmd_tx: crossbeam_channel::Sender<MonitorCommand>,
+}
+
+impl Drop for MonitorLifetime {
+    fn drop(&mut self) {
+        if self.cmd_tx.send(MonitorCommand::Shutdown).is_err() {
+            // Thread already exited (explicit shutdown() or poll error).
+            log::debug!("Socket monitor thread already stopped");
+        }
+    }
 }
 
 struct MonitorEntry {
@@ -446,11 +462,18 @@ impl SocketMonitor {
                 }
             }
         });
-    Self {endpoint_states, cmd_tx, diag_tx, diag_rx, lifetime: Arc::new(())}
+        let lifetime = Arc::new(MonitorLifetime { cmd_tx: cmd_tx.clone() });
+        Self {endpoint_states, cmd_tx, diag_tx, diag_rx, lifetime}
     }
     pub fn shutdown(&self) {
-        if let Err(err) = self.cmd_tx.send(MonitorCommand::Shutdown){
-            log::error!("Error shutting down socket monitoring: {}", err);
+        match self.cmd_tx.try_send(MonitorCommand::Shutdown) {
+            Ok(()) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                // Receiver has already been dropped.
+            }
+            Err(TrySendError::Full(_)) => {
+                log::warn!("Cannot queue socket monitoring shutdown: channel is full");
+            }
         }
     }
 
@@ -461,7 +484,7 @@ impl SocketMonitor {
     }
 
     pub fn remove(&self,index: u32) {
-        if let Err(err) = self.cmd_tx.send(MonitorCommand::Remove(index)){
+        if let Err(err) = self.cmd_tx.send(MonitorCommand::Remove(index)) {
             log::error!("Error removing socket monitoring: {}", err);
         }
     }
@@ -519,16 +542,6 @@ impl SocketMonitor {
                     *state = EndpointState::Connected;
                 }
             }
-        }
-    }
-}
-
-
-impl Drop for SocketMonitor {
-    fn drop(&mut self) {
-        let clones = Arc::strong_count(&self.lifetime);
-        if clones == 1 {
-            self.shutdown();
         }
     }
 }

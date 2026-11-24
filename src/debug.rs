@@ -212,9 +212,8 @@ lazy_static! {
     static ref SENDER_HANDLES: Mutex<Vec<JoinHandle<IOResult<()>>>> = Mutex::new(Vec::new());
 }
 
-fn create_message(prefix: &Option<String>, v:u64, s:usize, compression:Option<Compression>, flawed:bool, index:u64) -> IOResult<Message>{
+fn create_message(prefix: &Option<String>, v:u64, s:usize, compression:Option<Compression>, flawed:bool, index:u64, little_endian:bool) -> IOResult<Message>{
     let comp = compression.unwrap_or(Compression::None);
-    let little_endian = true;
     let mut channels = Vec::new();
     let mut data: IndexMap<String, Option<ChannelData>> = IndexMap::new();
     let values = create_test_values(v, s);
@@ -247,8 +246,8 @@ fn create_message(prefix: &Option<String>, v:u64, s:usize, compression:Option<Co
     Message::new_from_channel_map(id,TIMESTAMP_NOW, channels, data)
 }
 
-pub fn start_sender(bsread: Option<&Arc<Bsread>>, prefix: Option<String>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool) -> IOResult<()> {
-    fn create_sender(bsread: Option<Arc<Bsread>>, prefix: Option<String>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, flawed:bool)  -> IOResult<()>{
+pub fn start_sender(bsread: Option<&Arc<Bsread>>, prefix: Option<String>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, little_endian:bool, flawed:bool) -> IOResult<()> {
+    fn create_sender(bsread: Option<Arc<Bsread>>, prefix: Option<String>, transport:Transport, socket_type:SocketType, interval_ms:u64, block:Option<bool>, compression:Option<Compression>, timeout:Option<u64>, little_endian:bool, flawed:bool)  -> IOResult<()>{
         let ep = transport.endpoint().clone();
 
         let bsread = match bsread {
@@ -276,7 +275,7 @@ pub fn start_sender(bsread: Option<&Arc<Bsread>>, prefix: Option<String>, transp
             if now < next {
                 thread::sleep(next - now);
             }
-            match create_message(&prefix,  count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count){
+            match create_message(&prefix,  count, MESSAGE_ARRAY_SIZE, compression.clone(), flawed, count, little_endian){
                 Ok(msg) => {
                     match sender.send_message(&msg, true){
                         Ok(id) => {
@@ -308,7 +307,7 @@ pub fn start_sender(bsread: Option<&Arc<Bsread>>, prefix: Option<String>, transp
     let handle = thread::Builder::new()
         .name("Sender".to_string())
         .spawn(move || -> IOResult<()> {
-            match create_sender(bs, prefix, transport, socket_type, interval_ms, block, compression, timeout, flawed){
+            match create_sender(bs, prefix, transport, socket_type, interval_ms, block, compression, timeout, little_endian,flawed){
                 Ok(_) => {}
                 Err(e) => {log::warn!("Error creating Sender [endpoint={}, socketType={:?}]: {:?}", endpoint, socket_type, e)}
             }

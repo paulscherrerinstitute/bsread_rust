@@ -74,6 +74,9 @@ Pool {
     pub fn disconnect(&mut self)  {
         if self.connected {
             self.connected = false;
+            if let Some(socket_monitor) = &self.socket_monitor {
+                socket_monitor.shutdown();
+            }
             for receiver in &mut self.receivers {
                 receiver.disconnect();
             }
@@ -495,6 +498,16 @@ Pool {
         match self.socket_monitor.as_ref() {
             None => {Err(IOError::new(std::io::ErrorKind::BrokenPipe,"Socket monitor is none",))},
             Some(socket_monitor) => {Ok(socket_monitor.diag_rx())}
+        }
+    }
+
+    pub fn disable_monitoring(&mut self) {
+        if let Some(socket_monitor) = &self.socket_monitor {
+            socket_monitor.shutdown();
+            self.socket_monitor = None;
+            for receiver in &mut self.receivers {
+                receiver.disable_shared_monitoring();
+            }
         }
     }
 

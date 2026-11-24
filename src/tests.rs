@@ -3,6 +3,7 @@ use crate::compression::*;
 use crate::debug::*;
 use crate::reader::READER_ABOOL;
 use crate::writer::WRITER_ABOOL;
+use crate::sockets::SocketMonitor;
 use std::{cmp, thread};
 use std::any::Any;
 use std::io::{Cursor, Write};
@@ -88,11 +89,11 @@ impl TestEnvironment {
         if !STARTED_SERVERS.load(Ordering::SeqCst) {
             STARTED_SERVERS.store(true, Ordering::SeqCst);
             println!("Starting senders...");
-            start_sender(Some(&bsread), None, TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
-            start_sender(Some(&bsread), None, TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None, false)?;
-            start_sender(Some(&bsread), None, TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None, false)?;
-            start_sender(Some(&bsread), None, TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None, false)?;
-            start_sender(Some(&bsread), None, TXP_FLAWED, SocketType::PUB, SENDER_INTERVAL, None, None, None, true)?;
+            start_sender(Some(&bsread), None, TXP_PUB, SocketType::PUB, SENDER_INTERVAL, None, None, None, true, false)?;
+            start_sender(Some(&bsread), None, TXP_CMP, SocketType::PUB, SENDER_INTERVAL, None, Some(Compression::BitshuffleLz4), None, true, false)?;
+            start_sender(Some(&bsread), None, TXP_PUSH, SocketType::PUSH, SENDER_INTERVAL, Some(false), None, None, true, false)?;
+            start_sender(Some(&bsread), None, TXP_IPC, SocketType::PUB, SENDER_INTERVAL, Some(false), None, None, false, false)?;
+            start_sender(Some(&bsread), None, TXP_FLAWED, SocketType::PUB, SENDER_INTERVAL, None, None, None, true, true)?;
         }
         Ok(Self {bsread})
     }
@@ -620,8 +621,8 @@ fn pool_monitoring() ->  IOResult<()> {
     let TXP2: Transport = Transport::Tcp {port:10352, host:None};
     let endpoint2 = TXP2.endpoint();
     let server_lifetime = 2000;
-    start_sender(Some(&env.bsread), None, TXP1, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
-    start_sender(Some(&env.bsread), None, TXP2, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    start_sender(Some(&env.bsread), None, TXP1, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), true, false)?; //Server will stop in 2s
+    start_sender(Some(&env.bsread), None, TXP2, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), true, false)?; //Server will stop in 2s
     let mut pool = env.bsread.pool(vec![&endpoint1, &endpoint2], SocketType::SUB, CONNECTION_MODE, 2)?;
     let event_receiver = pool.enable_monitoring()?;
     pool.connect()?;
@@ -1225,6 +1226,27 @@ fn receiver_ipc() ->  IOResult<()> {
 }
 
 #[test]
+fn receiver_raw_big_endian() ->  IOResult<()> {
+    let env = TestEnvironment::new()?;
+    let mut rec = env.bsread.receiver(Some(vec![&TXP_IPC.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
+    rec.set_raw(true);
+    rec.start(100)?;
+    for _ in 0..MESSAGE_COUNT {
+        match rec.wait(1000) {
+            Ok(rx) => {
+                print_message(&rx);
+                assert_message_contents_ok(&rx.message);
+            }
+            Err(e) => {println!("{}",e)}
+        }
+    }
+    rec.stop()?;
+
+    Ok(())
+}
+
+
+#[test]
 fn receiver_options() ->  IOResult<()> {
     let env = TestEnvironment::new()?;
     let mut rec = env.bsread.receiver(  Some(vec![&TXP_PUB.endpoint()]), SocketType::SUB, CONNECTION_MODE)?;
@@ -1262,7 +1284,7 @@ fn receiver_monitoring() ->  IOResult<()> {
     let TXP: Transport = Transport::Tcp {port:10350, host:None};
     let endpoint = TXP.endpoint();
     let server_lifetime = 2000;
-    start_sender(Some(&env.bsread), None, TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), false)?; //Server will stop in 2s
+    start_sender(Some(&env.bsread), None, TXP, SocketType::PUB, SENDER_INTERVAL, None, None, Some(server_lifetime), true, false)?; //Server will stop in 2s
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     let event_receiver = rec.enable_monitoring()?;
     rec.add_endpoint(&endpoint, None)?;
@@ -1329,7 +1351,7 @@ fn delayed() ->  IOResult<()> {
     let mut rec = env.bsread.receiver(Some(vec![&endpoint]), SocketType::SUB, CONNECTION_MODE)?;
     rec.start(100)?;
     thread::sleep(Duration::from_millis(3000));
-    start_sender(Some(&env.bsread), None, TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None, false)?;
+    start_sender(Some(&env.bsread), None, TXP, SocketType::PUB, SENDER_INTERVAL, None, None, None, true, false)?;
     let rx = rec.wait_messages(MESSAGE_COUNT as usize,  1000)?;
     assert_eq!(rx.len(), MESSAGE_COUNT as usize);
     assert_rec(&rec, Some(MESSAGE_COUNT), None);
@@ -1375,3 +1397,37 @@ fn flawed() ->  IOResult<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod monitor_lifetime_tests {
+    use super::*;
+    use std::sync::Barrier;
+    use std::time::Duration;
+    #[test]
+    fn monitor_thread_stops_when_clones_dropped_concurrently() {
+        for _ in 0..200 {
+            let monitor = SocketMonitor::new();
+            let rx = monitor.diag_rx();
+            let n = 8;
+            let barrier = Arc::new(Barrier::new(n + 1));
+            let handles: Vec<_> = (0..n)
+                .map(|_| {
+                    let m = monitor.clone();
+                    let b = Arc::clone(&barrier);
+                    thread::spawn(move || {
+                        b.wait();
+                        drop(m);
+                    })
+                })
+                .collect();
+            barrier.wait();
+            drop(monitor);
+            for h in handles {
+                h.join().unwrap();
+            }
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {}
+                other => panic!("monitor thread still running: {:?}", other.map(|_| ())),
+            }
+        }
+    }
+}

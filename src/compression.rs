@@ -138,6 +138,7 @@ pub fn decompress_lz4(compressed_data: &[u8], little_endian:bool) -> IOResult<Ve
     if compressed_data.len() < 4 {
         return Err(IOError::new(ErrorKind::UnexpectedEof, "LZ4 payload too short"));
     }
+
     let size = if little_endian {
         u32::from_le_bytes(compressed_data[0..4].try_into().unwrap())
     } else {
@@ -145,6 +146,10 @@ pub fn decompress_lz4(compressed_data: &[u8], little_endian:bool) -> IOResult<Ve
     };
     let size = i32::try_from(size)
         .map_err(|_| IOError::new(ErrorKind::InvalidData, "LZ4 size exceeds i32::MAX"))?;
+
+    if size as usize > MAX_DECOMPRESSED_SIZE {
+        return Err(IOError::new(ErrorKind::InvalidData, format!("Output size {} exceeds maximum {}", size, MAX_DECOMPRESSED_SIZE)));
+    }
 
     let blob: &[u8] = &compressed_data[4..];
     let output = lz4_decompress(blob, Some(size))?;

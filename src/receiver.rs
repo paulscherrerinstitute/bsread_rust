@@ -10,7 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, RwLock, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread::JoinHandle;
-use zmq::{Context, PollItem, SocketEvent, SocketType};
+use zmq::{Context, PollItem, Sendable, SocketEvent, SocketType};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 #[cfg(feature = "async")]
@@ -124,12 +124,15 @@ impl ConnectionSockets {
 
 const VALID_ID_RANGE:u64 = 3600 * 24 * 100;
 
-pub const CHECK_ID_POSITIVE:u64 = 1;
-pub const CHECK_ID_MONOTONIC:u64 = 2;
-pub const CHECK_ID_RANGE:u64 = 3;
-pub const CHECK_ID_PAST_RANGE:u64 = 4;
+pub const CHECK_ID_POSITIVE:u64 = 0x01;
+pub const CHECK_ID_MONOTONIC:u64 = 0x02;
+pub const CHECK_ID_RANGE:u64 = 0x04;
+pub const CHECK_ID_PAST_RANGE:u64 = 0x08;
 
 pub const CHECK_ALL:u64 = !0;
+
+
+pub const WORKER_THREAD_TIMEOUT:u64 = 60;
 
 enum ReceiverCommand {
     Connect {response: Option<crossbeam_channel::Sender<IOResult<()>>>,},
@@ -169,7 +172,7 @@ struct Worker {
     header_buffer: LimitedHashMap<String, DataHeaderInfo>,
     id_buffer: HashMap<String, u64>,
     socket_monitor: Option<SocketMonitor>,
-    rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
+    rx_cmd:Option<crossbeam_channel::Receiver<ReceiverCommand>>,
     interrupted: Arc<AtomicBool>,
     forwarder_config: Option<ForwarderConfig>,
     forwarder: Option<Sender>,
@@ -183,7 +186,7 @@ struct Worker {
 
 impl Worker {
     pub fn new(index: u32, bsread: Arc<Bsread>, endpoints: Arc<RwLock<Vec<Endpoint>>>, socket_type: SocketType, connection_mode: ConnectionMode,
-               socket_options: Arc<Mutex<SocketOptions>>, socket_monitor: Option<SocketMonitor>, rx_cmd: crossbeam_channel::Receiver<ReceiverCommand>,
+               socket_options: Arc<Mutex<SocketOptions>>, socket_monitor: Option<SocketMonitor>, rx_cmd: Option<crossbeam_channel::Receiver<ReceiverCommand>>,
                forwarder_config: Option<ForwarderConfig>, forwarder: Option<Sender>,
                fifo: Option<Arc<FifoQueue<ReceivedMessage>>>, stats: Arc<Stats>,
                interrupted: Arc<AtomicBool>, raw: bool, check_mask: u64, threaded: bool,
@@ -223,9 +226,9 @@ impl Worker {
         let raw = receiver.raw;
         let socket_options = receiver.socket_options.clone();
         let socket_monitor = receiver.socket_monitor.clone();
-        let rx_cmd = receiver.rx_cmd.clone();
         let check_mask = receiver.check_mask;
         let threaded = false;
+        let rx_cmd = None;
         Worker::new(
             index, bsread, endpoints, socket_type, connection_mode, socket_options, socket_monitor,
             rx_cmd, forwarder_config, forwarder, fifo, stats, interrupted, raw, check_mask, threaded
@@ -370,7 +373,15 @@ impl Worker {
             if self.is_interrupted() {
                 break;
             }
-            while let Ok(command) = self.rx_cmd.try_recv() {
+
+            loop {
+                let command = match self.rx_cmd.as_ref() {
+                    Some(rx_cmd) => rx_cmd.try_recv().ok(),
+                    None => None,
+                };
+                let Some(command) = command else {
+                    break;
+                };
                 match command {
                     ReceiverCommand::Connect { response } => {
                         let ret = self.connect();
@@ -402,9 +413,8 @@ impl Worker {
                             let _ = response.send(ret);
                         }
                     }
-
                     ReceiverCommand::SocketOptions { endpoint, response } => {
-                        let options = if let Some(socket) = self.socket(endpoint.as_str()){
+                        let options = if let Some(socket) = self.socket(endpoint.as_str()) {
                             Ok(socket.options())
                         } else {
                             Err(IOError::new(ErrorKind::InvalidData, "Invalid endpoint", ))
@@ -571,6 +581,7 @@ impl Worker {
     fn receive(&mut self) -> IOResult<ReceivedMessage> {
 
         if self.connections() == 0 {
+            thread::sleep(Duration::from_millis(10)); //Prevent busy loop
             return Err(IOError::new(ErrorKind::NotConnected, "No connected endpoint"));
         }
         let (endpoint, message_parts) = self._receive();
@@ -777,7 +788,7 @@ impl Worker {
     {
         let mut worker = Worker::new(
             index, bsread, endpoints, socket_type, connection_mode, socket_options, socket_monitor,
-            rx_cmd, forwarder_config, None, fifo, stats, interrupted, raw, check_mask, true
+            Some(rx_cmd), forwarder_config, None, fifo, stats, interrupted, raw, check_mask, true
         );
         worker
             .listen(callback, num_messages)
@@ -813,8 +824,7 @@ pub struct Receiver {
     raw: bool,
     connection_mode: ConnectionMode,
     socket_monitor: Option<SocketMonitor>,
-    tx_cmd:crossbeam_channel::Sender<ReceiverCommand>,
-    rx_cmd:crossbeam_channel::Receiver<ReceiverCommand>,
+    tx_cmd:Option<crossbeam_channel::Sender<ReceiverCommand>>,
     forked:bool,
     blocking_config: bool,
     socket_options: Arc<Mutex<SocketOptions>>,
@@ -834,7 +844,6 @@ impl Receiver{
             counter_error:AtomicU64::new(0), counter_drop:AtomicU64::new(0)});
         let delivery_mode = DeliveryMode::Inline;
         let  interrupted = Arc::new(AtomicBool::new(false));
-        let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
         let check_mask = CHECK_ALL;
         let socket_options =Arc::new( Mutex::new(SocketOptions::new()));
 
@@ -842,7 +851,7 @@ impl Receiver{
             bsread, fifo:None, handle:None,
             stats, index, diags: HashMap::new(),
             forwarder_config:None, forwarder:None,interrupted, delivery_mode , raw: false,connection_mode,
-            socket_monitor:None, tx_cmd, rx_cmd, forked: false, socket_options, blocking_config:true,
+            socket_monitor:None, tx_cmd:None, forked: false, socket_options, blocking_config:true,
             worker:None,
             #[cfg(feature = "async")]
             async_handle:None,
@@ -863,15 +872,37 @@ impl Receiver{
     }
 
     fn send_command<T>(&self,command: impl FnOnce(Option<crossbeam_channel::Sender<IOResult<T>>>) -> ReceiverCommand,) -> IOResult<T> {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        self.tx_cmd.send(command(Some(tx)))
-            .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",)})?;
-        rx.recv().map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread terminated",)})?
+        if !self.is_running() {
+            return Err(IOError::new(ErrorKind::Other, "Receiver worker thread is not running"));
+        }
+        match self.tx_cmd.as_ref() {
+            Some(tx_cmd) => {
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                    tx_cmd.send(command(Some(tx)))
+                        .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver worker thread is not running",)})?;
+                rx.recv_timeout(Duration::from_secs(WORKER_THREAD_TIMEOUT)).map_err(|e| {IOError::new(std::io::ErrorKind::BrokenPipe,
+                        format!("Receiver worker thread error: {}", e),)})?
+            }
+            None => {
+                Err(IOError::other(format!("Cannot send command with delivery mode: {:?}", self.delivery_mode)))
+            }
+        }
     }
 
     fn send_command_no_wait(&self,command: impl FnOnce(Option<crossbeam_channel::Sender<IOResult<()>>>) -> ReceiverCommand,) -> IOResult<()> {
-        self.tx_cmd.send(command(None))
-            .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver thread is not running",)})
+        if !self.is_running() {
+            return Err(IOError::new(ErrorKind::Other, "Receiver worker thread is not running"));
+        }
+
+        match self.tx_cmd.as_ref() {
+            Some(tx_cmd) => {
+                tx_cmd.send(command(None))
+                    .map_err(|_| {IOError::new(std::io::ErrorKind::BrokenPipe,"Receiver worker thread is not running",)})
+            }
+            None => {
+                Err(IOError::other(format!("Cannot send command with delivery mode: {:?}", self.delivery_mode)))
+            }
+        }
     }
 
     pub fn connect(&mut self) -> IOResult<()> {
@@ -968,6 +999,16 @@ impl Receiver{
             }
         }
         Ok(())
+    }
+
+    pub fn disable_monitoring(&mut self) {
+        if let Some(socket_monitor) = &self.socket_monitor {
+            socket_monitor.shutdown();
+        }
+        self.disable_shared_monitoring();
+    }
+    pub fn disable_shared_monitoring(&mut self) {
+        self.socket_monitor = None;
     }
 
     pub fn socket_options(& mut self, endpoint: &str) -> IOResult<SocketOptions>{
@@ -1076,7 +1117,8 @@ impl Receiver{
         let raw = self.raw;
         let thread_name = self.to_string();
         let socket_options = Arc::clone(&self.socket_options);
-        let rx_cmd = self.rx_cmd.clone();
+        let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
+        self.tx_cmd = Some(tx_cmd);
         let check_mask = self.check_mask;
         let socket_monitor = self.socket_monitor.clone();
 
@@ -1107,7 +1149,7 @@ impl Receiver{
                     let desc = e.to_string();
                     let parts: Vec<&str> = desc.split('|').collect();
                     log::error!("Listener thread join error: {:?}", parts);
-                    IOError::new(error_kind_from_str(parts[0]), parts[1])
+                    IOError::new(error_kind_from_str(parts[0]),*parts.get(1).unwrap_or(&"Unknown error"))
                 })?;
         }
         Ok(())
@@ -1155,7 +1197,8 @@ impl Receiver{
         let raw = self.raw;
         let socket_options = Arc::clone(&self.socket_options);
         let socket_monitor = self.socket_monitor.clone();
-        let rx_cmd = self.rx_cmd.clone();
+        let (tx_cmd, rx_cmd) = crossbeam_channel::unbounded();
+        self.tx_cmd = Some(tx_cmd.clone());
         let check_mask = self.check_mask;
 
         let handle = handle.unwrap_or_else(tokio::runtime::Handle::current);
@@ -1191,7 +1234,6 @@ impl Receiver{
             AsyncExecution::Ordered { capacity, blocking } => {
                 let callback = Arc::new(callback);
                 let callback_handle = handle.clone();
-                let tx_cmd = self.tx_cmd.clone();
 
                 handle.spawn_blocking(move || {
                     let senders = Arc::new(RwLock::new(HashMap::<String,tokio::sync::mpsc::Sender<ReceivedMessage>,>::new(),));
@@ -1221,7 +1263,9 @@ impl Receiver{
                                     if let Some(endpoint) = msg.endpoint {
                                         let cmd = || { ReceiverCommand::SendDiag {
                                             endpoint: Some(endpoint), diag: EndpointDiag::Dropped, id: Some(msg.message.id()), response:None } };
-                                        tx_cmd.send(cmd());
+                                        if let Err(e) = tx_cmd.send(cmd()) {
+                                            log::error!("Error sending diagnostic message: {:?}", e);
+                                        }
                                     }
                                 }
                                 Err(err) => {
